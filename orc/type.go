@@ -89,9 +89,44 @@ func (td *TypeDescription) CreateRowBatch(ver RowBatchVersion, size int) (vrb *h
 	return vrb, nil
 }
 
-func (td *TypeDescription) createColumn(ver RowBatchVersion, maxSize int) (cv *hive.ColumnVector, err error) {
+func (td *TypeDescription) createColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
 	switch td.category {
-	case BOOLEAN
+	case BOOLEAN:
+		fallthrough
+	case BYTE:
+		fallthrough
+	case SHORT:
+		fallthrough
+	case INT:
+		fallthrough
+	case LONG:
+		fallthrough
+	case DATE:
+		cv = hive.NewLongColumnVector(maxSize)
+	case TIMESTAMP:
+		cv = hive.NewTimestampColumnVector(maxSize)
+	case FLOAT:
+		fallthrough
+	case DOUBLE:
+		cv = hive.NewDoubleColumnVector(maxSize)
+	case DECIMAL:
+	//
+	case STRING:
+		fallthrough
+	case BINARY:
+		fallthrough
+	case CHAR:
+		fallthrough
+	case VARCHAR:
+	//
+	case STRUCT:
+	// todo:
+	case UNION:
+	//
+	case LIST:
+	//
+	case MAP:
+		//
 	default:
 		return nil, errors.Errorf("unknown type %s", td.category.Name())
 	}
