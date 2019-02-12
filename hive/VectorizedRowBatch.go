@@ -11,7 +11,9 @@ const (
 )
 
 type VectorizedRowBatch struct {
-	 Cols []ColumnVector
+	NumCols int
+	Size    int
+	Cols    []ColumnVector
 }
 
 func (vrb *VectorizedRowBatch) Write(out io.Writer) error {
