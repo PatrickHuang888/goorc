@@ -64,3 +64,30 @@ func NewDoubleColumnVector(len int) ColumnVector {
 	v := make([]float64, len)
 	return &doubleColumnVector{vector: v}
 }
+
+type bytesColumnVector struct {
+	vector [][]byte
+}
+
+func (bytesColumnVector) T() Type {
+	return BYTES
+}
+
+func NewBytesColumnVector(len int) ColumnVector {
+	v := make([][]byte, len)
+	return &bytesColumnVector{vector: v}
+}
+
+type structColumnVector struct {
+	fields []ColumnVector
+}
+
+func (structColumnVector) T() Type {
+	return STRUCT
+}
+
+func NewStructColumnVector(len int, fields ...ColumnVector) ColumnVector {
+	var v []ColumnVector
+	v = append(v, fields...)
+	return &structColumnVector{fields: v}
+}

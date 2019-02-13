@@ -29,7 +29,7 @@ const (
 	UNION
 )
 
-// type category
+// type Category
 type Category int
 
 type catData struct {
@@ -69,28 +69,39 @@ func (c Category) IsPrimitive() bool {
 type RowBatchVersion int
 
 type TypeDescription struct {
-	category Category
-	children []*TypeDescription
+	Category   Category
+	Children   []*TypeDescription
+	FieldNames []string
 }
 
 func (td *TypeDescription) NewDefaultRowBatch() (*hive.VectorizedRowBatch, error) {
-	return td.CreateRowBatch(ORIGINAL, hive.VectorizedRowBatch_DEFAULT_SIZE)
+	return td.CreateRowBatch(ORIGINAL, hive.DEFAULT_ROW_SIZE)
 }
 
 func (td *TypeDescription) CreateRowBatch(ver RowBatchVersion, size int) (vrb *hive.VectorizedRowBatch, err error) {
-	if td.category == STRUCT {
-		numCols := len(td.children)
+	if td.Category == STRUCT {
+		numCols := len(td.Children)
 		cols := make([]hive.ColumnVector, numCols)
 		vrb = &hive.VectorizedRowBatch{NumCols: numCols, Size: size, Cols: cols}
-		for i, v := range td.children {
-
+		for i, v := range td.Children {
+			cols[i], err = v.createColumn(ver, size)
+			if err != nil {
+				return nil, errors.WithStack(err)
+			}
 		}
+	} else {
+		cols := make([]hive.ColumnVector, 1)
+		cols[0], err = td.createColumn(ver, size)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		vrb = &hive.VectorizedRowBatch{NumCols: 1, Size: size, Cols: cols}
 	}
-	return vrb, nil
+	return vrb, err
 }
 
 func (td *TypeDescription) createColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
-	switch td.category {
+	switch td.Category {
 	case BOOLEAN:
 		fallthrough
 	case BYTE:
@@ -110,7 +121,7 @@ func (td *TypeDescription) createColumn(ver RowBatchVersion, maxSize int) (cv hi
 	case DOUBLE:
 		cv = hive.NewDoubleColumnVector(maxSize)
 	case DECIMAL:
-	//
+	// todo:
 	case STRING:
 		fallthrough
 	case BINARY:
@@ -118,17 +129,24 @@ func (td *TypeDescription) createColumn(ver RowBatchVersion, maxSize int) (cv hi
 	case CHAR:
 		fallthrough
 	case VARCHAR:
-	//
+		cv = hive.NewDoubleColumnVector(maxSize)
 	case STRUCT:
-	// todo:
+		f := make([]hive.ColumnVector, len(td.Children))
+		for i, v := range td.Children {
+			f[i], err = v.createColumn(ver, maxSize)
+			if err != nil {
+				return nil, errors.WithStack(err)
+			}
+		}
+		cv = hive.NewStructColumnVector(maxSize, f...)
 	case UNION:
-	//
+	// todo:
 	case LIST:
-	//
+	// todo:
 	case MAP:
-		//
+		// todo:
 	default:
-		return nil, errors.Errorf("unknown type %s", td.category.Name())
+		return nil, errors.Errorf("unknown type %s", td.Category.Name())
 	}
 	return cv, err
 }

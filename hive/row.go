@@ -7,12 +7,12 @@ import (
 )
 
 const (
-	VectorizedRowBatch_DEFAULT_SIZE = 1024
+	DEFAULT_ROW_SIZE = 1024
 )
 
 type VectorizedRowBatch struct {
-	NumCols int
-	Size    int
+	NumCols int  // number of columns
+	Size    int  // number of rows
 	Cols    []ColumnVector
 }
 
