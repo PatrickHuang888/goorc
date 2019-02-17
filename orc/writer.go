@@ -45,23 +45,27 @@ func (w *writer) AddRowBatch(batch *hive.VectorizedRowBatch) error {
 	if w.buildIndex {
 
 	} else {
-		w.rowsInStripe += batch.Size
+		//w.rowsInStripe += batch.Size
 	}
+	return nil
 }
 
 func (w *writer) Close() error {
 
+	return nil
 }
 
 func (w *writer) flushStrip() error {
 	if w.buildIndex && w.rowsInIndex != 0 {
 		w.createRowIndexEntry()
 	}
+	return nil
 }
 
 func (w *writer) createRowIndexEntry() error {
 	
 	w.rowsInIndex= 0
+	return nil
 }
 
 func NewWriter(path string, opts *WriterOptions) (Writer, error) {

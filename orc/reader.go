@@ -2,9 +2,7 @@ package orc
 
 import (
 	"github.com/PatrickHuang888/goorc/pb/pb"
-	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
-	"io"
 	"os"
 	"time"
 )
@@ -31,13 +29,13 @@ type OrcTail struct {
 	ModificationTime time.Time
 }
 
-func CreateReader(path string, opts *ReaderOptions) (*Reader, error) {
+/*func CreateReader(path string, opts *ReaderOptions) (*Reader, error) {
 	ri := &readerImpl{}
 	tail := opts.OrcTail
 	if tail == nil {
 		tail, err: = extractFileTail(path, )
 	} else {
-		checkOrcVersion(path, tail.PostScript)
+		// checkOrcVersion(path, tail.PostScript)
 	}
 	ri.tail = tail
 
@@ -131,7 +129,7 @@ func extractPostScript(buf []byte, path string) (ps *pb.PostScript, err error) {
 	}
 	return ps, err
 }
-
+*/
 func checkOrcVersion(path string, ps *pb.PostScript) error {
 	// todo：
 	return nil
