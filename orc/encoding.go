@@ -14,15 +14,15 @@ type RunLengthEncoding interface {
 	Read(reader io.Reader) (next byte, err error)
 }
 
+type InputStream interface {
+	io.Reader
+	io.ByteReader
+}
+
 type byteRunLength struct {
 	repeat      bool
 	literals    []byte
 	numLiterals int
-}
-
-type InputStream interface {
-	io.Reader
-	io.ByteReader
 }
 
 func (brl *byteRunLength) readValues(ignoreEof bool, in InputStream) (err error) {
@@ -55,4 +55,3 @@ func (brl *byteRunLength) readValues(ignoreEof bool, in InputStream) (err error)
 	}
 	return
 }
-
