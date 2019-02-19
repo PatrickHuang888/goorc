@@ -55,3 +55,26 @@ func (brl *byteRunLength) readValues(ignoreEof bool, in InputStream) (err error)
 	}
 	return
 }
+
+type intRunLengthV1 struct {
+	numLiterals int
+	repeat      bool
+}
+
+func (irl *intRunLengthV1) readValues(in InputStream) (err error) {
+	control, err := in.ReadByte()
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	if control < 0x80 { // run
+		irl.numLiterals = int(control) + MIN_REPEAT_SIZE
+		irl.repeat = true
+		delta, err := in.ReadByte()
+		if err != nil {
+			return errors.WithStack(err)
+		}
+
+	} else {
+
+	}
+}
