@@ -1,6 +1,7 @@
 package orc
 
 import (
+	"encoding/binary"
 	"github.com/pkg/errors"
 	"io"
 )
@@ -59,6 +60,8 @@ func (brl *byteRunLength) readValues(ignoreEof bool, in InputStream) (err error)
 type intRunLengthV1 struct {
 	numLiterals int
 	repeat      bool
+	delta int8
+	literals []int64
 }
 
 func (irl *intRunLengthV1) readValues(in InputStream) (err error) {
@@ -69,11 +72,15 @@ func (irl *intRunLengthV1) readValues(in InputStream) (err error) {
 	if control < 0x80 { // run
 		irl.numLiterals = int(control) + MIN_REPEAT_SIZE
 		irl.repeat = true
-		delta, err := in.ReadByte()
+		b, err := in.ReadByte()
 		if err != nil {
 			return errors.WithStack(err)
 		}
-
+		irl.delta= int8(b)
+		irl.literals[0], err= binary.ReadVarint(in)
+		if err!=nil {
+			return errors.WithStack(err)
+		}
 	} else {
 
 	}
