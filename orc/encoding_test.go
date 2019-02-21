@@ -60,3 +60,16 @@ func TestByteRunLength(t *testing.T) {
 		t.Fatal("literal content error")
 	}
 }
+
+func TestIntRunLengthV1(t *testing.T)  {
+	t1:= &bstream{value:[]byte{0x61, 0x00, 0x07}}
+	irl:= &intRunLengthV1{
+		literals:make([]uint64, MAX_LITERAL_SIZE),
+	}
+	if err:= irl.readValues(t1); err!=nil {
+		t.Error(err)
+	}
+	if irl.run!=true {
+		t.Fatal("repeat error")
+	}
+}

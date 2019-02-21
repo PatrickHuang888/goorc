@@ -63,21 +63,21 @@ func (brl *byteRunLength) readValues(ignoreEof bool, in InputStream) (err error)
 
 type intRunLengthV1 struct {
 	numLiterals int
-	repeat      bool
+	run      bool
 	delta       int8
 	literals    []uint64
 	sLiterals   []int64
 	signed      bool
 }
 
-func (irl *intRunLengthV1) readValues(in InputStream) (err error) {
+func (irl *intRunLengthV1) readValues(in InputStream) error {
 	control, err := in.ReadByte()
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	if control < 0x80 { // run
 		irl.numLiterals = int(control) + MIN_REPEAT_SIZE
-		irl.repeat = true
+		irl.run = true
 		b, err := in.ReadByte()
 		if err != nil {
 			return errors.WithStack(err)
@@ -88,16 +88,24 @@ func (irl *intRunLengthV1) readValues(in InputStream) (err error) {
 			return errors.WithStack(err)
 		}
 	} else {
-		n := int(int8(control))
-		irl.numLiterals = -n
+		irl.run= false
+		n := -int(int8(control))
+		irl.numLiterals = n
+		for i := 0; i <= n; i++ {
+			irl.literals[i], err= ReadVUint(in)
+			if err!=nil {
+				return errors.WithStack(err)
+			}
+		}
 	}
-	return
+	return nil
 }
 
 func (irl *intRunLengthV1) writeValues(out OutputStream) error {
 	if irl.numLiterals != 0 {
 
 	}
+	return nil
 }
 
 // base 128 varuint
