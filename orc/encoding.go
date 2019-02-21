@@ -19,6 +19,11 @@ type InputStream interface {
 	io.ByteReader
 }
 
+type OutputStream interface {
+	io.ByteWriter
+	io.WriteCloser
+}
+
 type byteRunLength struct {
 	repeat      bool
 	literals    []byte
@@ -61,6 +66,8 @@ type intRunLengthV1 struct {
 	repeat      bool
 	delta       int8
 	literals    []uint64
+	sLiterals   []int64
+	signed      bool
 }
 
 func (irl *intRunLengthV1) readValues(in InputStream) (err error) {
@@ -76,16 +83,25 @@ func (irl *intRunLengthV1) readValues(in InputStream) (err error) {
 			return errors.WithStack(err)
 		}
 		irl.delta = int8(b)
-		irl.literals[0], err = ReadVarint(in)
+		irl.literals[0], err = ReadVUint(in)
 		if err != nil {
 			return errors.WithStack(err)
 		}
+	} else {
+		n := int(int8(control))
+		irl.numLiterals = -n
 	}
 	return
 }
 
-// base 128 varint
-func ReadVarint(in io.ByteReader) (r uint64, err error) {
+func (irl *intRunLengthV1) writeValues(out OutputStream) error {
+	if irl.numLiterals != 0 {
+
+	}
+}
+
+// base 128 varuint
+func ReadVUint(in io.ByteReader) (r uint64, err error) {
 	var b byte
 	var shift uint
 	for {
@@ -93,16 +109,19 @@ func ReadVarint(in io.ByteReader) (r uint64, err error) {
 		if err != nil {
 			errors.WithStack(err)
 		}
+		r |= uint64(0x7f&b) << shift
+		shift += 7
 		if b < 0x80 {
 			break
 		}
-		r |= uint64(0x7b&b) << shift
-		shift += 7
 	}
 	return
 }
 
-/*func Convert(u uint64) int64 {
-	return (u >> 1) ^ -(u & 1)
+func Convert(u uint64) int64 {
+	x := int64(u >> 1)
+	if u&1 != 0 {
+		x = ^x
+	}
+	return x
 }
-*/
