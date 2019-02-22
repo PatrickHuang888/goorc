@@ -2,7 +2,9 @@ package orc
 
 import (
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	"testing"
+	"time"
 )
 
 type bstream struct {
@@ -61,15 +63,40 @@ func TestByteRunLength(t *testing.T) {
 	}
 }
 
-func TestIntRunLengthV1(t *testing.T)  {
-	t1:= &bstream{value:[]byte{0x61, 0x00, 0x07}}
-	irl:= &intRunLengthV1{
-		literals:make([]uint64, MAX_LITERAL_SIZE),
+func TestIntRunLengthV1(t *testing.T) {
+	t1 := &bstream{value: []byte{0x61, 0x00, 0x07}}
+	irl := &intRunLengthV1{
+		literals: make([]uint64, MAX_LITERAL_SIZE),
 	}
-	if err:= irl.readValues(t1); err!=nil {
+	if err := irl.readValues(t1); err != nil {
 		t.Error(err)
 	}
-	if irl.run!=true {
-		t.Fatal("repeat error")
+	if irl.run != true {
+		t.Fatal("run error")
 	}
+	if irl.numLiterals != 100 {
+		t.Fatal("num literals error")
+	}
+	if irl.literals[0] != 7 {
+		t.Fatal("literal error")
+	}
+
+	t2 := &bstream{value: []byte{0xfb, 0x02, 0x03, 0x04, 0x07, 0xb}}
+	err := irl.readValues(t2)
+	assert.Nil(t, err)
+	assert.Equal(t, irl.run, false)
+	assert.Equal(t, irl.numLiterals, 5)
+	assert.Equal(t, irl.literals[4], uint64(11))
+}
+
+func TestIntRunLengthV2(t *testing.T)  {
+	t1 := &bstream{value: []byte{0x0a, 0x27, 0x10}}
+	irl := &intRunLengthV2{
+		uliterals: make([]uint64, MAX_LITERAL_SIZE),
+	}
+	err:= irl.readValues(t1)
+	assert.Nil(t, err)
+	assert.Equal(t, SHORT_REPEAT, irl.sub)
+	assert.Equal(t, 5, irl.numLiterals)
+	assert.Equal(t, 10000, int(irl.uliterals[0]))
 }

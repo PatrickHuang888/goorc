@@ -8,6 +8,11 @@ import (
 const (
 	MIN_REPEAT_SIZE  = 3
 	MAX_LITERAL_SIZE = 128
+
+	SHORT_REPEAT byte = 0
+	Direct
+	PatchedBase
+	Delta
 )
 
 type RunLengthEncoding interface {
@@ -63,7 +68,7 @@ func (brl *byteRunLength) readValues(ignoreEof bool, in InputStream) (err error)
 
 type intRunLengthV1 struct {
 	numLiterals int
-	run      bool
+	run         bool
 	delta       int8
 	literals    []uint64
 	sLiterals   []int64
@@ -88,12 +93,12 @@ func (irl *intRunLengthV1) readValues(in InputStream) error {
 			return errors.WithStack(err)
 		}
 	} else {
-		irl.run= false
+		irl.run = false
 		n := -int(int8(control))
 		irl.numLiterals = n
-		for i := 0; i <= n; i++ {
-			irl.literals[i], err= ReadVUint(in)
-			if err!=nil {
+		for i := 0; i < n; i++ {
+			irl.literals[i], err = ReadVUint(in)
+			if err != nil {
 				return errors.WithStack(err)
 			}
 		}
@@ -105,6 +110,46 @@ func (irl *intRunLengthV1) writeValues(out OutputStream) error {
 	if irl.numLiterals != 0 {
 
 	}
+	return nil
+}
+
+type intRunLengthV2 struct {
+	sub         byte
+	signed      bool
+	literals    []int64
+	uliterals   []uint64
+	numLiterals int
+}
+
+func (irl *intRunLengthV2) readValues(in InputStream) error {
+	header, err := in.ReadByte()
+	if err != nil {
+		errors.WithStack(err)
+	}
+	irl.sub = header >> 6
+	switch irl.sub {
+	case SHORT_REPEAT:
+		width := 1 + (header>>3)&0x07 // W bytes
+		repeatCount := 3 + (header & 0x07)
+		irl.numLiterals = int(repeatCount)
+
+		var x uint64
+		for i := width; i > 0; {
+			i--
+			b, err := in.ReadByte()
+			if err != nil {
+				errors.WithStack(err)
+			}
+			x |= uint64(b) << (8 * i)
+		}
+
+		if irl.signed {
+			proto.
+		} else {
+			irl.uliterals[0] = x
+		}
+	}
+
 	return nil
 }
 
