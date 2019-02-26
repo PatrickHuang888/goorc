@@ -99,3 +99,16 @@ func TestIntRunLengthV2(t *testing.T)  {
 	assert.Equal(t, 5, irl.numLiterals)
 	assert.Equal(t, 10000, int(irl.uliterals[0]))
 }
+
+func TestZigzag(t *testing.T)  {
+	assert.Equal(t, uint64(1), EncodeZigzag(-1))
+	assert.Equal(t, int64(-1), DecodeZigzag(1))
+
+	var x int64= 2147483647
+	assert.Equal(t, uint64(4294967294), EncodeZigzag(x))
+	assert.Equal(t, x, DecodeZigzag(EncodeZigzag(x)))
+
+	var y int64= -2147483648
+	assert.Equal(t, uint64(4294967295), EncodeZigzag(y))
+	assert.Equal(t, y, DecodeZigzag(EncodeZigzag(y)))
+}

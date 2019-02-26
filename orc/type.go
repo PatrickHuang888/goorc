@@ -68,17 +68,30 @@ func (c Category) IsPrimitive() bool {
 
 type RowBatchVersion int
 
-type TypeDescription struct {
-	Category   Category
-	Children   []*TypeDescription
-	FieldNames []string
+type TypeDescription interface {
+	CreateRowBatch()
+	AddField(name string, td TypeDescription)
 }
 
-func (td *TypeDescription) NewDefaultRowBatch() (*hive.VectorizedRowBatch, error) {
+type typeDesc struct {
+	category   Category
+	children   map[string]TypeDescription
+	fieldNames []string
+}
+
+func NewTypeDescription(cat Category) TypeDescription {
+	return &typeDesc{cat}
+}
+
+func (td *typeDesc) AddField(name string, typeDesc TypeDescription) {
+	
+}
+
+func (td *typeDesc) NewRowBatch() (*hive.VectorizedRowBatch, error) {
 	return td.CreateRowBatch(ORIGINAL, hive.DEFAULT_ROW_SIZE)
 }
 
-func (td *TypeDescription) CreateRowBatch(ver RowBatchVersion, size int) (vrb *hive.VectorizedRowBatch, err error) {
+func (td *typeDesc) CreateRowBatch(ver RowBatchVersion, size int) (vrb *hive.VectorizedRowBatch, err error) {
 	if td.Category == STRUCT {
 		numCols := len(td.Children)
 		cols := make([]hive.ColumnVector, numCols)
