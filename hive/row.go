@@ -16,10 +16,3 @@ type VectorizedRowBatch struct {
 	Cols    []ColumnVector
 }
 
-func (vrb *VectorizedRowBatch) Write(out io.Writer) error {
-	return errors.New("unsupported operation")
-}
-
-func (vrb *VectorizedRowBatch) ReadFields(in io.Reader) error {
-	return errors.New("unsupported operation")
-}

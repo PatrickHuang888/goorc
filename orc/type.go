@@ -69,52 +69,50 @@ func (c Category) IsPrimitive() bool {
 type RowBatchVersion int
 
 type TypeDescription interface {
-	CreateRowBatch()
+	CreateRowBatch(ver RowBatchVersion, size int) (*hive.VectorizedRowBatch, error)
 	AddField(name string, td TypeDescription)
+	CreateColumn(ver RowBatchVersion, maxSize int) (hive.ColumnVector, error)
 }
 
 type typeDesc struct {
-	category   Category
-	children   map[string]TypeDescription
-	fieldNames []string
+	category Category
+	children []TypeDescription
+	names    []string
 }
 
 func NewTypeDescription(cat Category) TypeDescription {
-	return &typeDesc{cat}
+	return &typeDesc{category: cat}
 }
 
 func (td *typeDesc) AddField(name string, typeDesc TypeDescription) {
-	
-}
-
-func (td *typeDesc) NewRowBatch() (*hive.VectorizedRowBatch, error) {
-	return td.CreateRowBatch(ORIGINAL, hive.DEFAULT_ROW_SIZE)
+	td.children = append(td.children, typeDesc)
+	td.names = append(td.names, name)
 }
 
 func (td *typeDesc) CreateRowBatch(ver RowBatchVersion, size int) (vrb *hive.VectorizedRowBatch, err error) {
-	if td.Category == STRUCT {
-		numCols := len(td.Children)
+	if td.category == STRUCT {
+		numCols := len(td.children)
 		cols := make([]hive.ColumnVector, numCols)
 		vrb = &hive.VectorizedRowBatch{NumCols: numCols, Size: size, Cols: cols}
-		for i, v := range td.Children {
-			cols[i], err = v.createColumn(ver, size)
+		for i, v := range td.children {
+			cols[i], err = v.CreateColumn(ver, size)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
 		}
 	} else {
 		cols := make([]hive.ColumnVector, 1)
-		cols[0], err = td.createColumn(ver, size)
+		cols[0], err = td.CreateColumn(ver, size)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
 		vrb = &hive.VectorizedRowBatch{NumCols: 1, Size: size, Cols: cols}
 	}
-	return vrb, err
+	return
 }
 
-func (td *TypeDescription) createColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
-	switch td.Category {
+func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
+	switch td.category {
 	case BOOLEAN:
 		fallthrough
 	case BYTE:
@@ -142,11 +140,11 @@ func (td *TypeDescription) createColumn(ver RowBatchVersion, maxSize int) (cv hi
 	case CHAR:
 		fallthrough
 	case VARCHAR:
-		cv = hive.NewDoubleColumnVector(maxSize)
+		cv = hive.NewBytesColumnVector(maxSize)
 	case STRUCT:
-		f := make([]hive.ColumnVector, len(td.Children))
-		for i, v := range td.Children {
-			f[i], err = v.createColumn(ver, maxSize)
+		f := make([]hive.ColumnVector, len(td.children))
+		for i, v := range td.children {
+			f[i], err = v.CreateColumn(ver, maxSize)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
@@ -159,7 +157,7 @@ func (td *TypeDescription) createColumn(ver RowBatchVersion, maxSize int) (cv hi
 	case MAP:
 		// todo:
 	default:
-		return nil, errors.Errorf("unknown type %s", td.Category.Name())
+		return nil, errors.Errorf("unknown type %s", td.category.Name())
 	}
 	return cv, err
 }
