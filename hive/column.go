@@ -15,8 +15,6 @@ const (
 	MAP
 	UNION
 	VOID
-
-	DefaultRowSize = 1024
 )
 
 type Type int
@@ -30,64 +28,44 @@ type LongColumnVector struct {
 	Vector []int64
 }
 
-func (LongColumnVector) T() Type {
+func (*LongColumnVector) T() Type {
 	return LONG
 }
 
-func NewLongColumnVector(len int) ColumnVector {
-	v := make([]int64, len)
-	return &LongColumnVector{Vector: v}
+type TimestampColumnVector struct {
+	Vector []uint64
 }
 
-type timestampColumnVector struct {
-	time []uint64
-}
-
-func (timestampColumnVector) T() Type {
+func (*TimestampColumnVector) T() Type {
 	return TIMESTAMP
 }
 
-func NewTimestampColumnVector(len int) ColumnVector {
-	t := make([]uint64, len)
-	return &timestampColumnVector{time: t}
+type DoubleColumnVector struct {
+	Vector []float64
 }
 
-type doubleColumnVector struct {
-	vector []float64
-}
-
-func (doubleColumnVector) T() Type {
+func (*DoubleColumnVector) T() Type {
 	return DOUBLE
 }
 
-func NewDoubleColumnVector(len int) ColumnVector {
-	v := make([]float64, len)
-	return &doubleColumnVector{vector: v}
+type BytesColumnVector struct {
+	Vector [][]byte
 }
 
-type bytesColumnVector struct {
-	vector [][]byte
-}
-
-func (bytesColumnVector) T() Type {
+func (*BytesColumnVector) T() Type {
 	return BYTES
 }
 
-func NewBytesColumnVector(len int) ColumnVector {
-	v := make([][]byte, len)
-	return &bytesColumnVector{vector: v}
-}
-
-type structColumnVector struct {
+type StructColumnVector struct {
 	fields []ColumnVector
 }
 
-func (structColumnVector) T() Type {
+func (*StructColumnVector) T() Type {
 	return STRUCT
 }
 
 func NewStructColumnVector(len int, fields ...ColumnVector) ColumnVector {
 	var v []ColumnVector
 	v = append(v, fields...)
-	return &structColumnVector{fields: v}
+	return &StructColumnVector{fields: v}
 }

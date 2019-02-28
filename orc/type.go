@@ -124,13 +124,13 @@ func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.Colu
 	case LONG:
 		fallthrough
 	case DATE:
-		cv = hive.NewLongColumnVector(maxSize)
+		cv = &hive.LongColumnVector{Vector: make([]int64, hive.DEFAULT_ROW_SIZE, maxSize)}
 	case TIMESTAMP:
-		cv = hive.NewTimestampColumnVector(maxSize)
+		cv = &hive.TimestampColumnVector{Vector: make([]uint64, hive.DEFAULT_ROW_SIZE, maxSize)}
 	case FLOAT:
 		fallthrough
 	case DOUBLE:
-		cv = hive.NewDoubleColumnVector(maxSize)
+		cv = &hive.DoubleColumnVector{Vector: make([]float64, hive.DEFAULT_ROW_SIZE, maxSize)}
 	case DECIMAL:
 	// todo:
 	case STRING:
@@ -140,7 +140,7 @@ func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.Colu
 	case CHAR:
 		fallthrough
 	case VARCHAR:
-		cv = hive.NewBytesColumnVector(maxSize)
+		cv = &hive.BytesColumnVector{Vector: make([][]byte, hive.DEFAULT_ROW_SIZE, maxSize)}
 	case STRUCT:
 		f := make([]hive.ColumnVector, len(td.children))
 		for i, v := range td.children {

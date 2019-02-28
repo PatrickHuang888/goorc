@@ -76,8 +76,8 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 	if buildIndex && opts.RowIndexStride < MIN_ROW_INDEX_STRIDE {
 		return nil, errors.Errorf("row stride must be at least %d", MIN_ROW_INDEX_STRIDE)
 	}
-
-	return &writer{schema: opts.Schema, pw: pw}, nil
+	return nil, nil
+	//return &writer{schema: opts.Schema, pw: pw}, nil
 }
 
 type PhysicalWriter interface {
