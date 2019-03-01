@@ -1,6 +1,8 @@
 package orc
 
 import (
+	"bytes"
+	"compress/zlib"
 	"fmt"
 	"github.com/PatrickHuang888/goorc/hive"
 	"github.com/PatrickHuang888/goorc/pb/pb"
@@ -130,11 +132,22 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 		// refactor: array allocated
 		buf = append(buf, ebuf...)
 	}
-	footerStart := psOffset - footerSize - metaSize
+	footerStart := psOffset - footerSize
+	bufferSize:= ps.GetCompressionBlockSize()
+	dataBuffer:= make([]byte, bufferSize)
+	compress:= ps.GetCompression()
+	data:= buf[footerStart:footerStart+footerSize]
+	//read header
+	isOriginal:= (data[0] & 0x01)==1
+	chunkLength:=uint64((data[2] << 15) | (data[1]<<7) | (data[0]>>1))
+	if chunkLength> bufferSize {
+		return nil, errors.New("chunk length larger than compression block size")
+	}
+
 	footer := &pb.Footer{}
 	//todo: decode compression
 	if err= proto.Unmarshal(buf[footerStart:footerStart+tailSize], footer); err!=nil {
-		return nil, errors.Wrapf(err, "unmarshall footer error")
+		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 	fmt.Println(footer.String())
 

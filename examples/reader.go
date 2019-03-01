@@ -10,7 +10,7 @@ import (
 func main() {
 	_, err := orc.CreateReader("/u01/apache/orc/java/examples/my-file.orc")
 	if err != nil {
-		fmt.Printf("create reader error: %v+", err)
+		fmt.Printf("create reader error: %+v", err)
 		os.Exit(1)
 	}
 	//fmt.Printf("row count: %d\n", reader.NumberOfRows())
