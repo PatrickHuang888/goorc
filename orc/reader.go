@@ -119,7 +119,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 
 	//check if extra bytes need to be read
 	extra := Max(0, psLen+1+footerSize+metaSize-readSize)
-	tailSize := 1 + psLen + footerSize + metaSize
+	//tailSize := 1 + psLen + footerSize + metaSize
 	if extra > 0 {
 		//more bytes need to be read, read extra bytes
 		ebuf := make([]byte, extra)
@@ -133,23 +133,42 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 		buf = append(buf, ebuf...)
 	}
 	footerStart := psOffset - footerSize
-	bufferSize:= ps.GetCompressionBlockSize()
-	dataBuffer:= make([]byte, bufferSize)
-	compress:= ps.GetCompression()
-	data:= buf[footerStart:footerStart+footerSize]
+	bufferSize := ps.GetCompressionBlockSize()
+	uncompressedBuf := make([]byte, bufferSize)
+	compress := ps.GetCompression()
+	data := buf[footerStart : footerStart+footerSize]
 	//read header
-	isOriginal:= (data[0] & 0x01)==1
-	chunkLength:=uint64((data[2] << 15) | (data[1]<<7) | (data[0]>>1))
-	if chunkLength> bufferSize {
+	original := (data[0] & 0x01) == 1
+	chunkLength := uint64((data[2] << 15) | (data[1] << 7) | (data[0] >> 1))
+	if chunkLength > bufferSize {
 		return nil, errors.New("chunk length larger than compression block size")
 	}
-
-	footer := &pb.Footer{}
-	//todo: decode compression
-	if err= proto.Unmarshal(buf[footerStart:footerStart+tailSize], footer); err!=nil {
-		return nil, errors.Wrapf(err, "unmarshal footer error")
+	if int64(chunkLength) < footerSize {
+		return nil, errors.New("chunk data not enough")
 	}
-	fmt.Println(footer.String())
+	compressedData:= data[3:3+chunkLength]
+
+
+	if !original {
+		switch compress {
+		case pb.CompressionKind_ZLIB:
+			b := bytes.NewBuffer(compressedData)
+			r, err := zlib.NewReader(b)
+			if err != nil {
+				return nil, errors.WithStack(err)
+			}
+			n, err := r.Read(uncompressedBuf)
+			r.Close()
+			if err != nil {
+				return nil, errors.Wrapf(err, "uncompress data chunk error when read footer")
+			}
+			footer := &pb.Footer{}
+			if err = proto.Unmarshal(uncompressedBuf[:n], footer); err != nil {
+				return nil, errors.Wrapf(err, "unmarshal footer error")
+			}
+			fmt.Println(footer.String())
+		}
+	}
 
 	/*ft := pb.FileTail{Postscript: ps, Footer: footer, FileLength: &sz, PostscriptLength: &psLen}
 
@@ -163,7 +182,7 @@ func extractPostScript(buf []byte) (ps *pb.PostScript, err error) {
 	if err = proto.Unmarshal(buf, ps); err != nil {
 		return nil, errors.Wrapf(err, "unmarshall postscript err")
 	}
-	if err=checkOrcVersion(ps);err!=nil {
+	if err = checkOrcVersion(ps); err != nil {
 		return nil, errors.Wrapf(err, "check orc version error")
 	}
 
