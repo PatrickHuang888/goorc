@@ -114,6 +114,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	ps.GetCompression()
 	sz := uint64(size)*/
 
+	var footerBuf []byte
 	footerSize := int64(ps.GetFooterLength())
 	metaSize := int64(ps.GetMetadataLength())
 
@@ -133,42 +134,53 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 		buf = append(buf, ebuf...)
 	}
 	footerStart := psOffset - footerSize
-	bufferSize := ps.GetCompressionBlockSize()
-	uncompressedBuf := make([]byte, bufferSize)
+	bufferSize := int64(ps.GetCompressionBlockSize())
+	blockBuf := make([]byte, bufferSize)
 	compress := ps.GetCompression()
-	data := buf[footerStart : footerStart+footerSize]
-	//read header
-	original := (data[0] & 0x01) == 1
-	chunkLength := uint64((data[2] << 15) | (data[1] << 7) | (data[0] >> 1))
-	if chunkLength > bufferSize {
-		return nil, errors.New("chunk length larger than compression block size")
-	}
-	if int64(chunkLength) < footerSize {
-		return nil, errors.New("chunk data not enough")
-	}
-	compressedData:= data[3:3+chunkLength]
-
-
-	if !original {
-		switch compress {
-		case pb.CompressionKind_ZLIB:
-			b := bytes.NewBuffer(compressedData)
-			r, err := zlib.NewReader(b)
-			if err != nil {
-				return nil, errors.WithStack(err)
-			}
-			n, err := r.Read(uncompressedBuf)
-			r.Close()
-			if err != nil {
-				return nil, errors.Wrapf(err, "uncompress data chunk error when read footer")
-			}
-			footer := &pb.Footer{}
-			if err = proto.Unmarshal(uncompressedBuf[:n], footer); err != nil {
-				return nil, errors.Wrapf(err, "unmarshal footer error")
-			}
-			fmt.Println(footer.String())
+	//data := buf[footerStart : footerStart+footerSize]
+	offset := footerStart
+	for r := int64(0); r < footerSize; {
+		fmt.Printf("read footer offset %d\n", offset)
+		// header
+		original := (buf[offset] & 0x01) == 1
+		chunkLength := int64((buf[offset+2] << 15) | (buf[offset+1] << 7) | (buf[offset] >> 1))
+		//fixme:
+		if chunkLength > bufferSize {
+			return nil, errors.New("chunk length larger than compression block size")
 		}
+		//if chunkLength < footerSize {
+		//	return nil, errors.New("chunk data not enough")
+		//}
+		offset += 3
+		r = 3 + chunkLength
+
+		if original {
+
+		} else {
+			switch compress {
+			case pb.CompressionKind_ZLIB:
+				b := bytes.NewBuffer(buf[offset : offset+chunkLength])
+				r, err := zlib.NewReader(b)
+				if err != nil {
+					return nil, errors.WithStack(err)
+				}
+				n, err := r.Read(blockBuf)
+				r.Close()
+				if err != nil {
+					return nil, errors.Wrapf(err, "uncompress chunk data error when read footer")
+				}
+				footerBuf = append(footerBuf, blockBuf[:n]...)
+			}
+
+		}
+		offset += chunkLength
 	}
+
+	footer := &pb.Footer{}
+	if err = proto.Unmarshal(footerBuf, footer); err != nil {
+		return nil, errors.Wrapf(err, "unmarshal footer error")
+	}
+	fmt.Println(footer.String())
 
 	/*ft := pb.FileTail{Postscript: ps, Footer: footer, FileLength: &sz, PostscriptLength: &psLen}
 
