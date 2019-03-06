@@ -2,15 +2,16 @@ package orc
 
 import (
 	"bytes"
-	"compress/zlib"
+	"compress/flate"
 	"fmt"
+	"io"
+	"os"
+	"time"
+
 	"github.com/PatrickHuang888/goorc/hive"
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
-	"io"
-	"os"
-	"time"
 )
 
 const (
@@ -78,7 +79,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	if size == 0 {
 		// Hive often creates empty files (including ORC) and has an
 		// optimization to create a 0 byte file as an empty ORC file.
-		// todo: emtpy tail, log
+		// todo: empty tail, log
 		fmt.Printf("file size 0")
 		return
 	}
@@ -98,31 +99,20 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	}
 
 	// read the PostScript
-	// get length of PostScript
 	psLen := int64(buf[readSize-1])
-	/*if err=ensureOrcFooter(f, int(psLen), buf);err!=nil {
-		return nil, errors.WithStack(err)
-	}*/
 	psOffset := readSize - 1 - psLen
 	ps, err := extractPostScript(buf[psOffset : psOffset+psLen])
 	if err != nil {
-		return nil, errors.Wrapf(err, "extract postcript error %s", f.Name())
+		return nil, errors.Wrapf(err, "extract postscript error %s", f.Name())
 	}
 	fmt.Println(ps.String())
-	/*cs := *ps.CompressionBlockSize
-	bufferSize := int(cs)
-	ps.GetCompression()
-	sz := uint64(size)*/
-
-	var footerBuf []byte
-	footerSize := int64(ps.GetFooterLength())
+	footerSize := int64(ps.GetFooterLength()) // compressed footer length
 	metaSize := int64(ps.GetMetadataLength())
 
-	//check if extra bytes need to be read
+	// check if extra bytes need to be read
 	extra := Max(0, psLen+1+footerSize+metaSize-readSize)
-	//tailSize := 1 + psLen + footerSize + metaSize
 	if extra > 0 {
-		//more bytes need to be read, read extra bytes
+		// more bytes need to be read, read extra bytes
 		ebuf := make([]byte, extra)
 		if _, err := f.Seek(size-readSize-extra, 0); err != nil {
 			return nil, errors.WithStack(err)
@@ -135,41 +125,39 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	}
 	footerStart := psOffset - footerSize
 	bufferSize := int64(ps.GetCompressionBlockSize())
-	blockBuf := make([]byte, bufferSize)
+	decompressed := make([]byte, bufferSize, bufferSize)
+	decompressedPos := 0
 	compress := ps.GetCompression()
 	//data := buf[footerStart : footerStart+footerSize]
-	offset := footerStart
+	offset := int64(0)
+	footerBuf := buf[footerStart : footerStart+footerSize]
 	for r := int64(0); r < footerSize; {
-		fmt.Printf("read footer offset %d\n", offset)
 		// header
-		original := (buf[offset] & 0x01) == 1
-		chunkLength := int64((buf[offset+2] << 15) | (buf[offset+1] << 7) | (buf[offset] >> 1))
+		original := (footerBuf[offset] & 0x01) == 1
+		chunkLength := int64((footerBuf[offset+2] << 15) | (footerBuf[offset+1] << 7) | (footerBuf[offset] >> 1))
 		//fixme:
 		if chunkLength > bufferSize {
 			return nil, errors.New("chunk length larger than compression block size")
 		}
-		//if chunkLength < footerSize {
-		//	return nil, errors.New("chunk data not enough")
-		//}
 		offset += 3
-		r = 3 + chunkLength
+		r = offset + chunkLength
 
 		if original {
-
+			// todo:
+			return nil, errors.New("chunk original not implemented!")
 		} else {
 			switch compress {
 			case pb.CompressionKind_ZLIB:
-				b := bytes.NewBuffer(buf[offset : offset+chunkLength])
-				r, err := zlib.NewReader(b)
-				if err != nil {
-					return nil, errors.WithStack(err)
-				}
-				n, err := r.Read(blockBuf)
+				b := bytes.NewBuffer(footerBuf[offset : offset+chunkLength])
+				r := flate.NewReader(b)
+				decompressedPos, err = r.Read(decompressed)
 				r.Close()
-				if err != nil {
-					return nil, errors.Wrapf(err, "uncompress chunk data error when read footer")
+				if err != nil && err != io.EOF {
+					return nil, errors.Wrapf(err, "decompress chunk data error when read footer")
 				}
-				footerBuf = append(footerBuf, blockBuf[:n]...)
+				if decompressedPos == 0 {
+					return nil, errors.New("decompress 0 footer")
+				}
 			}
 
 		}
@@ -177,7 +165,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	}
 
 	footer := &pb.Footer{}
-	if err = proto.Unmarshal(footerBuf, footer); err != nil {
+	if err = proto.Unmarshal(decompressed[:decompressedPos], footer); err != nil {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 	fmt.Println(footer.String())
