@@ -20,6 +20,7 @@ const (
 )
 
 type Reader interface {
+	NumberOfRows() uint64
 	Rows() RecordReader
 }
 
@@ -28,13 +29,16 @@ type RecordReader interface {
 }
 
 type reader struct {
-	f *os.File
-	//tail *OrcTail
-	ps *pb.PostScript
+	f    *os.File
+	tail *pb.FileTail
 }
 
 func (r *reader) Rows() RecordReader {
 	return nil
+}
+
+func (r *reader) NumberOfRows() uint64 {
+	return r.tail.Footer.GetNumberOfRows()
 }
 
 type ReaderOptions struct {
@@ -61,11 +65,11 @@ func CreateReader(path string) (r Reader, err error) {
 		return nil, errors.Wrap(err, "open file error")
 	}
 
-	_, err = extractFileTail(f)
+	tail, err := extractFileTail(f)
 	if err != nil {
 		return nil, errors.Wrap(err, "extract tail error")
 	}
-	r = &reader{f: f}
+	r = &reader{f: f, tail: tail}
 	return
 }
 
@@ -170,11 +174,10 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	}
 	fmt.Println(footer.String())
 
-	/*ft := pb.FileTail{Postscript: ps, Footer: footer, FileLength: &sz, PostscriptLength: &psLen}
-
-	ot := &OrcTail{}
-	return ot, nil*/
-	return nil, nil
+	fl := uint64(size)
+	psl := uint64(psLen)
+	ft := &pb.FileTail{Postscript: ps, Footer: footer, FileLength: &fl, PostscriptLength: &psl}
+	return ft, nil
 }
 
 func extractPostScript(buf []byte) (ps *pb.PostScript, err error) {

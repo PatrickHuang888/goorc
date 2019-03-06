@@ -2,18 +2,19 @@ package main
 
 import (
 	"fmt"
+	"github.com/PatrickHuang888/goorc/hive"
 	"os"
 
 	"github.com/PatrickHuang888/goorc/orc"
 )
 
 func main() {
-	_, err := orc.CreateReader("/u01/apache/orc/java/examples/my-file.orc")
+	reader, err := orc.CreateReader("/u01/apache/orc/java/examples/my-file.orc")
 	if err != nil {
 		fmt.Printf("create reader error: %+v", err)
 		os.Exit(1)
 	}
-	//fmt.Printf("row count: %d\n", reader.NumberOfRows())
+	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
 	schema := orc.NewTypeDescription(orc.STRUCT)
 	xtd := orc.NewTypeDescription(orc.INT)
@@ -21,14 +22,14 @@ func main() {
 	schema.AddField("x", xtd)
 	schema.AddField("y", ytd)
 
-	/*batch, err := schema.CreateRowBatch(orc.ORIGINAL, hive.DEFAULT_ROW_SIZE)
+	_, err = schema.CreateRowBatch(orc.ORIGINAL, hive.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("create row batch error %v+", err)
 		os.Exit(1)
-	}*/
-	/*rowIter:= reader.Rows()
+	}
+	reader.Rows()
 
-	x := batch.Cols[0].(*hive.LongColumnVector)
+	/*x := batch.Cols[0].(*hive.LongColumnVector)
 	y := batch.Cols[1].(*hive.BytesColumnVector)*/
 
 	/*for ; rowIter.NextBatch(batch); {
