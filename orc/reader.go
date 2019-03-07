@@ -21,7 +21,7 @@ const (
 
 type Reader interface {
 	NumberOfRows() uint64
-	Rows() RecordReader
+	Rows() (RecordReader, error)
 }
 
 type RecordReader interface {
@@ -40,22 +40,46 @@ func (r *reader) Rows() (rr RecordReader, err error) {
 		if _, err := r.f.Seek(siOffset, 0); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		compressedSiBuf:= make([]byte, si.GetFooterLength())
-		if _, err =io.ReadFull(r.f, compressedSiBuf); err!=nil {
+		compressedSiBuf := make([]byte, si.GetFooterLength())
+		if _, err = io.ReadFull(r.f, compressedSiBuf); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		decompressedSiBuf:= make([]byte, 16*1026)
-		
+		decompressedSiBuf := make([]byte, 16*1024)
+
+		switch r.tail.Postscript.GetCompression() {
+		case pb.CompressionKind_ZLIB:
+			b:=bytes.NewBuffer(compressedSiBuf)
+			codec:= flate.NewReader(b)
+			n, deErr:= codec.Read(decompressedSiBuf)
+			codec.Close()
+			if deErr==io.EOF{
+				fmt.Printf("decompress end")
+			}
+			if deErr!=nil && deErr!=io.EOF {
+				return nil, errors.Wrapf(deErr, "decompress strip footer error")
+			}
+			if n==0 {
+				return nil, errors.New("decompress strip footer zero")
+			}
+			sf:= &pb.StripeFooter{}
+			proto.Unmarshal(decompressedSiBuf[:n], sf)
+			fmt.Printf("strip footer %s", sf.String())
+		}
 
 	}
 	return nil, nil
 }
 
 type recordReader struct {
+	f *os.File
 }
 
 func (rr *recordReader) NextBatch(batch *hive.VectorizedRowBatch) bool {
 	return true
+}
+
+func (rr *recordReader) Close() {
+	rr.f.Close()
 }
 
 func (r *reader) NumberOfRows() uint64 {

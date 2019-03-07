@@ -1,10 +1,6 @@
 package orc
 
-import (
-	"github.com/pkg/errors"
-)
-
-const (
+/*const (
 	NONE CompressionKind = iota
 	ZLIB
 	SNAPPY
@@ -49,3 +45,4 @@ func NewCodec(kind CompressionKind) (cc CompressionCodec, err error) {
 	}
 	return cc, err
 }
+*/
