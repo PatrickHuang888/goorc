@@ -26,6 +26,7 @@ type Reader interface {
 
 type RecordReader interface {
 	NextBatch(batch *hive.VectorizedRowBatch) bool
+	Close()
 }
 
 type reader struct {
@@ -33,8 +34,28 @@ type reader struct {
 	tail *pb.FileTail
 }
 
-func (r *reader) Rows() RecordReader {
-	return nil
+func (r *reader) Rows() (rr RecordReader, err error) {
+	for _, si := range r.tail.Footer.Stripes {
+		siOffset := int64(si.GetOffset() + si.GetIndexLength() + si.GetDataLength())
+		if _, err := r.f.Seek(siOffset, 0); err != nil {
+			return nil, errors.WithStack(err)
+		}
+		compressedSiBuf:= make([]byte, si.GetFooterLength())
+		if _, err =io.ReadFull(r.f, compressedSiBuf); err!=nil {
+			return nil, errors.WithStack(err)
+		}
+		decompressedSiBuf:= make([]byte, 16*1026)
+		
+
+	}
+	return nil, nil
+}
+
+type recordReader struct {
+}
+
+func (rr *recordReader) NextBatch(batch *hive.VectorizedRowBatch) bool {
+	return true
 }
 
 func (r *reader) NumberOfRows() uint64 {

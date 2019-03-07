@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/PatrickHuang888/goorc/hive"
+	"github.com/PatrickHuang888/goorc/pb/pb"
 	"os"
 
 	"github.com/PatrickHuang888/goorc/orc"
@@ -16,23 +17,23 @@ func main() {
 	}
 	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
-	schema := orc.NewTypeDescription(orc.STRUCT)
-	xtd := orc.NewTypeDescription(orc.INT)
-	ytd := orc.NewTypeDescription(orc.STRING)
+	schema := orc.NewTypeDescription(pb.Type_STRUCT)
+	xtd := orc.NewTypeDescription(pb.Type_INT)
+	ytd := orc.NewTypeDescription(pb.Type_STRING)
 	schema.AddField("x", xtd)
 	schema.AddField("y", ytd)
 
-	_, err = schema.CreateRowBatch(orc.ORIGINAL, hive.DEFAULT_ROW_SIZE)
+	batch, err := schema.CreateRowBatch(orc.ORIGINAL, hive.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("create row batch error %v+", err)
 		os.Exit(1)
 	}
-	reader.Rows()
+	rowIter := reader.Rows()
 
-	/*x := batch.Cols[0].(*hive.LongColumnVector)
-	y := batch.Cols[1].(*hive.BytesColumnVector)*/
+	x := batch.Cols[0].(*hive.LongColumnVector)
+	y := batch.Cols[1].(*hive.BytesColumnVector)
 
-	/*for ; rowIter.NextBatch(batch); {
+	for ; rowIter.NextBatch(batch); {
 		for row := 0; row < batch.Size; row++ {
 			xRow := 0
 			if !x.Repeating {
@@ -42,5 +43,5 @@ func main() {
 			fmt.Printf("y: %s\n", string(y.Vector[row]))
 		}
 	}
-	rowIter.Close()*/
+	rowIter.Close()
 }

@@ -2,35 +2,17 @@ package orc
 
 import (
 	"github.com/PatrickHuang888/goorc/hive"
+	. "github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 )
 
 const (
 	ORIGINAL RowBatchVersion = iota
 	DECIMAL64
-
-	BOOLEAN Category = iota
-	BYTE
-	SHORT
-	INT
-	LONG
-	FLOAT
-	DOUBLE
-	STRING
-	DATE
-	TIMESTAMP
-	BINARY
-	DECIMAL
-	VARCHAR
-	CHAR  // 13
-	LIST
-	MAP
-	STRUCT
-	UNION
 )
 
 // type Category
-type Category int
+type Category Type_Kind
 
 type catData struct {
 	name        string
@@ -75,12 +57,12 @@ type TypeDescription interface {
 }
 
 type typeDesc struct {
-	category Category
+	category Type_Kind
 	children []TypeDescription
 	names    []string
 }
 
-func NewTypeDescription(cat Category) TypeDescription {
+func NewTypeDescription(cat Type_Kind) TypeDescription {
 	return &typeDesc{category: cat}
 }
 
@@ -89,59 +71,62 @@ func (td *typeDesc) AddField(name string, typeDesc TypeDescription) {
 	td.names = append(td.names, name)
 }
 
-func (td *typeDesc) CreateRowBatch(ver RowBatchVersion, size int) (vrb *hive.VectorizedRowBatch, err error) {
-	if td.category == STRUCT {
+func (td *typeDesc) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb *hive.VectorizedRowBatch, err error) {
+	if maxSize < hive.DEFAULT_ROW_SIZE {
+		maxSize = hive.DEFAULT_ROW_SIZE
+	}
+	if td.category == Type_STRUCT {
 		numCols := len(td.children)
 		cols := make([]hive.ColumnVector, numCols)
-		vrb = &hive.VectorizedRowBatch{NumCols: numCols, Size: size, Cols: cols}
+		vrb = &hive.VectorizedRowBatch{NumCols: numCols, Cols: cols}
 		for i, v := range td.children {
-			cols[i], err = v.CreateColumn(ver, size)
+			cols[i], err = v.CreateColumn(ver, maxSize)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
 		}
 	} else {
 		cols := make([]hive.ColumnVector, 1)
-		cols[0], err = td.CreateColumn(ver, size)
+		cols[0], err = td.CreateColumn(ver, maxSize)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-		vrb = &hive.VectorizedRowBatch{NumCols: 1, Size: size, Cols: cols}
+		vrb = &hive.VectorizedRowBatch{NumCols: 1, Cols: cols}
 	}
 	return
 }
 
 func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
 	switch td.category {
-	case BOOLEAN:
+	case Type_BOOLEAN:
 		fallthrough
-	case BYTE:
+	case Type_BYTE:
 		fallthrough
-	case SHORT:
+	case Type_SHORT:
 		fallthrough
-	case INT:
+	case Type_INT:
 		fallthrough
-	case LONG:
+	case Type_LONG:
 		fallthrough
-	case DATE:
+	case Type_DATE:
 		cv = &hive.LongColumnVector{Vector: make([]int64, hive.DEFAULT_ROW_SIZE, maxSize)}
-	case TIMESTAMP:
+	case Type_TIMESTAMP:
 		cv = &hive.TimestampColumnVector{Vector: make([]uint64, hive.DEFAULT_ROW_SIZE, maxSize)}
-	case FLOAT:
+	case Type_FLOAT:
 		fallthrough
-	case DOUBLE:
+	case Type_DOUBLE:
 		cv = &hive.DoubleColumnVector{Vector: make([]float64, hive.DEFAULT_ROW_SIZE, maxSize)}
-	case DECIMAL:
+	case Type_DECIMAL:
 	// todo:
-	case STRING:
+	case Type_STRING:
 		fallthrough
-	case BINARY:
+	case Type_BINARY:
 		fallthrough
-	case CHAR:
+	case Type_CHAR:
 		fallthrough
-	case VARCHAR:
+	case Type_VARCHAR:
 		cv = &hive.BytesColumnVector{Vector: make([][]byte, hive.DEFAULT_ROW_SIZE, maxSize)}
-	case STRUCT:
+	case Type_STRUCT:
 		f := make([]hive.ColumnVector, len(td.children))
 		for i, v := range td.children {
 			f[i], err = v.CreateColumn(ver, maxSize)
@@ -150,14 +135,14 @@ func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.Colu
 			}
 		}
 		cv = hive.NewStructColumnVector(maxSize, f...)
-	case UNION:
+	case Type_UNION:
 	// todo:
-	case LIST:
+	case Type_LIST:
 	// todo:
-	case MAP:
+	case Type_MAP:
 		// todo:
 	default:
-		return nil, errors.Errorf("unknown type %s", td.category.Name())
+		return nil, errors.Errorf("unknown type %s", td.category.String())
 	}
 	return cv, err
 }

@@ -1,67 +1,51 @@
 package hive
 
-const (
-	// column vector type
-	NONE Type = iota
-	LONG
-	DOUBLE
-	BYTES
-	DECIMAL
-	DECIMAL_64
-	TIMESTAMP
-	INTERVAL_DAY_TIME
-	STRUCT
-	LIST
-	MAP
-	UNION
-	VOID
-)
-
-type Type int
+import "github.com/PatrickHuang888/goorc/pb/pb"
 
 type ColumnVector interface {
-	T() Type
+	T() pb.Type_Kind
 }
 
 // nullable int column vector for all integer types
 type LongColumnVector struct {
 	Vector []int64
+	Repeating bool
 }
 
-func (*LongColumnVector) T() Type {
-	return LONG
+func (*LongColumnVector) T() pb.Type_Kind {
+	return pb.Type_LONG
 }
 
 type TimestampColumnVector struct {
 	Vector []uint64
 }
 
-func (*TimestampColumnVector) T() Type {
-	return TIMESTAMP
+func (*TimestampColumnVector) T() pb.Type_Kind {
+	return pb.Type_TIMESTAMP
 }
 
 type DoubleColumnVector struct {
 	Vector []float64
 }
 
-func (*DoubleColumnVector) T() Type {
-	return DOUBLE
+func (*DoubleColumnVector) T() pb.Type_Kind {
+	return pb.Type_DOUBLE
 }
 
 type BytesColumnVector struct {
 	Vector [][]byte
 }
 
-func (*BytesColumnVector) T() Type {
-	return BYTES
+func (*BytesColumnVector) T() pb.Type_Kind {
+	return pb.Type_VARCHAR
 }
 
 type StructColumnVector struct {
 	fields []ColumnVector
 }
 
-func (*StructColumnVector) T() Type {
-	return STRUCT
+func (*StructColumnVector) T() pb.Type_Kind {
+	return pb.Type_STRUCT
 }
 
 func NewStructColumnVector(len int, fields ...ColumnVector) ColumnVector {
