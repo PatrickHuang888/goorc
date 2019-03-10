@@ -35,39 +35,70 @@ type reader struct {
 }
 
 func (r *reader) Rows() (rr RecordReader, err error) {
-	for _, si := range r.tail.Footer.Stripes {
+	for i, si := range r.tail.Footer.Stripes {
 		siOffset := int64(si.GetOffset() + si.GetIndexLength() + si.GetDataLength())
 		if _, err := r.f.Seek(siOffset, 0); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		compressedSiBuf := make([]byte, si.GetFooterLength())
-		if _, err = io.ReadFull(r.f, compressedSiBuf); err != nil {
+		stripeFooterBuf := make([]byte, si.GetFooterLength())
+		if _, err = io.ReadFull(r.f, stripeFooterBuf); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		decompressedSiBuf := make([]byte, 16*1024)
-
-		switch r.tail.Postscript.GetCompression() {
-		case pb.CompressionKind_ZLIB:
-			b:=bytes.NewBuffer(compressedSiBuf)
-			codec:= flate.NewReader(b)
-			n, deErr:= codec.Read(decompressedSiBuf)
-			codec.Close()
-			if deErr==io.EOF{
-				fmt.Printf("decompress end")
-			}
-			if deErr!=nil && deErr!=io.EOF {
-				return nil, errors.Wrapf(deErr, "decompress strip footer error")
-			}
-			if n==0 {
-				return nil, errors.New("decompress strip footer zero")
-			}
-			sf:= &pb.StripeFooter{}
-			proto.Unmarshal(decompressedSiBuf[:n], sf)
-			fmt.Printf("strip footer %s", sf.String())
+		bufferSize := int(r.tail.Postscript.GetCompressionBlockSize())
+		decompressed, err := ReadChunks(stripeFooterBuf, r.tail.GetPostscript().GetCompression(), bufferSize)
+		if err != nil {
+			return nil, errors.WithStack(err)
 		}
+
+		stripeFooter := &pb.StripeFooter{}
+		if err = proto.Unmarshal(decompressed, stripeFooter); err != nil {
+			return nil, errors.Wrapf(err, "unmarshal stripfooter error")
+		}
+
+		fmt.Printf("Stripe %d footer: %s", i, stripeFooter.String())
 
 	}
 	return nil, nil
+}
+
+func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSize int) (decompressed []byte, err error) {
+	for offset := 0; offset < len(chunksBuf); {
+		// header
+		original := (chunksBuf[offset] & 0x01) == 1
+		chunkLength := int((chunksBuf[offset+2] << 15) | (chunksBuf[offset+1] << 7) |
+			(chunksBuf[offset] >> 1))
+		buf := make([]byte, chunkBufferSize)
+		//fixme
+		if chunkLength > chunkBufferSize {
+			return nil, errors.New("chunk length larger than compression block size")
+		}
+		offset += 3
+
+		if original {
+			// todo:
+			return nil, errors.New("chunk original not implemented!")
+		} else {
+			switch compressKind {
+			case pb.CompressionKind_ZLIB:
+				r := flate.NewReader(bytes.NewReader(chunksBuf[offset : offset+chunkLength]))
+				n, err := r.Read(buf)
+				r.Close()
+				if err != nil && err != io.EOF {
+					return nil, errors.Wrapf(err, "decompress chunk data error when read footer")
+				}
+				if n == 0 {
+					return nil, errors.New("decompress 0 footer")
+				}
+				offset += chunkLength
+				//fixme:
+				decompressed = append(decompressed, buf[:n]...)
+			default:
+				//todo:
+				return nil, errors.New("compress other than zlib not implemented")
+			}
+		}
+	}
+	return
 }
 
 type recordReader struct {
