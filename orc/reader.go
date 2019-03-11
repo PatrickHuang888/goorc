@@ -36,26 +36,49 @@ type reader struct {
 
 func (r *reader) Rows() (rr RecordReader, err error) {
 	for i, si := range r.tail.Footer.Stripes {
-		siOffset := int64(si.GetOffset() + si.GetIndexLength() + si.GetDataLength())
-		if _, err := r.f.Seek(siOffset, 0); err != nil {
+		offSet := int64(si.GetOffset())
+		indexLength := int64(si.GetIndexLength())
+		dataLength := int64(si.GetDataLength())
+		bufferSize := int(r.tail.Postscript.GetCompressionBlockSize())
+
+		// row index
+		indexOffset := offSet
+		if _, err = r.f.Seek(indexOffset, 0); err != nil {
+			return nil, errors.WithStack(err)
+		}
+		indexBuf := make([]byte, indexLength)
+		if _, err = io.ReadFull(r.f, indexBuf); err != nil {
+			return nil, errors.WithStack(err)
+		}
+		decompressed, err := ReadChunks(indexBuf, r.tail.GetPostscript().GetCompression(), bufferSize)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		index := &pb.RowIndex{}
+		if err = proto.Unmarshal(decompressed, index); err != nil {
+			return nil, errors.Wrapf(err, "unmarshal strip index error")
+		}
+		fmt.Printf("Stripe index: %s\n", index.String())
+
+		// footer
+		footerOffset := int64(offSet + indexLength + dataLength)
+		if _, err := r.f.Seek(footerOffset, 0); err != nil {
 			return nil, errors.WithStack(err)
 		}
 		stripeFooterBuf := make([]byte, si.GetFooterLength())
 		if _, err = io.ReadFull(r.f, stripeFooterBuf); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		bufferSize := int(r.tail.Postscript.GetCompressionBlockSize())
-		decompressed, err := ReadChunks(stripeFooterBuf, r.tail.GetPostscript().GetCompression(), bufferSize)
+		decompressed, err = ReadChunks(stripeFooterBuf, r.tail.GetPostscript().GetCompression(), bufferSize)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-
 		stripeFooter := &pb.StripeFooter{}
 		if err = proto.Unmarshal(decompressed, stripeFooter); err != nil {
 			return nil, errors.Wrapf(err, "unmarshal stripfooter error")
 		}
 
-		fmt.Printf("Stripe %d footer: %s", i, stripeFooter.String())
+		fmt.Printf("Stripe %d footer: %s\n", i, stripeFooter.String())
 
 	}
 	return nil, nil
@@ -68,15 +91,15 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 		chunkLength := int((chunksBuf[offset+2] << 15) | (chunksBuf[offset+1] << 7) |
 			(chunksBuf[offset] >> 1))
 		buf := make([]byte, chunkBufferSize)
-		//fixme
+		//fixme:
 		if chunkLength > chunkBufferSize {
 			return nil, errors.New("chunk length larger than compression block size")
 		}
 		offset += 3
 
 		if original {
-			// todo:
-			return nil, errors.New("chunk original not implemented!")
+			//fixme:
+			decompressed = append(decompressed, chunksBuf[offset:offset+chunkLength]...)
 		} else {
 			switch compressKind {
 			case pb.CompressionKind_ZLIB:
@@ -89,7 +112,6 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 				if n == 0 {
 					return nil, errors.New("decompress 0 footer")
 				}
-				offset += chunkLength
 				//fixme:
 				decompressed = append(decompressed, buf[:n]...)
 			default:
@@ -97,6 +119,7 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 				return nil, errors.New("compress other than zlib not implemented")
 			}
 		}
+		offset += chunkLength
 	}
 	return
 }
