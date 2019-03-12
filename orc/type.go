@@ -52,30 +52,50 @@ type RowBatchVersion int
 
 type TypeDescription interface {
 	CreateRowBatch(ver RowBatchVersion, size int) (*hive.VectorizedRowBatch, error)
-	AddField(name string, td TypeDescription)
+	AddChild(name string, td TypeDescription)
 	CreateColumn(ver RowBatchVersion, maxSize int) (hive.ColumnVector, error)
+	GetKind() Type_Kind
+	GetChildren() []TypeDescription
+	GetChildrenNames() []string
 }
 
 type typeDesc struct {
-	category Type_Kind
+	id       uint32
+	kind     *Type_Kind
 	children []TypeDescription
 	names    []string
 }
 
-func NewTypeDescription(cat Type_Kind) TypeDescription {
-	return &typeDesc{category: cat}
+func NewTypeDescription(kind *Type_Kind, id uint32) TypeDescription {
+	return &typeDesc{kind: kind, id: id}
 }
 
-func (td *typeDesc) AddField(name string, typeDesc TypeDescription) {
+func (td *typeDesc) GetChildren() []TypeDescription {
+	return td.children
+}
+
+func (td *typeDesc) GetChildrenNames() []string {
+	return td.names
+}
+
+func (td *typeDesc) AddChild(name string, typeDesc TypeDescription) {
 	td.children = append(td.children, typeDesc)
 	td.names = append(td.names, name)
+}
+
+func (td *typeDesc) GetKind() Type_Kind {
+	if td != nil && td.kind != nil {
+		return *td.kind
+	}
+	// fixme:
+	return Type_BOOLEAN
 }
 
 func (td *typeDesc) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb *hive.VectorizedRowBatch, err error) {
 	if maxSize < hive.DEFAULT_ROW_SIZE {
 		maxSize = hive.DEFAULT_ROW_SIZE
 	}
-	if td.category == Type_STRUCT {
+	if td.GetKind() == Type_STRUCT {
 		numCols := len(td.children)
 		cols := make([]hive.ColumnVector, numCols)
 		vrb = &hive.VectorizedRowBatch{NumCols: numCols, Cols: cols}
@@ -97,7 +117,7 @@ func (td *typeDesc) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb *hive.
 }
 
 func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
-	switch td.category {
+	switch td.GetKind() {
 	case Type_BOOLEAN:
 		fallthrough
 	case Type_BYTE:
@@ -142,7 +162,7 @@ func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.Colu
 	case Type_MAP:
 		// todo:
 	default:
-		return nil, errors.Errorf("unknown type %s", td.category.String())
+		return nil, errors.Errorf("unknown type %s", td.GetKind().String())
 	}
 	return cv, err
 }

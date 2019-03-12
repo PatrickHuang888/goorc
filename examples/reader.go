@@ -2,10 +2,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/PatrickHuang888/goorc/hive"
-	"github.com/PatrickHuang888/goorc/pb/pb"
 	"os"
 
+	"github.com/PatrickHuang888/goorc/hive"
 	"github.com/PatrickHuang888/goorc/orc"
 )
 
@@ -17,19 +16,20 @@ func main() {
 	}
 	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
-	schema := orc.NewTypeDescription(pb.Type_STRUCT)
+	/*schema := orc.NewTypeDescription(pb.Type_STRUCT)
 	xtd := orc.NewTypeDescription(pb.Type_INT)
 	ytd := orc.NewTypeDescription(pb.Type_STRING)
 	schema.AddField("x", xtd)
-	schema.AddField("y", ytd)
+	schema.AddField("y", ytd)*/
 
+	schema := reader.GetSchema()
 	_, err = schema.CreateRowBatch(orc.ORIGINAL, hive.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("create row batch error %+v", err)
 		os.Exit(1)
 	}
-	_, err= reader.Rows()
-	if err!=nil {
+	_, err = reader.Rows()
+	if err != nil {
 		fmt.Printf("%+v", err)
 	}
 

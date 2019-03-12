@@ -20,6 +20,7 @@ const (
 )
 
 type Reader interface {
+	GetSchema() TypeDescription
 	NumberOfRows() uint64
 	Rows() (RecordReader, error)
 }
@@ -30,11 +31,17 @@ type RecordReader interface {
 }
 
 type reader struct {
-	f    *os.File
-	tail *pb.FileTail
+	f      *os.File
+	tail   *pb.FileTail
+	schema TypeDescription
+}
+
+func (r *reader) GetSchema() TypeDescription {
+	return r.schema
 }
 
 func (r *reader) Rows() (rr RecordReader, err error) {
+	//fixme: strips are large typically  ~200MB
 	for i, si := range r.tail.Footer.Stripes {
 		offSet := int64(si.GetOffset())
 		indexLength := int64(si.GetIndexLength())
@@ -58,7 +65,10 @@ func (r *reader) Rows() (rr RecordReader, err error) {
 		if err = proto.Unmarshal(decompressed, index); err != nil {
 			return nil, errors.Wrapf(err, "unmarshal strip index error")
 		}
-		fmt.Printf("Stripe index: %s\n", index.String())
+		//fmt.Printf("Stripe index: %s\n", index.String())
+		for _, entry := range index.Entry {
+			fmt.Printf("strip index entry: %s\n", entry.String())
+		}
 
 		// footer
 		footerOffset := int64(offSet + indexLength + dataLength)
@@ -168,7 +178,50 @@ func CreateReader(path string) (r Reader, err error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "extract tail error")
 	}
-	r = &reader{f: f, tail: tail}
+
+	schema := unmarshallSchema(tail.Footer.Types)
+
+	r = &reader{f: f, tail: tail, schema: schema}
+	return
+}
+
+func unmarshallSchema(types []*pb.Type) (schema TypeDescription) {
+	tds := make([]TypeDescription, len(types))
+	for i, t := range types {
+		node := NewTypeDescription(t.Kind, uint32(i))
+		tds[i] = node
+	}
+	if len(tds) > 0 {
+		schema = tds[0]
+	}
+	for i, t := range types {
+		for j, v := range t.Subtypes {
+			node := NewTypeDescription(types[v].Kind, v)
+			tds[i].AddChild(t.FieldNames[j], node)
+		}
+	}
+	return
+}
+
+func marshallSchema(schema TypeDescription) (types []*pb.Type) {
+	types = preOrderWalkSchema(schema)
+	return
+}
+
+func preOrderWalkSchema(node TypeDescription) (types []*pb.Type) {
+	if node != nil {
+		t := &pb.Type{}
+		k := node.GetKind()
+		t.Kind = &k
+		for i, name := range node.GetChildrenNames() {
+			t.FieldNames = append(t.FieldNames, name)
+			t.Subtypes = append(t.Subtypes, uint32(i))
+		}
+		types = append(types, t)
+		for _, n := range node.GetChildren() {
+			types = preOrderWalkSchema(n)
+		}
+	}
 	return
 }
 
@@ -271,7 +324,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	if err = proto.Unmarshal(decompressed[:decompressedPos], footer); err != nil {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
-	fmt.Println(footer.String())
+	fmt.Printf("Footer: %s\n", footer.String())
 
 	fl := uint64(size)
 	psl := uint64(psLen)
