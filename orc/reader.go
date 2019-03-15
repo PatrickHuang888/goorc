@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"compress/flate"
 	"fmt"
-	"io"
-	"os"
-	"time"
-
 	"github.com/PatrickHuang888/goorc/hive"
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
+	"io"
+	"os"
 )
 
 const (
@@ -20,29 +18,26 @@ const (
 )
 
 type Reader interface {
-	GetSchema() TypeDescription
+	GetSchema() *TypeDescription
 	NumberOfRows() uint64
 	Rows() (RecordReader, error)
-}
-
-type RecordReader interface {
-	NextBatch(batch *hive.VectorizedRowBatch) bool
-	Close()
 }
 
 type reader struct {
 	f      *os.File
 	tail   *pb.FileTail
-	schema TypeDescription
+	schema *TypeDescription
 }
 
-func (r *reader) GetSchema() TypeDescription {
+func (r *reader) GetSchema() *TypeDescription {
 	return r.schema
 }
 
 func (r *reader) Rows() (rr RecordReader, err error) {
+	var sfs []*pb.StripeFooter
+
 	//fixme: strips are large typically  ~200MB
-	for i, si := range r.tail.Footer.Stripes {
+	for _, si := range r.tail.Footer.Stripes {
 		offSet := int64(si.GetOffset())
 		indexLength := int64(si.GetIndexLength())
 		dataLength := int64(si.GetDataLength())
@@ -66,9 +61,9 @@ func (r *reader) Rows() (rr RecordReader, err error) {
 			return nil, errors.Wrapf(err, "unmarshal strip index error")
 		}
 		//fmt.Printf("Stripe index: %s\n", index.String())
-		for _, entry := range index.Entry {
+		/*for _, entry := range index.Entry {
 			fmt.Printf("strip index entry: %s\n", entry.String())
-		}
+		}*/
 
 		// footer
 		footerOffset := int64(offSet + indexLength + dataLength)
@@ -85,13 +80,14 @@ func (r *reader) Rows() (rr RecordReader, err error) {
 		}
 		stripeFooter := &pb.StripeFooter{}
 		if err = proto.Unmarshal(decompressed, stripeFooter); err != nil {
-			return nil, errors.Wrapf(err, "unmarshal stripfooter error")
+			return nil, errors.Wrapf(err, "unmarshal stripe footer error")
 		}
+		//fmt.Printf("Stripe %d footer: %s\n", i, stripeFooter.String())
 
-		fmt.Printf("Stripe %d footer: %s\n", i, stripeFooter.String())
-
+		sfs = append(sfs, stripeFooter)
 	}
-	return nil, nil
+	rr = &recordReader{f:r.f, stripeFooters: sfs, stripeInfos:r.tail.Footer.Stripes}
+	return
 }
 
 func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSize int) (decompressed []byte, err error) {
@@ -134,11 +130,27 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 	return
 }
 
+type RecordReader interface {
+	NextBatch(batch *hive.VectorizedRowBatch) bool
+	Close()
+}
+
 type recordReader struct {
-	f *os.File
+	f             *os.File
+	stripeFooters []*pb.StripeFooter
+	stripeInfos []*pb.StripeInformation
+	currentStripe uint32
 }
 
 func (rr *recordReader) NextBatch(batch *hive.VectorizedRowBatch) bool {
+	sf:= rr.stripeFooters[rr.currentStripe]
+	sf.GetColumns()
+	sf.GetStreams()
+	fmt.Printf("Current stripe: %s",sf.String())
+
+	/*si:= rr.stripeInfos[rr.currentStripe]
+	dataStart:=si.GetOffset()+si.GetIndexLength()
+	dataLength:=si.GetDataLength()*/
 	return true
 }
 
@@ -151,12 +163,6 @@ func (r *reader) NumberOfRows() uint64 {
 }
 
 type ReaderOptions struct {
-}
-
-type OrcTail struct {
-	Ft               *pb.FileTail
-	meta             *pb.Metadata
-	ModificationTime time.Time
 }
 
 func CreateReader(path string) (r Reader, err error) {
@@ -185,42 +191,42 @@ func CreateReader(path string) (r Reader, err error) {
 	return
 }
 
-func unmarshallSchema(types []*pb.Type) (schema TypeDescription) {
-	tds := make([]TypeDescription, len(types))
+func unmarshallSchema(types []*pb.Type) (schema *TypeDescription) {
+	tds := make([]*TypeDescription, len(types))
 	for i, t := range types {
-		node := NewTypeDescription(t.Kind, uint32(i))
+		node := &TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
 		tds[i] = node
 	}
 	if len(tds) > 0 {
 		schema = tds[0]
 	}
 	for i, t := range types {
+		tds[i].Children = make([]*TypeDescription, len(t.Subtypes))
+		tds[i].ChildrenNames = make([]string, len(t.Subtypes))
 		for j, v := range t.Subtypes {
-			node := NewTypeDescription(types[v].Kind, v)
-			tds[i].AddChild(t.FieldNames[j], node)
+			tds[i].ChildrenNames[j] = t.FieldNames[j]
+			tds[i].Children[j] = tds[v]
 		}
 	}
 	return
 }
 
-func marshallSchema(schema TypeDescription) (types []*pb.Type) {
+func marshallSchema(schema *TypeDescription) (types []*pb.Type) {
 	types = preOrderWalkSchema(schema)
 	return
 }
 
-func preOrderWalkSchema(node TypeDescription) (types []*pb.Type) {
-	if node != nil {
-		t := &pb.Type{}
-		k := node.GetKind()
-		t.Kind = &k
-		for i, name := range node.GetChildrenNames() {
-			t.FieldNames = append(t.FieldNames, name)
-			t.Subtypes = append(t.Subtypes, uint32(i))
-		}
-		types = append(types, t)
-		for _, n := range node.GetChildren() {
-			types = preOrderWalkSchema(n)
-		}
+func preOrderWalkSchema(node *TypeDescription) (types []*pb.Type) {
+	t := &pb.Type{}
+	t.Kind = &node.Kind
+	for i, name := range node.ChildrenNames {
+		t.FieldNames = append(t.FieldNames, name)
+		t.Subtypes = append(t.Subtypes, node.Children[i].Id)
+	}
+	types = append(types, t)
+	for _, n := range node.Children {
+		ts := preOrderWalkSchema(n)
+		types = append(types, ts...)
 	}
 	return
 }
@@ -261,7 +267,6 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "extract postscript error %s", f.Name())
 	}
-	fmt.Println(ps.String())
 	footerSize := int64(ps.GetFooterLength()) // compressed footer length
 	metaSize := int64(ps.GetMetadataLength())
 
@@ -346,6 +351,7 @@ func extractPostScript(buf []byte) (ps *pb.PostScript, err error) {
 	default:
 		return nil, errors.New("unknown compression")
 	}*/
+	fmt.Printf("Postscript: %s\n", ps.String())
 	return ps, err
 }
 

@@ -12,7 +12,7 @@ const (
 )
 
 type WriterOptions struct {
-	Schema         TypeDescription
+	Schema         *TypeDescription
 	RowIndexStride int
 }
 
@@ -29,7 +29,7 @@ type Writer interface {
 // write out by columns
 type writer struct {
 	path           string
-	schema         TypeDescription
+	schema         *TypeDescription
 	buildIndex     bool
 	rowsInStripe   int64
 	pw             PhysicalWriter
@@ -37,7 +37,7 @@ type writer struct {
 	rowsInIndex    int
 }
 
-func (w *writer) GetSchema() TypeDescription {
+func (w *writer) GetSchema() *TypeDescription {
 	return w.schema
 }
 

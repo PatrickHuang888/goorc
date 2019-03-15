@@ -1,6 +1,7 @@
 package orc
 
 import (
+	"fmt"
 	"github.com/PatrickHuang888/goorc/hive"
 	. "github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
@@ -50,56 +51,31 @@ func (c Category) IsPrimitive() bool {
 
 type RowBatchVersion int
 
-type TypeDescription interface {
-	CreateRowBatch(ver RowBatchVersion, size int) (*hive.VectorizedRowBatch, error)
-	AddChild(name string, td TypeDescription)
-	CreateColumn(ver RowBatchVersion, maxSize int) (hive.ColumnVector, error)
-	GetKind() Type_Kind
-	GetChildren() []TypeDescription
-	GetChildrenNames() []string
+type TypeDescription struct {
+	Id            uint32
+	Kind          Type_Kind
+	ChildrenNames []string
+	Children      []*TypeDescription
 }
 
-type typeDesc struct {
-	id       uint32
-	kind     *Type_Kind
-	children []TypeDescription
-	names    []string
-}
-
-func NewTypeDescription(kind *Type_Kind, id uint32) TypeDescription {
-	return &typeDesc{kind: kind, id: id}
-}
-
-func (td *typeDesc) GetChildren() []TypeDescription {
-	return td.children
-}
-
-func (td *typeDesc) GetChildrenNames() []string {
-	return td.names
-}
-
-func (td *typeDesc) AddChild(name string, typeDesc TypeDescription) {
-	td.children = append(td.children, typeDesc)
-	td.names = append(td.names, name)
-}
-
-func (td *typeDesc) GetKind() Type_Kind {
-	if td != nil && td.kind != nil {
-		return *td.kind
+func (td *TypeDescription) Print() {
+	fmt.Printf("Id: %d, Kind: %s\n", td.Id, td.Kind.String())
+	fmt.Printf("ChildrenNames:%s\n", td.ChildrenNames)
+	for _, n := range td.Children {
+		fmt.Printf("Children of %d:", td.Id)
+		n.Print()
 	}
-	// fixme:
-	return Type_BOOLEAN
 }
 
-func (td *typeDesc) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb *hive.VectorizedRowBatch, err error) {
+func (td *TypeDescription) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb *hive.VectorizedRowBatch, err error) {
 	if maxSize < hive.DEFAULT_ROW_SIZE {
 		maxSize = hive.DEFAULT_ROW_SIZE
 	}
-	if td.GetKind() == Type_STRUCT {
-		numCols := len(td.children)
+	if td.Kind == Type_STRUCT {
+		numCols := len(td.Children)
 		cols := make([]hive.ColumnVector, numCols)
 		vrb = &hive.VectorizedRowBatch{NumCols: numCols, Cols: cols}
-		for i, v := range td.children {
+		for i, v := range td.Children {
 			cols[i], err = v.CreateColumn(ver, maxSize)
 			if err != nil {
 				return nil, errors.WithStack(err)
@@ -116,8 +92,8 @@ func (td *typeDesc) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb *hive.
 	return
 }
 
-func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
-	switch td.GetKind() {
+func (td *TypeDescription) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
+	switch td.Kind {
 	case Type_BOOLEAN:
 		fallthrough
 	case Type_BYTE:
@@ -147,8 +123,8 @@ func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.Colu
 	case Type_VARCHAR:
 		cv = &hive.BytesColumnVector{Vector: make([][]byte, hive.DEFAULT_ROW_SIZE, maxSize)}
 	case Type_STRUCT:
-		f := make([]hive.ColumnVector, len(td.children))
-		for i, v := range td.children {
+		f := make([]hive.ColumnVector, len(td.Children))
+		for i, v := range td.Children {
 			f[i], err = v.CreateColumn(ver, maxSize)
 			if err != nil {
 				return nil, errors.WithStack(err)
@@ -162,7 +138,7 @@ func (td *typeDesc) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.Colu
 	case Type_MAP:
 		// todo:
 	default:
-		return nil, errors.Errorf("unknown type %s", td.GetKind().String())
+		return nil, errors.Errorf("unknown type %s", td.Kind.String())
 	}
 	return cv, err
 }
