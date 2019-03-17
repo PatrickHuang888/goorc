@@ -24,16 +24,16 @@ type Reader interface {
 }
 
 type reader struct {
-	f      *os.File
-	tail   *pb.FileTail
-	schema *TypeDescription
+	f    *os.File
+	tail *pb.FileTail
+	tds  []*TypeDescription
 }
 
 func (r *reader) GetSchema() *TypeDescription {
-	return r.schema
+	return r.tds[0]
 }
 
-func (r *reader) Rows() (rr RecordReader, err error) {
+func (r *reader) Rows() (rr StripeReader, err error) {
 	var sfs []*pb.StripeFooter
 
 	//fixme: strips are large typically  ~200MB
@@ -86,7 +86,7 @@ func (r *reader) Rows() (rr RecordReader, err error) {
 
 		sfs = append(sfs, stripeFooter)
 	}
-	rr = &recordReader{f:r.f, stripeFooters: sfs, stripeInfos:r.tail.Footer.Stripes}
+	rr = &stripeReader{f: r.f, stripeFooters: sfs, stripeInfos: r.tail.Footer.Stripes}
 	return
 }
 
@@ -130,32 +130,60 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 	return
 }
 
-type RecordReader interface {
+type StripeReader interface {
 	NextBatch(batch *hive.VectorizedRowBatch) bool
 	Close()
 }
 
-type recordReader struct {
+type stripeReader struct {
 	f             *os.File
 	stripeFooters []*pb.StripeFooter
-	stripeInfos []*pb.StripeInformation
-	currentStripe uint32
+	stripeInfos   []*pb.StripeInformation
+	footer        *pb.Footer
+	tds           []*TypeDescription
+	currentStripe int
+	cr *columnReader
 }
 
-func (rr *recordReader) NextBatch(batch *hive.VectorizedRowBatch) bool {
-	sf:= rr.stripeFooters[rr.currentStripe]
-	sf.GetColumns()
-	sf.GetStreams()
-	fmt.Printf("Current stripe: %s",sf.String())
-
-	/*si:= rr.stripeInfos[rr.currentStripe]
-	dataStart:=si.GetOffset()+si.GetIndexLength()
-	dataLength:=si.GetDataLength()*/
-	return true
+type columnReader struct {
+	tds      *TypeDescription
+	encoding *pb.ColumnEncoding
+	streams  []*pb.Stream
 }
 
-func (rr *recordReader) Close() {
-	rr.f.Close()
+func (sr *stripeReader) NextStripe(batch *hive.VectorizedRowBatch) bool {
+	currentStripe:= sr.currentStripe
+	sf := sr.stripeFooters[currentStripe]
+	fmt.Printf("Current stripe %d: %s", sr.currentStripe, sf.String())
+
+	columnReaders := make([]columnReader, len(sr.tds))
+
+	for i, encoding := range sf.GetColumns() {
+		columnReaders[i].encoding = encoding
+	}
+
+	streams := sf.GetStreams()
+	for _, stream := range streams {
+		c := stream.GetColumn()
+		columnReaders[c].streams = append(columnReaders[c].streams, stream)
+	}
+
+	si := sr.stripeInfos[currentStripe]
+	dataStart := si.GetOffset() + si.GetIndexLength()
+	dataLength := si.GetDataLength()
+
+	
+
+	sr.currentStripe++
+	if sr.currentStripe <= len(sr.stripeInfos) {
+		return true
+	} else {
+		return false
+	}
+}
+
+func (sr *stripeReader) Close() {
+	sr.f.Close()
 }
 
 func (r *reader) NumberOfRows() uint64 {
@@ -185,9 +213,26 @@ func CreateReader(path string) (r Reader, err error) {
 		return nil, errors.Wrap(err, "extract tail error")
 	}
 
-	schema := unmarshallSchema(tail.Footer.Types)
+	tds := unmarshallSchema2(tail.Footer.Types)
 
-	r = &reader{f: f, tail: tail, schema: schema}
+	r = &reader{f: f, tail: tail, tds: tds}
+	return
+}
+
+func unmarshallSchema2(types []*pb.Type) (tds []*TypeDescription) {
+	tds = make([]*TypeDescription, len(types))
+	for i, t := range types {
+		node := &TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
+		tds[i] = node
+	}
+	for i, t := range types {
+		tds[i].Children = make([]*TypeDescription, len(t.Subtypes))
+		tds[i].ChildrenNames = make([]string, len(t.Subtypes))
+		for j, v := range t.Subtypes {
+			tds[i].ChildrenNames[j] = t.FieldNames[j]
+			tds[i].Children[j] = tds[v]
+		}
+	}
 	return
 }
 

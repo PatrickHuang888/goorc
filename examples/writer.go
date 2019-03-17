@@ -21,8 +21,8 @@ func main() {
 		fmt.Printf("got error when create row batch %v+", err)
 		os.Exit(1)
 	}
-	vx := batch[0]
-	vy := batch[1]
+	vx := batch.Cols[0]
+	vy := batch.Cols[1]
 
 	for r := 0; r < 10000; r++ {
 		row := batch.size
