@@ -23,12 +23,12 @@ func main() {
 	schema.AddField("y", ytd)*/
 
 	schema := reader.GetSchema()
-	batch, err := schema.CreateRowBatch(orc.ORIGINAL, hive.DEFAULT_ROW_SIZE)
+	batch, err := schema.CreateRowBatch(hive.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("create row batch error %+v", err)
 		os.Exit(1)
 	}
-	it, err := reader.Rows()
+	it, err := reader.Stripes()
 	if err != nil {
 		fmt.Printf("%+v", err)
 	}
@@ -36,7 +36,11 @@ func main() {
 	/*x := batch.Cols[0].(*hive.LongColumnVector)
 	y := batch.Cols[1].(*hive.BytesColumnVector)*/
 
-	it.NextBatch(batch)
+	for it.NextStripe() {
+		for it.NextBatch(batch) {
+
+		}
+	}
 	/*for it.NextBatch(batch) {
 		for row := 0; row < batch.Size; row++ {
 			xRow := 0

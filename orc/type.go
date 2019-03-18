@@ -67,7 +67,7 @@ func (td *TypeDescription) Print() {
 	}
 }
 
-func (td *TypeDescription) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb *hive.VectorizedRowBatch, err error) {
+func (td *TypeDescription) CreateRowBatch(maxSize int) (vrb *hive.VectorizedRowBatch, err error) {
 	if maxSize < hive.DEFAULT_ROW_SIZE {
 		maxSize = hive.DEFAULT_ROW_SIZE
 	}
@@ -76,14 +76,14 @@ func (td *TypeDescription) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb
 		cols := make([]hive.ColumnVector, numCols)
 		vrb = &hive.VectorizedRowBatch{NumCols: numCols, Cols: cols}
 		for i, v := range td.Children {
-			cols[i], err = v.CreateColumn(ver, maxSize)
+			cols[i], err = v.CreateColumn(maxSize)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
 		}
 	} else {
 		cols := make([]hive.ColumnVector, 1)
-		cols[0], err = td.CreateColumn(ver, maxSize)
+		cols[0], err = td.CreateColumn(maxSize)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
@@ -92,7 +92,7 @@ func (td *TypeDescription) CreateRowBatch(ver RowBatchVersion, maxSize int) (vrb
 	return
 }
 
-func (td *TypeDescription) CreateColumn(ver RowBatchVersion, maxSize int) (cv hive.ColumnVector, err error) {
+func (td *TypeDescription) CreateColumn(maxSize int) (cv hive.ColumnVector, err error) {
 	switch td.Kind {
 	case Type_BOOLEAN:
 		fallthrough
@@ -125,7 +125,7 @@ func (td *TypeDescription) CreateColumn(ver RowBatchVersion, maxSize int) (cv hi
 	case Type_STRUCT:
 		f := make([]hive.ColumnVector, len(td.Children))
 		for i, v := range td.Children {
-			f[i], err = v.CreateColumn(ver, maxSize)
+			f[i], err = v.CreateColumn(maxSize)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}

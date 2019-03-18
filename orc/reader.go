@@ -20,7 +20,7 @@ const (
 type Reader interface {
 	GetSchema() *TypeDescription
 	NumberOfRows() uint64
-	Rows() (RecordReader, error)
+	Stripes() (StripeReader, error)
 }
 
 type reader struct {
@@ -33,7 +33,7 @@ func (r *reader) GetSchema() *TypeDescription {
 	return r.tds[0]
 }
 
-func (r *reader) Rows() (rr StripeReader, err error) {
+func (r *reader) Stripes() (rr StripeReader, err error) {
 	var sfs []*pb.StripeFooter
 
 	//fixme: strips are large typically  ~200MB
@@ -86,7 +86,8 @@ func (r *reader) Rows() (rr StripeReader, err error) {
 
 		sfs = append(sfs, stripeFooter)
 	}
-	rr = &stripeReader{f: r.f, stripeFooters: sfs, stripeInfos: r.tail.Footer.Stripes}
+
+	rr = &stripeReader{f: r.f, stripeFooters: sfs, stripeInfos: r.tail.Footer.Stripes, tds: r.tds}
 	return
 }
 
@@ -131,48 +132,67 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 }
 
 type StripeReader interface {
+	NextStripe() bool
+	Err() error
 	NextBatch(batch *hive.VectorizedRowBatch) bool
 	Close()
 }
 
 type stripeReader struct {
-	f             *os.File
-	stripeFooters []*pb.StripeFooter
-	stripeInfos   []*pb.StripeInformation
-	footer        *pb.Footer
-	tds           []*TypeDescription
-	currentStripe int
-	cr *columnReader
+	f                 *os.File
+	stripeFooters     []*pb.StripeFooter
+	stripeInfos       []*pb.StripeInformation
+	footer            *pb.Footer
+	tds               []*TypeDescription
+	currentStripe     int
+	currentCrs        []*columnReader
+	currentDataOffset uint64
+	currentDataLength uint64
+	err               error
 }
 
 type columnReader struct {
-	tds      *TypeDescription
+	id       int
+	td       *TypeDescription
 	encoding *pb.ColumnEncoding
 	streams  []*pb.Stream
 }
 
-func (sr *stripeReader) NextStripe(batch *hive.VectorizedRowBatch) bool {
-	currentStripe:= sr.currentStripe
-	sf := sr.stripeFooters[currentStripe]
-	fmt.Printf("Current stripe %d: %s", sr.currentStripe, sf.String())
-
-	columnReaders := make([]columnReader, len(sr.tds))
-
-	for i, encoding := range sf.GetColumns() {
-		columnReaders[i].encoding = encoding
+func (cr *columnReader) Print() {
+	fmt.Printf("   Column Reader: %d\n", cr.id)
+	fmt.Printf("td: %s\n", cr.td.Kind.String())
+	//cr.td.Print()
+	fmt.Printf("encoding: %s\n", cr.encoding.String())
+	fmt.Printf("streams: \n")
+	for _, s := range cr.streams {
+		fmt.Printf("%s ", s.String())
 	}
+	fmt.Println()
+}
 
-	streams := sf.GetStreams()
-	for _, stream := range streams {
+func (sr *stripeReader) NextStripe() bool {
+	currentStripe := sr.currentStripe
+	sf := sr.stripeFooters[currentStripe]
+	fmt.Printf("Stripe number %d\n", sr.currentStripe)
+
+	crs := make([]*columnReader, len(sr.tds))
+
+	for i := 0; i < len(crs); i++ {
+		crs[i] = &columnReader{id: i, td: sr.tds[i], encoding: sf.GetColumns()[i]}
+	}
+	for _, stream := range sf.GetStreams() {
 		c := stream.GetColumn()
-		columnReaders[c].streams = append(columnReaders[c].streams, stream)
+		crs[c].streams = append(crs[c].streams, stream)
 	}
 
 	si := sr.stripeInfos[currentStripe]
-	dataStart := si.GetOffset() + si.GetIndexLength()
-	dataLength := si.GetDataLength()
+	sr.currentDataOffset = si.GetOffset() + si.GetIndexLength()
+	sr.currentDataLength = si.GetDataLength()
 
-	
+	sr.currentCrs = crs
+	for _, v := range crs {
+		v.Print()
+	}
 
 	sr.currentStripe++
 	if sr.currentStripe <= len(sr.stripeInfos) {
@@ -180,6 +200,14 @@ func (sr *stripeReader) NextStripe(batch *hive.VectorizedRowBatch) bool {
 	} else {
 		return false
 	}
+}
+
+func (sr *stripeReader) NextBatch(batch *hive.VectorizedRowBatch) bool {
+	return false
+}
+
+func (sr *stripeReader) Err() error {
+	return sr.err
 }
 
 func (sr *stripeReader) Close() {
