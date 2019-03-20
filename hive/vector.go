@@ -2,6 +2,16 @@ package hive
 
 import "github.com/PatrickHuang888/goorc/pb/pb"
 
+const (
+	DEFAULT_ROW_SIZE = 1024
+)
+
+type VectorizedRowBatch struct {
+	NumCols int // number of columns
+	Size    int // number of rows
+	Cols    []ColumnVector
+}
+
 type ColumnVector interface {
 	T() pb.Type_Kind
 }
@@ -41,15 +51,9 @@ func (*BytesColumnVector) T() pb.Type_Kind {
 }
 
 type StructColumnVector struct {
-	fields []ColumnVector
+	Fields []ColumnVector
 }
 
 func (*StructColumnVector) T() pb.Type_Kind {
 	return pb.Type_STRUCT
-}
-
-func NewStructColumnVector(len int, fields ...ColumnVector) ColumnVector {
-	var v []ColumnVector
-	v = append(v, fields...)
-	return &StructColumnVector{fields: v}
 }

@@ -87,7 +87,7 @@ func (r *reader) Stripes() (rr StripeReader, err error) {
 		sfs = append(sfs, stripeFooter)
 	}
 
-	rr = &stripeReader{f: r.f, stripeFooters: sfs, stripeInfos: r.tail.Footer.Stripes, tds: r.tds}
+	rr = &stripeReader{f: r.f, stripeFooters: sfs, tds: r.tds, tail: r.tail}
 	return
 }
 
@@ -139,23 +139,25 @@ type StripeReader interface {
 }
 
 type stripeReader struct {
-	f                 *os.File
-	stripeFooters     []*pb.StripeFooter
-	stripeInfos       []*pb.StripeInformation
-	footer            *pb.Footer
-	tds               []*TypeDescription
-	currentStripe     int
-	currentCrs        []*columnReader
-	currentDataOffset uint64
-	currentDataLength uint64
-	err               error
+	f             *os.File
+	stripeFooters []*pb.StripeFooter
+	tds           []*TypeDescription
+	tail          *pb.FileTail
+	currentStripe int
+	currentCrs    []*columnReader
+	err           error
 }
 
 type columnReader struct {
-	id       int
-	td       *TypeDescription
-	encoding *pb.ColumnEncoding
-	streams  []*pb.Stream
+	id           int
+	td           *TypeDescription
+	encoding     *pb.ColumnEncoding
+	streams      []*pb.Stream
+	present      bool
+	f            *os.File
+	si           *pb.StripeInformation
+	compressKind pb.CompressionKind
+	chunkBufSize uint64
 }
 
 func (cr *columnReader) Print() {
@@ -178,16 +180,14 @@ func (sr *stripeReader) NextStripe() bool {
 	crs := make([]*columnReader, len(sr.tds))
 
 	for i := 0; i < len(crs); i++ {
-		crs[i] = &columnReader{id: i, td: sr.tds[i], encoding: sf.GetColumns()[i]}
+		crs[i] = &columnReader{id: i, td: sr.tds[i], encoding: sf.GetColumns()[i],
+			si: sr.tail.Footer.Stripes[currentStripe], compressKind: sr.tail.Postscript.GetCompression(),
+			chunkBufSize: sr.tail.Postscript.GetCompressionBlockSize()}
 	}
 	for _, stream := range sf.GetStreams() {
 		c := stream.GetColumn()
 		crs[c].streams = append(crs[c].streams, stream)
 	}
-
-	si := sr.stripeInfos[currentStripe]
-	sr.currentDataOffset = si.GetOffset() + si.GetIndexLength()
-	sr.currentDataLength = si.GetDataLength()
 
 	sr.currentCrs = crs
 	for _, v := range crs {
@@ -195,7 +195,7 @@ func (sr *stripeReader) NextStripe() bool {
 	}
 
 	sr.currentStripe++
-	if sr.currentStripe <= len(sr.stripeInfos) {
+	if sr.currentStripe <= len(sr.tail.Footer.Stripes) {
 		return true
 	} else {
 		return false
@@ -203,7 +203,59 @@ func (sr *stripeReader) NextStripe() bool {
 }
 
 func (sr *stripeReader) NextBatch(batch *hive.VectorizedRowBatch) bool {
+	crs := sr.currentCrs
+	rootTd := crs[0].td
+	if rootTd.Kind == pb.Type_STRUCT {
+		for i, col := range batch.Cols {
+			td := rootTd.Children[i]
+			cr := crs[td.Id]
+			cr.fillBatch(col)
+		}
+	} else {
+		// todo:
+		errors.New("root td is not struct")
+	}
 	return false
+}
+
+func (cr *columnReader) fillBatch(vector hive.ColumnVector) (err error) {
+	offset := cr.si.GetOffset()
+	dataStart := offset + cr.si.GetIndexLength()
+	//dataLength := cr.si.GetDataLength()
+
+	enc := cr.encoding.GetKind()
+	switch enc {
+	case pb.ColumnEncoding_DIRECT:
+		fallthrough
+	case pb.ColumnEncoding_DICTIONARY:
+		fallthrough
+	case pb.ColumnEncoding_DICTIONARY_V2:
+		return errors.Errorf("ColumnEncoding %s not implemented", enc)
+	case pb.ColumnEncoding_DIRECT_V2:
+		if cr.td.Kind == pb.Type_INT { // Signed Integer RLE v2
+			for _, stream := range cr.streams {
+				if stream.GetKind() == pb.Stream_DATA {
+					dataLength := stream.GetLength()
+					if _, err = cr.f.Seek(int64(dataStart), 0); err != nil {
+						return errors.WithStack(err)
+					}
+					buf := make([]byte, dataLength)
+					if _, err = io.ReadFull(cr.f, buf); err != nil {
+						return errors.Wrapf(err, "fill batch, read stream DATA error")
+					}
+					//decompressed, err := ReadChunks(buf, cr.compressKind, cr.chunkBufSize)
+					if err != nil {
+						return errors.Wrapf(err, "decompress stream DATA")
+					}
+					//decoder := getDecoder()
+					//decoder.readValues(decompressed, vector)
+				}
+			}
+		} else {
+			return errors.Errorf("td other than int not impl")
+		}
+	}
+	return
 }
 
 func (sr *stripeReader) Err() error {

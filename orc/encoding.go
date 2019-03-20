@@ -113,28 +113,30 @@ func (irl *intRunLengthV1) writeValues(out OutputStream) error {
 	return nil
 }
 
-type intRunLengthV2 struct {
+// int run length encoding v2
+type intRleV2 struct {
 	sub         byte
 	signed      bool
 	literals    []int64
 	uliterals   []uint64
-	numLiterals int
+	numLiterals uint32
 }
 
-func (irl *intRunLengthV2) readValues(in InputStream) error {
-	header, err := in.ReadByte()
+func (rle *intRleV2) readValues(in InputStream) error {
+	b, err := in.ReadByte()
 	if err != nil {
 		errors.WithStack(err)
 	}
-	irl.sub = header >> 6
-	switch irl.sub {
+	rle.sub = b >> 6
+	switch rle.sub {
 	case SHORT_REPEAT:
+		header := b
 		width := 1 + (header>>3)&0x07 // W bytes
 		repeatCount := 3 + (header & 0x07)
-		irl.numLiterals = int(repeatCount)
+		rle.numLiterals = uint32(repeatCount)
 
 		var x uint64
-		for i := width; i > 0; {
+		for i := width; i > 0; { // big endian
 			i--
 			b, err := in.ReadByte()
 			if err != nil {
@@ -143,42 +145,47 @@ func (irl *intRunLengthV2) readValues(in InputStream) error {
 			x |= uint64(b) << (8 * i)
 		}
 
-		if irl.signed { // zigzag
-			irl.literals[0] = DecodeZigzag(x)
+		if rle.signed { // zigzag
+			rle.literals[0] = DecodeZigzag(x)
 		} else {
-			irl.uliterals[0] = x
+			rle.uliterals[0] = x
 		}
 	case DIRECT:
-		/*width := (header >> 3) & 0x07
-		var encodingWidth int
-		switch width {
+		b1, err := in.ReadByte()
+		if err != nil {
+			errors.WithStack(err)
+		}
+		header := uint16(b) | uint16(b1<<8)
+		w := (header >> 3) & 0x07
+		var width uint32
+		switch w {
 		case 0:
-			encodingWidth = 0
+			width = 0 // delta
 		case 1:
-			encodingWidth = 0
+			width = 0 // non-delta
 		case 2:
-			encodingWidth = 1
+			width = 1
 		case 4:
-			encodingWidth = 3
+			width = 3
 		case 8:
-			encodingWidth = 7
+			width = 7
 		case 16:
-			encodingWidth = 15
+			width = 15
 		case 24:
-			encodingWidth = 23
+			width = 23
 		case 32:
-			encodingWidth = 27
+			width = 27
 		case 40:
-			encodingWidth = 28
+			width = 28
 		case 48:
-			encodingWidth = 29
+			width = 29
 		case 56:
-			encodingWidth = 30
+			width = 30
 		case 64:
-			encodingWidth = 31
+			width = 31
 		default:
 			return errors.Errorf("run length integer v2, direct width(W) %d deprecated", width)
-		}*/
+		}
 		/*header1, err := in.ReadByte()
 		if err != nil {
 			return errors.WithStack(err)
@@ -190,11 +197,11 @@ func (irl *intRunLengthV2) readValues(in InputStream) error {
 }
 
 func DecodeZigzag(x uint64) int64 {
-	return int64(x >> 1) ^ -int64(x&1)
+	return int64(x>>1) ^ -int64(x & 1)
 }
 
 func EncodeZigzag(x int64) uint64 {
-	return uint64(x<<1) ^ uint64(x >> 63)
+	return uint64(x<<1) ^ uint64(x>>63)
 }
 
 // base 128 varuint

@@ -90,13 +90,13 @@ func TestIntRunLengthV1(t *testing.T) {
 
 func TestIntRunLengthV2(t *testing.T)  {
 	t1 := &bstream{value: []byte{0x0a, 0x27, 0x10}}
-	irl := &intRunLengthV2{
+	irl := &intRleV2{
 		uliterals: make([]uint64, MAX_LITERAL_SIZE),
 	}
 	err:= irl.readValues(t1)
 	assert.Nil(t, err)
 	assert.Equal(t, SHORT_REPEAT, irl.sub)
-	assert.Equal(t, 5, irl.numLiterals)
+	assert.Equal(t, uint32(5), irl.numLiterals)
 	assert.Equal(t, 10000, int(irl.uliterals[0]))
 }
 

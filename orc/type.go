@@ -130,7 +130,7 @@ func (td *TypeDescription) CreateColumn(maxSize int) (cv hive.ColumnVector, err 
 				return nil, errors.WithStack(err)
 			}
 		}
-		cv = hive.NewStructColumnVector(maxSize, f...)
+		cv = &hive.StructColumnVector{Fields:f}
 	case Type_UNION:
 	// todo:
 	case Type_LIST:
