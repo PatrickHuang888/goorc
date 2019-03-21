@@ -240,18 +240,24 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		}
 
 	case PATCHED_BASE:
-		header:= make([]byte, 4)  // 4 byte header
-		_, err= io.ReadFull(in, header[1:4])
-		if err!=nil {
+		header := make([]byte, 4) // 4 byte header
+		_, err = io.ReadFull(in, header[1:4])
+		if err != nil {
 			return errors.WithStack(err)
 		}
-		header[0]= b
-		w := byte(header >> 25 & 0x1F)           // 5bit([3,8)) width
+		header[0] = b
+		w := header[0] & 0x1F // 5 bit width
 		width, err := getWidth(w)
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		length := header&0x1FF + 1
+		length := uint16(header[0])&0x01<<8 | uint16(header[1]) + 1
+		bw := header[2]>>5&0x07 + 1
+		pw, err := getWidth(header[2] & 0x1F)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		
 
 	default:
 		return errors.Errorf("sub encoding %d for int rle v2 not recognized", rle.sub)
