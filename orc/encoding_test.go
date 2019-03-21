@@ -1,7 +1,7 @@
 package orc
 
 import (
-	"github.com/pkg/errors"
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -17,12 +17,12 @@ func (bs *bstream) ReadByte() (byte, error) {
 	return v, nil
 }
 func (bs *bstream) Read(p []byte) (n int, err error) {
-	if len(p) != len(bs.value)-bs.pos {
+	/*if len(p) != len(bs.value)-bs.pos {
 		return 0, errors.New("read copy slice length error")
-	}
-	copy(p, bs.value[bs.pos:])
-	bs.pos += len(p)
-	return len(p), nil
+	}*/
+	n = copy(p, bs.value[bs.pos:])
+	bs.pos += n
+	return
 }
 
 func TestByteRunLength(t *testing.T) {
@@ -88,27 +88,39 @@ func TestIntRunLengthV1(t *testing.T) {
 	assert.Equal(t, irl.literals[4], uint64(11))
 }
 
-func TestIntRunLengthV2(t *testing.T)  {
+func TestIntRunLengthV2(t *testing.T) {
+	//short repeat
 	t1 := &bstream{value: []byte{0x0a, 0x27, 0x10}}
 	irl := &intRleV2{
 		uliterals: make([]uint64, MAX_LITERAL_SIZE),
 	}
-	err:= irl.readValues(t1)
+	err := irl.readValues(t1)
 	assert.Nil(t, err)
 	assert.Equal(t, SHORT_REPEAT, irl.sub)
 	assert.Equal(t, uint32(5), irl.numLiterals)
 	assert.Equal(t, 10000, int(irl.uliterals[0]))
+
+	//direct
+	r := []uint64{23713, 43806, 57005, 48879}
+	t2 := &bstream{value: []byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef}}
+	err = irl.readValues(t2)
+	if err != nil {
+		fmt.Printf("error %+v", err)
+		t.Fatal(err)
+	}
+	assert.Equal(t, uint32(4), irl.numLiterals)
+	assert.EqualValues(t, r, irl.uliterals[0:4])
 }
 
-func TestZigzag(t *testing.T)  {
+func TestZigzag(t *testing.T) {
 	assert.Equal(t, uint64(1), EncodeZigzag(-1))
 	assert.Equal(t, int64(-1), DecodeZigzag(1))
 
-	var x int64= 2147483647
+	var x int64 = 2147483647
 	assert.Equal(t, uint64(4294967294), EncodeZigzag(x))
 	assert.Equal(t, x, DecodeZigzag(EncodeZigzag(x)))
 
-	var y int64= -2147483648
+	var y int64 = -2147483648
 	assert.Equal(t, uint64(4294967295), EncodeZigzag(y))
 	assert.Equal(t, y, DecodeZigzag(EncodeZigzag(y)))
 }

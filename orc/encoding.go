@@ -11,7 +11,7 @@ const (
 
 	SHORT_REPEAT byte = 0
 	DIRECT            = 1
-	PatchedBase
+	PATCHED_BASE      = 2
 	Delta
 )
 
@@ -117,12 +117,13 @@ func (irl *intRunLengthV1) writeValues(out OutputStream) error {
 type intRleV2 struct {
 	sub         byte
 	signed      bool
-	literals    []int64
+	literals    []int64 // fixme: allocate
 	uliterals   []uint64
 	numLiterals uint32
 }
 
 func (rle *intRleV2) readValues(in InputStream) error {
+	// header from MSB to LSB
 	b, err := in.ReadByte()
 	if err != nil {
 		errors.WithStack(err)
@@ -131,7 +132,7 @@ func (rle *intRleV2) readValues(in InputStream) error {
 	switch rle.sub {
 	case SHORT_REPEAT:
 		header := b
-		width := 1 + (header>>3)&0x07 // W bytes
+		width := 1 + (header>>3)&0x07 // 3bit([3,)6) width
 		repeatCount := 3 + (header & 0x07)
 		rle.numLiterals = uint32(repeatCount)
 
@@ -155,45 +156,139 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		if err != nil {
 			errors.WithStack(err)
 		}
-		header := uint16(b) | uint16(b1<<8)
-		w := (header >> 3) & 0x07
-		var width uint32
-		switch w {
-		case 0:
-			width = 0 // delta
-		case 1:
-			width = 0 // non-delta
-		case 2:
-			width = 1
-		case 4:
-			width = 3
-		case 8:
-			width = 7
-		case 16:
-			width = 15
-		case 24:
-			width = 23
-		case 32:
-			width = 27
-		case 40:
-			width = 28
-		case 48:
-			width = 29
-		case 56:
-			width = 30
-		case 64:
-			width = 31
-		default:
-			return errors.Errorf("run length integer v2, direct width(W) %d deprecated", width)
-		}
-		/*header1, err := in.ReadByte()
+		header := uint16(b)<<8 | uint16(b1) // 2 byte header
+		w := (header >> 9) & 0x1F           // 5bit([3,8)) width
+		width, err := getWidth(byte(w))
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		length :=*/
-	}
+		length := header&0x1FF + 1
+		rle.numLiterals = uint32(length)
+		for i := uint16(0); i < length; i++ {
+			var x uint64
+			switch width {
+			case 0:
+				// todo:
+				fallthrough
+			case 1:
+				// todo:
+				return errors.Errorf("direct width %d not impl", width)
+			case 2:
+				fallthrough
+			case 4:
+				fallthrough
+			case 8:
+				b, err := in.ReadByte()
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				x = uint64(b)
+			case 16:
+				b := make([]byte, 2)
+				if _, err = io.ReadFull(in, b); err != nil {
+					return errors.WithStack(err)
+				}
+				x = uint64(b[1]) | uint64(b[0])<<8
+			case 24:
+				b := make([]byte, 3)
+				if _, err = io.ReadFull(in, b); err != nil {
+					return errors.WithStack(err)
+				}
+				x = uint64(b[2]) | uint64(b[1])<<8 | uint64(b[0])<<16
+			case 32:
+				b := make([]byte, 4)
+				if _, err = io.ReadFull(in, b); err != nil {
+					return errors.WithStack(err)
+				}
+				x = uint64(b[3]) | uint64(b[2])<<8 | uint64(b[1])<<16 | uint64(b[0])<<24
+			case 40:
+				b := make([]byte, 5)
+				if _, err = io.ReadFull(in, b); err != nil {
+					return errors.WithStack(err)
+				}
+				x = uint64(b[4]) | uint64(b[3])<<8 | uint64(b[2])<<16 | uint64(b[1])<<24 | uint64(b[0])<<32
+			case 48:
+				b := make([]byte, 6)
+				if _, err = io.ReadFull(in, b); err != nil {
+					return errors.WithStack(err)
+				}
+				x = uint64(b[5]) | uint64(b[4])<<8 | uint64(b[4])<<16 | uint64(b[2])<<24 | uint64(b[1])<<32 |
+					uint64(b[0])<<40
+			case 56:
+				b := make([]byte, 7)
+				if _, err = io.ReadFull(in, b); err != nil {
+					return errors.WithStack(err)
+				}
+				x = uint64(b[6]) | uint64(b[5])<<8 | uint64(b[4])<<16 | uint64(b[3])<<24 | uint64(b[2])<<32 |
+					uint64(b[1])<<40 | uint64(b[0])<<48
+			case 65:
+				b := make([]byte, 8)
+				if _, err = io.ReadFull(in, b); err != nil {
+					return errors.WithStack(err)
+				}
+				x = uint64(b[7]) | uint64(b[1])<<8 | uint64(b[6])<<16 | uint64(b[5])<<24 | uint64(b[4])<<32 |
+					uint64(b[3])<<40 | uint64(b[2])<<48 | uint64(b[1])<<56
+			default:
+				return errors.Errorf("direct width %d not deprecated", width)
+			}
 
+			if rle.signed {
+				rle.literals[i] = DecodeZigzag(x)
+			} else {
+				rle.uliterals[i] = x
+			}
+		}
+
+	case PATCHED_BASE:
+		header:= make([]byte, 4)  // 4 byte header
+		_, err= io.ReadFull(in, header[1:4])
+		if err!=nil {
+			return errors.WithStack(err)
+		}
+		header[0]= b
+		w := byte(header >> 25 & 0x1F)           // 5bit([3,8)) width
+		width, err := getWidth(w)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		length := header&0x1FF + 1
+
+	default:
+		return errors.Errorf("sub encoding %d for int rle v2 not recognized", rle.sub)
+	}
 	return nil
+}
+
+func getWidth(w byte) (width byte, err error) {
+	switch w {
+	case 0:
+		width = 0 // delta
+		// todo:
+		// width= 1 // non-delta
+	case 1:
+		width = 2
+	case 3:
+		width = 4
+	case 7:
+		width = 8
+	case 15:
+		width = 16
+	case 23:
+		width = 24
+	case 27:
+		width = 32
+	case 28:
+		width = 40
+	case 29:
+		width = 48
+	case 30:
+		width = 56
+	case 31:
+		width = 64
+	default:
+		return 0, errors.Errorf("run length integer v2, direct width(W) %d deprecated", width)
+	}
+	return
 }
 
 func DecodeZigzag(x uint64) int64 {
