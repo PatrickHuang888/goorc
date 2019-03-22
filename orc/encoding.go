@@ -1,6 +1,7 @@
 package orc
 
 import (
+	"encoding/binary"
 	"github.com/pkg/errors"
 	"io"
 )
@@ -9,10 +10,10 @@ const (
 	MIN_REPEAT_SIZE  = 3
 	MAX_LITERAL_SIZE = 128
 
-	SHORT_REPEAT byte = 0
-	DIRECT            = 1
-	PATCHED_BASE      = 2
-	Delta
+	Encoding_SHORT_REPEAT byte = 0
+	Encoding_DIRECT            = 1
+	Encoding_PATCHED_BASE      = 2
+	Encoding_DELTA             = 3
 )
 
 type RunLengthEncoding interface {
@@ -124,14 +125,14 @@ type intRleV2 struct {
 
 func (rle *intRleV2) readValues(in InputStream) error {
 	// header from MSB to LSB
-	b, err := in.ReadByte()
+	firstByte, err := in.ReadByte()
 	if err != nil {
 		errors.WithStack(err)
 	}
-	rle.sub = b >> 6
+	rle.sub = firstByte >> 6
 	switch rle.sub {
-	case SHORT_REPEAT:
-		header := b
+	case Encoding_SHORT_REPEAT:
+		header := firstByte
 		width := 1 + (header>>3)&0x07 // 3bit([3,)6) width
 		repeatCount := 3 + (header & 0x07)
 		rle.numLiterals = uint32(repeatCount)
@@ -151,14 +152,14 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		} else {
 			rle.uliterals[0] = x
 		}
-	case DIRECT:
+	case Encoding_DIRECT:
 		b1, err := in.ReadByte()
 		if err != nil {
 			errors.WithStack(err)
 		}
-		header := uint16(b)<<8 | uint16(b1) // 2 byte header
-		w := (header >> 9) & 0x1F           // 5bit([3,8)) width
-		width, err := getWidth(byte(w))
+		header := uint16(firstByte)<<8 | uint16(b1) // 2 byte header
+		w := (header >> 9) & 0x1F                   // 5bit([3,8)) width
+		width, err := getWidth(byte(w), false)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -239,15 +240,15 @@ func (rle *intRleV2) readValues(in InputStream) error {
 			}
 		}
 
-	case PATCHED_BASE:
+	case Encoding_PATCHED_BASE:
 		header := make([]byte, 4) // 4 byte header
 		_, err = io.ReadFull(in, header[1:4])
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		header[0] = b
-		w := header[0] & 0x1F // 5 bit width
-		width, err := getWidth(w)
+		header[0] = firstByte
+		w := header[0] & 0x1f // 5 bit width
+		width, err := getWidth(w, false)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -257,20 +258,168 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		
+		pgw := header[3]>>5&0x07 + 1
+		pll := header[3] & 0x1F
 
+	case Encoding_DELTA:
+		// first two number cannot be identical
+		// header: 2 bytes
+		// base value: varint
+		// delta base: signed varint
+		header := make([]byte, 2)
+		header[0] = firstByte
+		header[1], err = in.ReadByte()
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		deltaWidth, err := getWidth(header[0]>>2&0x1f, true)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		length := uint32(header[0])&0x01<<8 | uint32(header[1]) + 1
+		rle.numLiterals = length
+
+		if rle.signed {
+			baseValue, err := binary.ReadVarint(in)
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			rle.literals[0] = baseValue
+		} else {
+			baseValue, err := binary.ReadUvarint(in)
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			rle.uliterals[0] = baseValue
+		}
+		deltaBase, err := binary.ReadVarint(in)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		if rle.signed {
+			rle.literals[1] = rle.literals[0] + deltaBase
+		} else {
+			// fixme:
+			rle.uliterals[1] = uint64(int64(rle.uliterals[1]) + deltaBase)
+		}
+		// delta values: W * (L-2)
+		i := uint32(2)
+		for i < length {
+			switch deltaWidth {
+			case 0:
+				// no delta ?
+				// fixme:
+				return errors.New("int rle v2 encoding delta width 0 no impl")
+			case 2:
+				b, err := in.ReadByte()
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				for j := uint32(0); j < 4; j++ {
+					delta := b >> byte((3-j)*2) & 0x03
+					if i+j <= length {
+						if rle.signed {
+							if deltaBase > 0 {
+								rle.literals[i] = rle.literals[i-1] + int64(delta)
+							} else {
+								rle.literals[i] = rle.literals[i-1] - int64(delta)
+							}
+						} else {
+							if deltaBase > 0 {
+								rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
+							} else {
+								rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)
+							}
+						}
+					}
+				}
+				i = 4 * (i + 1)
+
+			case 4:
+				b, err := in.ReadByte()
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				delta := b >> 4
+				if rle.signed {
+					if deltaBase > 0 {
+						rle.literals[i] = rle.literals[i-1] + int64(delta)
+					} else {
+						rle.literals[i] = rle.literals[i-1] - int64(delta)
+					}
+				} else {
+					if deltaBase > 0 {
+						rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
+					} else {
+						rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)
+					}
+				}
+
+				i++
+				if i > length {
+					return errors.New("read beyond length")
+				}
+				delta = b & 0x0f
+				if rle.signed {
+					if deltaBase > 0 {
+						rle.literals[i] = rle.literals[i-1] + int64(delta)
+					} else {
+						rle.literals[i] = rle.literals[i-1] - int64(delta)
+					}
+				} else {
+					if deltaBase > 0 {
+						rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
+					} else {
+						rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)
+					}
+				}
+				i++
+
+			case 8:
+				delta, err := in.ReadByte()
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				if rle.signed {
+					if deltaBase > 0 {
+						rle.literals[i] = rle.literals[i-1] + int64(delta)
+					} else {
+						rle.literals[i] = rle.literals[i-1] - int64(delta)
+					}
+				} else {
+					if deltaBase > 0 {
+						rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
+					} else {
+						rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)
+					}
+				}
+				i++
+
+			case 16:
+			case 24:
+			case 32:
+			case 40:
+			case 48:
+			case 56:
+			case 64:
+			default:
+				return errors.Errorf("int rle v2 encoding delta width %d deprecated", deltaWidth)
+			}
+		}
 	default:
 		return errors.Errorf("sub encoding %d for int rle v2 not recognized", rle.sub)
 	}
 	return nil
 }
 
-func getWidth(w byte) (width byte, err error) {
+func getWidth(w byte, delta bool) (width byte, err error) {
 	switch w {
 	case 0:
-		width = 0 // delta
-		// todo:
-		// width= 1 // non-delta
+		if delta {
+			width = 0
+		} else {
+			width = 1
+		}
 	case 1:
 		width = 2
 	case 3:
