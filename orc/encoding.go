@@ -247,7 +247,7 @@ func (rle *intRleV2) readValues(in InputStream) error {
 			return errors.WithStack(err)
 		}
 		header[0] = firstByte
-		w := header[0] & 0x1f // 5 bit width
+		/*w := header[0] & 0x1f // 5 bit width
 		width, err := getWidth(w, false)
 		if err != nil {
 			return errors.WithStack(err)
@@ -259,7 +259,7 @@ func (rle *intRleV2) readValues(in InputStream) error {
 			return errors.WithStack(err)
 		}
 		pgw := header[3]>>5&0x07 + 1
-		pll := header[3] & 0x1F
+		pll := header[3] & 0x1F*/
 
 	case Encoding_DELTA:
 		// first two number cannot be identical
@@ -272,7 +272,7 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		deltaWidth, err := getWidth(header[0]>>2&0x1f, true)
+		deltaWidth, err := getWidth(header[0]>>1&0x1f, true)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -296,12 +296,13 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		if rle.signed {
-			rle.literals[1] = rle.literals[0] + deltaBase
-		} else {
-			// fixme:
-			rle.uliterals[1] = uint64(int64(rle.uliterals[1]) + deltaBase)
+
+		if deltaBase>0 {
+			rle.setValue(1, true, uint64(deltaBase))
+		}else {
+			rle.setValue(1, false, uint64(-deltaBase))
 		}
+
 		// delta values: W * (L-2)
 		i := uint32(2)
 		for i < length {
@@ -316,21 +317,9 @@ func (rle *intRleV2) readValues(in InputStream) error {
 					return errors.WithStack(err)
 				}
 				for j := uint32(0); j < 4; j++ {
-					delta := b >> byte((3-j)*2) & 0x03
+					delta := uint64(b) >> (3 - j) * 2 & 0x03
 					if i+j <= length {
-						if rle.signed {
-							if deltaBase > 0 {
-								rle.literals[i] = rle.literals[i-1] + int64(delta)
-							} else {
-								rle.literals[i] = rle.literals[i-1] - int64(delta)
-							}
-						} else {
-							if deltaBase > 0 {
-								rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
-							} else {
-								rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)
-							}
-						}
+						rle.setValue(i, deltaBase > 0, delta)
 					}
 				}
 				i = 4 * (i + 1)
@@ -340,40 +329,14 @@ func (rle *intRleV2) readValues(in InputStream) error {
 				if err != nil {
 					return errors.WithStack(err)
 				}
-				delta := b >> 4
-				if rle.signed {
-					if deltaBase > 0 {
-						rle.literals[i] = rle.literals[i-1] + int64(delta)
-					} else {
-						rle.literals[i] = rle.literals[i-1] - int64(delta)
-					}
-				} else {
-					if deltaBase > 0 {
-						rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
-					} else {
-						rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)
-					}
-				}
-
+				delta := uint64(b) >> 4
+				rle.setValue(i, deltaBase > 0, delta)
 				i++
-				if i > length {
-					return errors.New("read beyond length")
+				if i < length {
+					delta = uint64(b) & 0x0f
+					rle.setValue(i, deltaBase > 0, delta)
+					i++
 				}
-				delta = b & 0x0f
-				if rle.signed {
-					if deltaBase > 0 {
-						rle.literals[i] = rle.literals[i-1] + int64(delta)
-					} else {
-						rle.literals[i] = rle.literals[i-1] - int64(delta)
-					}
-				} else {
-					if deltaBase > 0 {
-						rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
-					} else {
-						rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)
-					}
-				}
-				i++
 
 			case 8:
 				delta, err := in.ReadByte()
@@ -396,20 +359,102 @@ func (rle *intRleV2) readValues(in InputStream) error {
 				i++
 
 			case 16:
+				b, err := in.ReadByte()
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				b1, err := in.ReadByte()
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				delta := uint64(b)<<8 | uint64(b1)
+				rle.setValue(i, deltaBase > 0, delta)
+				i++
+
 			case 24:
+				bs := make([]byte, 3)
+				if _, err = io.ReadFull(in, bs); err != nil {
+					return errors.WithStack(err)
+				}
+				delta := uint64(bs[0])<<16 | uint64(bs[1])<<8 | uint64(bs[2])
+				rle.setValue(i, deltaBase > 0, delta)
+				i++
+
 			case 32:
+				bs := make([]byte, 4)
+				if _, err = io.ReadFull(in, bs); err != nil {
+					return errors.WithStack(err)
+				}
+				delta := uint64(bs[0])<<24 | uint64(bs[1])<<16 | uint64(bs[2])<<8 | uint64(bs[3])
+				rle.setValue(i, deltaBase > 0, delta)
+				i++
+
 			case 40:
+				bs := make([]byte, 5)
+				if _, err = io.ReadFull(in, bs); err != nil {
+					return errors.WithStack(err)
+				}
+				delta := uint64(bs[0])<<32 | uint64(bs[1])<<24 | uint64(bs[2])<<16 | uint64(bs[3])<<8 |
+					uint64(bs[4])
+				rle.setValue(i, deltaBase > 0, delta)
+				i++
+
 			case 48:
+				bs := make([]byte, 6)
+				if _, err = io.ReadFull(in, bs); err != nil {
+					return errors.WithStack(err)
+				}
+				delta := uint64(bs[0])<<40 | uint64(bs[1])<<32 | uint64(bs[2])<<24 | uint64(bs[3])<<16 |
+					uint64(bs[4])<<8 | uint64(bs[5])
+				rle.setValue(i, deltaBase > 0, delta)
+				i++
+
 			case 56:
+				bs := make([]byte, 7)
+				if _, err = io.ReadFull(in, bs); err != nil {
+					return errors.WithStack(err)
+				}
+				delta := uint64(bs[0])<<48 | uint64(bs[1])<<40 | uint64(bs[2])<<32 | uint64(bs[3])<<24 |
+					uint64(bs[4])<<16 | uint64(bs[5])<<8 | uint64(bs[6])
+				rle.setValue(i, deltaBase > 0, delta)
+				i++
+
 			case 64:
+				bs := make([]byte, 8)
+				if _, err = io.ReadFull(in, bs); err != nil {
+					return errors.WithStack(err)
+				}
+				delta := uint64(bs[0])<<56 | uint64(bs[1])<<48 | uint64(bs[2])<<40 | uint64(bs[3])<<32 |
+					uint64(bs[4])<<24 | uint64(bs[5])<<16 | uint64(bs[6])<<8 | uint64(bs[7])
+				rle.setValue(i, deltaBase > 0, delta)
+				i++
+
 			default:
 				return errors.Errorf("int rle v2 encoding delta width %d deprecated", deltaWidth)
 			}
 		}
+
 	default:
 		return errors.Errorf("sub encoding %d for int rle v2 not recognized", rle.sub)
 	}
 	return nil
+}
+
+func (rle *intRleV2) setValue(i uint32, postive bool, delta uint64) {
+	if rle.signed {
+		if postive {
+			//fixme: if delta width is 64
+			rle.literals[i] = rle.literals[i-1] + int64(delta)
+		} else {
+			rle.literals[i] = rle.literals[i-1] - int64(delta)
+		}
+	} else {
+		if postive {
+			rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
+		} else {
+			rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)
+		}
+	}
 }
 
 func getWidth(w byte, delta bool) (width byte, err error) {
