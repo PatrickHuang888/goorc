@@ -1,24 +1,29 @@
-package hive
+package orc
 
 import "github.com/PatrickHuang888/goorc/pb/pb"
 
 const (
-	DEFAULT_ROW_SIZE = 1024
+	DEFAULT_ROW_SIZE     = 1024
+	DEFAULT_MAX_ROW_SIZE = 10 * DEFAULT_ROW_SIZE
 )
-
-type VectorizedRowBatch struct {
-	NumCols int // number of columns
-	Size    int // number of rows
-	Cols    []ColumnVector
-}
 
 type ColumnVector interface {
 	T() pb.Type_Kind
+	ColumnId() uint32
+}
+
+type columnVector struct {
+	Id uint32
+}
+
+func (cv *columnVector) ColumnId() uint32  {
+	return cv.Id
 }
 
 // nullable int column vector for all integer types
 type LongColumnVector struct {
-	Vector []int64
+	columnVector
+	Vector    []int64
 	Repeating bool
 }
 
@@ -27,6 +32,7 @@ func (*LongColumnVector) T() pb.Type_Kind {
 }
 
 type TimestampColumnVector struct {
+	columnVector
 	Vector []uint64
 }
 
@@ -35,6 +41,7 @@ func (*TimestampColumnVector) T() pb.Type_Kind {
 }
 
 type DoubleColumnVector struct {
+	columnVector
 	Vector []float64
 }
 
@@ -43,6 +50,7 @@ func (*DoubleColumnVector) T() pb.Type_Kind {
 }
 
 type BytesColumnVector struct {
+	columnVector
 	Vector [][]byte
 }
 
@@ -51,6 +59,7 @@ func (*BytesColumnVector) T() pb.Type_Kind {
 }
 
 type StructColumnVector struct {
+	columnVector
 	Fields []ColumnVector
 }
 

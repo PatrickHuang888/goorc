@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/flate"
 	"fmt"
-	"github.com/PatrickHuang888/goorc/hive"
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
@@ -95,8 +94,8 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 	for offset := 0; offset < len(chunksBuf); {
 		// header
 		original := (chunksBuf[offset] & 0x01) == 1
-		chunkLength := int((chunksBuf[offset+2] << 15) | (chunksBuf[offset+1] << 7) |
-			(chunksBuf[offset] >> 1))
+		chunkLength := int(chunksBuf[offset+2])<<15 | int(chunksBuf[offset+1])<<7 |
+			int(chunksBuf[offset])>>1
 		buf := make([]byte, chunkBufferSize)
 		//fixme:
 		if chunkLength > chunkBufferSize {
@@ -134,7 +133,7 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 type StripeReader interface {
 	NextStripe() bool
 	Err() error
-	NextBatch(batch *hive.VectorizedRowBatch) bool
+	NextBatch(batch ColumnVector) bool
 	Close()
 }
 
@@ -144,7 +143,7 @@ type stripeReader struct {
 	tds           []*TypeDescription
 	tail          *pb.FileTail
 	currentStripe int
-	currentCrs    []*columnReader
+	crs           []*columnReader
 	err           error
 }
 
@@ -157,7 +156,7 @@ type columnReader struct {
 	f            *os.File
 	si           *pb.StripeInformation
 	compressKind pb.CompressionKind
-	chunkBufSize uint64
+	chunkBufSize uint64 //default 256k
 }
 
 func (cr *columnReader) Print() {
@@ -189,7 +188,7 @@ func (sr *stripeReader) NextStripe() bool {
 		crs[c].streams = append(crs[c].streams, stream)
 	}
 
-	sr.currentCrs = crs
+	sr.crs = crs
 	for _, v := range crs {
 		v.Print()
 	}
@@ -202,23 +201,20 @@ func (sr *stripeReader) NextStripe() bool {
 	}
 }
 
-func (sr *stripeReader) NextBatch(batch *hive.VectorizedRowBatch) bool {
-	crs := sr.currentCrs
-	rootTd := crs[0].td
-	if rootTd.Kind == pb.Type_STRUCT {
-		for i, col := range batch.Cols {
-			td := rootTd.Children[i]
-			cr := crs[td.Id]
-			cr.fillBatch(col)
-		}
+func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
+	// todo: check batch column id
+	columnReader := sr.crs[batch.ColumnId()]
+	result, err := columnReader.fillBatch(batch)
+	if err == nil {
+		return result
 	} else {
-		// todo:
-		errors.New("root td is not struct")
+		sr.err = err
+		return false
 	}
 	return false
 }
 
-func (cr *columnReader) fillBatch(vector hive.ColumnVector) (err error) {
+func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 	offset := cr.si.GetOffset()
 	dataStart := offset + cr.si.GetIndexLength()
 	//dataLength := cr.si.GetDataLength()
@@ -230,29 +226,54 @@ func (cr *columnReader) fillBatch(vector hive.ColumnVector) (err error) {
 	case pb.ColumnEncoding_DICTIONARY:
 		fallthrough
 	case pb.ColumnEncoding_DICTIONARY_V2:
-		return errors.Errorf("ColumnEncoding %s not implemented", enc)
+		return false, errors.Errorf("ColumnEncoding %s not implemented", enc)
 	case pb.ColumnEncoding_DIRECT_V2:
 		if cr.td.Kind == pb.Type_INT { // Signed Integer RLE v2
 			for _, stream := range cr.streams {
 				if stream.GetKind() == pb.Stream_DATA {
 					dataLength := stream.GetLength()
 					if _, err = cr.f.Seek(int64(dataStart), 0); err != nil {
-						return errors.WithStack(err)
+						return false, errors.WithStack(err)
 					}
-					buf := make([]byte, dataLength)
+
+					chunkBuf := make([]byte, cr.chunkBufSize)
+					var pos uint64
+					chunkStart := dataStart
+					for pos < dataLength {
+						if _, err = cr.f.Seek(int64(chunkStart), 0); err != nil {
+							return false, errors.WithStack(err)
+						}
+						// header
+						header := make([]byte, 3)
+						if _, err = io.ReadFull(cr.f, header); err != nil {
+							return false, errors.WithStack(err)
+						}
+						original := (header[0] & 0x01) == 1
+						chunkLength := uint64(header[2])<<15 | uint64(header[1])<<7 | uint64(header[0])>>1
+						if chunkLength > cr.chunkBufSize {
+							return false, errors.New("chunk length larger than chunk buffer size")
+						}
+					}
+
 					if _, err = io.ReadFull(cr.f, buf); err != nil {
-						return errors.Wrapf(err, "fill batch, read stream DATA error")
+						return false, errors.Wrapf(err, "fill batch, read stream DATA error")
 					}
-					//decompressed, err := ReadChunks(buf, cr.compressKind, cr.chunkBufSize)
+					decompressed, err := ReadChunks(buf, cr.compressKind, int(cr.chunkBufSize))
 					if err != nil {
-						return errors.Wrapf(err, "decompress stream DATA")
+						return false, errors.Wrapf(err, "decompress stream DATA")
 					}
-					//decoder := getDecoder()
+					// signed int rle v2
+					irl := &intRleV2{signed: true, literals: make([]int64, )}
 					//decoder.readValues(decompressed, vector)
+					err = irl.readValues(bytes.NewReader(decompressed))
+					if err != nil {
+						errors.Wrapf(err, "decode int vector error")
+					}
+
 				}
 			}
 		} else {
-			return errors.Errorf("td other than int not impl")
+			return false, errors.Errorf("td other than int not impl")
 		}
 	}
 	return

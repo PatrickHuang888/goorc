@@ -10,6 +10,8 @@ const (
 	MIN_REPEAT_SIZE  = 3
 	MAX_LITERAL_SIZE = 128
 
+	Encoding_INT_RLEV2 = iota
+
 	Encoding_SHORT_REPEAT byte = 0
 	Encoding_DIRECT            = 1
 	Encoding_PATCHED_BASE      = 2
@@ -247,19 +249,25 @@ func (rle *intRleV2) readValues(in InputStream) error {
 			return errors.WithStack(err)
 		}
 		header[0] = firstByte
-		/*w := header[0] & 0x1f // 5 bit width
-		width, err := getWidth(w, false)
+		// 5 bit width
+		/*width, err := getWidth(header[0]>>1&0x1f, false)
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		length := uint16(header[0])&0x01<<8 | uint16(header[1]) + 1
-		bw := header[2]>>5&0x07 + 1
-		pw, err := getWidth(header[2] & 0x1F)
+		length := uint32(header[0])&0x01<<8 | uint32(header[1]) + 1
+		// 3 bit base value width
+		bw := uint16(header[2])>>5&0x07 + 1
+		// 5 bit patch width
+		pw, err := getWidth(header[2] & 0x1f, false)
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		pgw := header[3]>>5&0x07 + 1
-		pll := header[3] & 0x1F*/
+		// 3 bit patch gap width
+		pgw := uint16(header[3])>>5&0x07 + 1
+		// 5 bit patch list length
+		pll := header[3] & 0x1f*/
+		// todo:
+		return errors.New("int rle patched base not impl")
 
 	case Encoding_DELTA:
 		// first two number cannot be identical
@@ -297,9 +305,9 @@ func (rle *intRleV2) readValues(in InputStream) error {
 			return errors.WithStack(err)
 		}
 
-		if deltaBase>0 {
+		if deltaBase > 0 {
 			rle.setValue(1, true, uint64(deltaBase))
-		}else {
+		} else {
 			rle.setValue(1, false, uint64(-deltaBase))
 		}
 
@@ -424,6 +432,7 @@ func (rle *intRleV2) readValues(in InputStream) error {
 				if _, err = io.ReadFull(in, bs); err != nil {
 					return errors.WithStack(err)
 				}
+				// fixme: cast to uint64
 				delta := uint64(bs[0])<<56 | uint64(bs[1])<<48 | uint64(bs[2])<<40 | uint64(bs[3])<<32 |
 					uint64(bs[4])<<24 | uint64(bs[5])<<16 | uint64(bs[6])<<8 | uint64(bs[7])
 				rle.setValue(i, deltaBase > 0, delta)
@@ -440,16 +449,15 @@ func (rle *intRleV2) readValues(in InputStream) error {
 	return nil
 }
 
-func (rle *intRleV2) setValue(i uint32, postive bool, delta uint64) {
+func (rle *intRleV2) setValue(i uint32, positive bool, delta uint64) {
 	if rle.signed {
-		if postive {
-			//fixme: if delta width is 64
+		if positive {
 			rle.literals[i] = rle.literals[i-1] + int64(delta)
 		} else {
 			rle.literals[i] = rle.literals[i-1] - int64(delta)
 		}
 	} else {
-		if postive {
+		if positive {
 			rle.uliterals[i] = rle.uliterals[i-1] + uint64(delta)
 		} else {
 			rle.uliterals[i] = rle.uliterals[i-1] - uint64(delta)

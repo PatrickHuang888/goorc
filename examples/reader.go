@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/PatrickHuang888/goorc/hive"
 	"github.com/PatrickHuang888/goorc/orc"
 )
 
@@ -23,7 +22,7 @@ func main() {
 	schema.AddField("y", ytd)*/
 
 	schema := reader.GetSchema()
-	batch, err := schema.CreateRowBatch(hive.DEFAULT_ROW_SIZE)
+	batch, err := schema.CreateBatch(orc.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("create row batch error %+v", err)
 		os.Exit(1)

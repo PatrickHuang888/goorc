@@ -2,7 +2,6 @@ package orc
 
 import (
 	"fmt"
-	"github.com/PatrickHuang888/goorc/hive"
 	. "github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 )
@@ -67,9 +66,13 @@ func (td *TypeDescription) Print() {
 	}
 }
 
-func (td *TypeDescription) CreateRowBatch(maxSize int) (vrb *hive.VectorizedRowBatch, err error) {
-	if maxSize < hive.DEFAULT_ROW_SIZE {
-		maxSize = hive.DEFAULT_ROW_SIZE
+/*func (td *TypeDescription) CreateRowBatch(maxSize int) (batch ColumnVector, err error) {
+	if maxSize < DEFAULT_ROW_SIZE {
+		maxSize = DEFAULT_ROW_SIZE
+	}
+
+	switch expr {
+
 	}
 	if td.Kind == Type_STRUCT {
 		numCols := len(td.Children)
@@ -91,8 +94,9 @@ func (td *TypeDescription) CreateRowBatch(maxSize int) (vrb *hive.VectorizedRowB
 	}
 	return
 }
+*/
 
-func (td *TypeDescription) CreateColumn(maxSize int) (cv hive.ColumnVector, err error) {
+func (td *TypeDescription) CreateBatch(maxSize int) (cv ColumnVector, err error) {
 	switch td.Kind {
 	case Type_BOOLEAN:
 		fallthrough
@@ -105,13 +109,15 @@ func (td *TypeDescription) CreateColumn(maxSize int) (cv hive.ColumnVector, err 
 	case Type_LONG:
 		fallthrough
 	case Type_DATE:
-		cv = &hive.LongColumnVector{Vector: make([]int64, hive.DEFAULT_ROW_SIZE, maxSize)}
+		cv = &LongColumnVector{columnVector: columnVector{Id: td.Id}, Vector: make([]int64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_TIMESTAMP:
-		cv = &hive.TimestampColumnVector{Vector: make([]uint64, hive.DEFAULT_ROW_SIZE, maxSize)}
+		cv = &TimestampColumnVector{columnVector: columnVector{Id: td.Id},
+			Vector: make([]uint64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_FLOAT:
 		fallthrough
 	case Type_DOUBLE:
-		cv = &hive.DoubleColumnVector{Vector: make([]float64, hive.DEFAULT_ROW_SIZE, maxSize)}
+		cv = &DoubleColumnVector{columnVector: columnVector{Id: td.Id},
+			Vector: make([]float64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_DECIMAL:
 	// todo:
 	case Type_STRING:
@@ -121,16 +127,16 @@ func (td *TypeDescription) CreateColumn(maxSize int) (cv hive.ColumnVector, err 
 	case Type_CHAR:
 		fallthrough
 	case Type_VARCHAR:
-		cv = &hive.BytesColumnVector{Vector: make([][]byte, hive.DEFAULT_ROW_SIZE, maxSize)}
+		cv = &BytesColumnVector{Vector: make([][]byte, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_STRUCT:
-		f := make([]hive.ColumnVector, len(td.Children))
+		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {
-			f[i], err = v.CreateColumn(maxSize)
+			f[i], err = v.CreateBatch(maxSize)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
 		}
-		cv = &hive.StructColumnVector{Fields:f}
+		cv = &StructColumnVector{columnVector: columnVector{Id: td.Id}, Fields: f}
 	case Type_UNION:
 	// todo:
 	case Type_LIST:
