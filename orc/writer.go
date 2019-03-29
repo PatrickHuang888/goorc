@@ -1,7 +1,6 @@
 package orc
 
 import (
-	"github.com/PatrickHuang888/goorc/hive"
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	"os"
@@ -19,7 +18,7 @@ type WriterOptions struct {
 type Writer interface {
 	GetSchema() *TypeDescription
 
-	AddRowBatch(batch *hive.VectorizedRowBatch) error
+	AddRowBatch(batch ColumnVector) error
 
 	Close() error
 }
@@ -41,7 +40,7 @@ func (w *writer) GetSchema() *TypeDescription {
 	return w.schema
 }
 
-func (w *writer) AddRowBatch(batch *hive.VectorizedRowBatch) error {
+func (w *writer) AddRowBatch(batch ColumnVector) error {
 	if w.buildIndex {
 
 	} else {

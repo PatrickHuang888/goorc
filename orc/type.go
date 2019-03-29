@@ -96,7 +96,7 @@ func (td *TypeDescription) Print() {
 }
 */
 
-func (td *TypeDescription) CreateBatch(maxSize int) (cv ColumnVector, err error) {
+func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err error) {
 	switch td.Kind {
 	case Type_BOOLEAN:
 		fallthrough
@@ -131,7 +131,7 @@ func (td *TypeDescription) CreateBatch(maxSize int) (cv ColumnVector, err error)
 	case Type_STRUCT:
 		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {
-			f[i], err = v.CreateBatch(maxSize)
+			f[i], err = v.CreateVectorBatch(maxSize)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}

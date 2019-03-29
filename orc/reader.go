@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"compress/flate"
 	"fmt"
+	"io"
+	"os"
+
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
-	"io"
-	"os"
 )
 
 const (
@@ -17,7 +18,9 @@ const (
 )
 
 type Reader interface {
-	GetSchema() *TypeDescription
+	// get root description
+	GetSchema() (*TypeDescription, error)
+	GetColumnSchema(columnId uint32) (*TypeDescription, error)
 	NumberOfRows() uint64
 	Stripes() (StripeReader, error)
 }
@@ -28,8 +31,15 @@ type reader struct {
 	tds  []*TypeDescription
 }
 
-func (r *reader) GetSchema() *TypeDescription {
-	return r.tds[0]
+func (r *reader) GetSchema() (*TypeDescription, error) {
+	return r.GetColumnSchema(0)
+}
+
+func (r *reader) GetColumnSchema(columnId uint32) (*TypeDescription, error) {
+	if columnId > uint32(len(r.tds)) || len(r.tds) == 0 {
+		return nil, errors.Errorf("column %d schema does not exist", columnId)
+	}
+	return r.tds[columnId], nil
 }
 
 func (r *reader) Stripes() (rr StripeReader, err error) {
@@ -86,7 +96,7 @@ func (r *reader) Stripes() (rr StripeReader, err error) {
 		sfs = append(sfs, stripeFooter)
 	}
 
-	rr = &stripeReader{f: r.f, stripeFooters: sfs, tds: r.tds, tail: r.tail}
+	rr = &stripeReader{f: r.f, stripeFooters: sfs, tds: r.tds, tail: r.tail, currentStripe:-1}
 	return
 }
 
@@ -172,6 +182,11 @@ func (cr *columnReader) Print() {
 }
 
 func (sr *stripeReader) NextStripe() bool {
+		sr.currentStripe++
+	if sr.currentStripe >= len(sr.tail.Footer.Stripes) {
+		return false
+	}
+
 	currentStripe := sr.currentStripe
 	sf := sr.stripeFooters[currentStripe]
 	fmt.Printf("Stripe number %d\n", sr.currentStripe)
@@ -193,12 +208,7 @@ func (sr *stripeReader) NextStripe() bool {
 		v.Print()
 	}
 
-	sr.currentStripe++
-	if sr.currentStripe <= len(sr.tail.Footer.Stripes) {
-		return true
-	} else {
-		return false
-	}
+	return true
 }
 
 func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
@@ -215,8 +225,9 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 }
 
 func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
-	offset := cr.si.GetOffset()
-	dataStart := offset + cr.si.GetIndexLength()
+	fmt.Println("fill batch=====")
+	//offset := cr.si.GetOffset()
+	//dataStart := offset + cr.si.GetIndexLength()
 	//dataLength := cr.si.GetDataLength()
 
 	enc := cr.encoding.GetKind()
@@ -229,8 +240,10 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 		return false, errors.Errorf("ColumnEncoding %s not implemented", enc)
 	case pb.ColumnEncoding_DIRECT_V2:
 		if cr.td.Kind == pb.Type_INT { // Signed Integer RLE v2
-			for _, stream := range cr.streams {
-				if stream.GetKind() == pb.Stream_DATA {
+			for i, stream := range cr.streams {
+				fmt.Printf("stream %d\n", i)
+				fmt.Println(stream.String())
+				/*if stream.GetKind() == pb.Stream_DATA {
 					dataLength := stream.GetLength()
 					if _, err = cr.f.Seek(int64(dataStart), 0); err != nil {
 						return false, errors.WithStack(err)
@@ -270,7 +283,7 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 						errors.Wrapf(err, "decode int vector error")
 					}
 
-				}
+				}*/
 			}
 		} else {
 			return false, errors.Errorf("td other than int not impl")

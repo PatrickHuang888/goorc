@@ -21,8 +21,12 @@ func main() {
 	schema.AddField("x", xtd)
 	schema.AddField("y", ytd)*/
 
-	schema := reader.GetSchema()
-	batch, err := schema.CreateBatch(orc.DEFAULT_ROW_SIZE)
+	schema, err := reader.GetColumnSchema(1)
+	if err != nil {
+		fmt.Printf("get schema error %+v", err)
+		os.Exit(1)
+	}
+	batch, err := schema.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("create row batch error %+v", err)
 		os.Exit(1)
