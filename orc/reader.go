@@ -96,7 +96,7 @@ func (r *reader) Stripes() (rr StripeReader, err error) {
 		sfs = append(sfs, stripeFooter)
 	}
 
-	rr = &stripeReader{f: r.f, stripeFooters: sfs, tds: r.tds, tail: r.tail, currentStripe:-1}
+	rr = &stripeReader{f: r.f, stripeFooters: sfs, tds: r.tds, tail: r.tail, currentStripe: -1}
 	return
 }
 
@@ -165,8 +165,10 @@ type columnReader struct {
 	present      bool
 	f            *os.File
 	si           *pb.StripeInformation
-	compressKind pb.CompressionKind
+	compressionKind pb.CompressionKind
 	chunkBufSize uint64 //default 256k
+	indexStart   uint64
+	dataStart    uint64
 }
 
 func (cr *columnReader) Print() {
@@ -182,7 +184,7 @@ func (cr *columnReader) Print() {
 }
 
 func (sr *stripeReader) NextStripe() bool {
-		sr.currentStripe++
+	sr.currentStripe++
 	if sr.currentStripe >= len(sr.tail.Footer.Stripes) {
 		return false
 	}
@@ -195,12 +197,20 @@ func (sr *stripeReader) NextStripe() bool {
 
 	for i := 0; i < len(crs); i++ {
 		crs[i] = &columnReader{id: i, td: sr.tds[i], encoding: sf.GetColumns()[i],
-			si: sr.tail.Footer.Stripes[currentStripe], compressKind: sr.tail.Postscript.GetCompression(),
+			si: sr.tail.Footer.Stripes[currentStripe], compressionKind: sr.tail.Postscript.GetCompression(),
 			chunkBufSize: sr.tail.Postscript.GetCompressionBlockSize()}
 	}
+
+	var columnOffset map[uint32]uint64
 	for _, stream := range sf.GetStreams() {
 		c := stream.GetColumn()
 		crs[c].streams = append(crs[c].streams, stream)
+		columnOffset[c]+=stream.GetLength()
+	}
+
+	crs[0].dataStart= sr.tail.Footer.Stripes[sr.currentStripe].GetOffset()+
+	for i:=1; i<len(crs); i++ {
+		crs[i]
 	}
 
 	sr.crs = crs
@@ -226,69 +236,77 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 
 func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 	fmt.Println("fill batch=====")
-	//offset := cr.si.GetOffset()
-	//dataStart := offset + cr.si.GetIndexLength()
-	//dataLength := cr.si.GetDataLength()
-
-	enc := cr.encoding.GetKind()
-	switch enc {
-	case pb.ColumnEncoding_DIRECT:
-		fallthrough
-	case pb.ColumnEncoding_DICTIONARY:
-		fallthrough
-	case pb.ColumnEncoding_DICTIONARY_V2:
-		return false, errors.Errorf("ColumnEncoding %s not implemented", enc)
-	case pb.ColumnEncoding_DIRECT_V2:
-		if cr.td.Kind == pb.Type_INT { // Signed Integer RLE v2
-			for i, stream := range cr.streams {
-				fmt.Printf("stream %d\n", i)
-				fmt.Println(stream.String())
-				/*if stream.GetKind() == pb.Stream_DATA {
-					dataLength := stream.GetLength()
-					if _, err = cr.f.Seek(int64(dataStart), 0); err != nil {
-						return false, errors.WithStack(err)
-					}
-
-					chunkBuf := make([]byte, cr.chunkBufSize)
-					var pos uint64
-					chunkStart := dataStart
-					for pos < dataLength {
-						if _, err = cr.f.Seek(int64(chunkStart), 0); err != nil {
-							return false, errors.WithStack(err)
-						}
-						// header
-						header := make([]byte, 3)
-						if _, err = io.ReadFull(cr.f, header); err != nil {
-							return false, errors.WithStack(err)
-						}
-						original := (header[0] & 0x01) == 1
-						chunkLength := uint64(header[2])<<15 | uint64(header[1])<<7 | uint64(header[0])>>1
-						if chunkLength > cr.chunkBufSize {
-							return false, errors.New("chunk length larger than chunk buffer size")
-						}
-					}
-
-					if _, err = io.ReadFull(cr.f, buf); err != nil {
-						return false, errors.Wrapf(err, "fill batch, read stream DATA error")
-					}
-					decompressed, err := ReadChunks(buf, cr.compressKind, int(cr.chunkBufSize))
-					if err != nil {
-						return false, errors.Wrapf(err, "decompress stream DATA")
-					}
-					// signed int rle v2
-					irl := &intRleV2{signed: true, literals: make([]int64, )}
-					//decoder.readValues(decompressed, vector)
-					err = irl.readValues(bytes.NewReader(decompressed))
-					if err != nil {
-						errors.Wrapf(err, "decode int vector error")
-					}
-
-				}*/
-			}
-		} else {
-			return false, errors.Errorf("td other than int not impl")
-		}
+	offset := cr.si.GetOffset()
+	stripeDataStart := offset + cr.si.GetIndexLength()
+	stripeDataLength := cr.si.GetDataLength()
+	if _, err = cr.f.Seek(int64(stripeDataStart), 0); err != nil {
+		return false, errors.WithStack(err)
 	}
+	enc := cr.encoding.GetKind()
+
+	switch cr.td.Kind {
+	case pb.Type_INT:
+
+		switch enc {
+		case pb.ColumnEncoding_DIRECT_V2:
+			if cr.td.Kind == pb.Type_INT { // Signed Integer RLE v2
+				for i, stream := range cr.streams {
+					fmt.Printf("stream %d\n", i)
+					fmt.Println(stream.String())
+					switch stream.GetKind() {
+					case pb.Stream_ROW_INDEX
+					}
+					if stream.GetKind() == pb.Stream_DATA {
+						streamLength := stream.GetLength()
+
+						chunkBuf := make([]byte, cr.chunkBufSize)
+						var pos uint64
+						chunkStart := dataStart
+						for pos < dataLength {
+							if _, err = cr.f.Seek(int64(chunkStart), 0); err != nil {
+								return false, errors.WithStack(err)
+							}
+							// header
+							header := make([]byte, 3)
+							if _, err = io.ReadFull(cr.f, header); err != nil {
+								return false, errors.WithStack(err)
+							}
+							original := (header[0] & 0x01) == 1
+							chunkLength := uint64(header[2])<<15 | uint64(header[1])<<7 | uint64(header[0])>>1
+							if chunkLength > cr.chunkBufSize {
+								return false, errors.New("chunk length larger than chunk buffer size")
+							}
+						}
+
+						if _, err = io.ReadFull(cr.f, buf); err != nil {
+							return false, errors.Wrapf(err, "fill batch, read stream DATA error")
+						}
+						decompressed, err := ReadChunks(buf, cr.compressKind, int(cr.chunkBufSize))
+						if err != nil {
+							return false, errors.Wrapf(err, "decompress stream DATA")
+						}
+						// signed int rle v2
+						irl := &intRleV2{signed: true, literals: make([]int64, )}
+						//decoder.readValues(decompressed, vector)
+						err = irl.readValues(bytes.NewReader(decompressed))
+						if err != nil {
+							errors.Wrapf(err, "decode int vector error")
+						}
+
+					}
+				}
+			} else {
+				return false, errors.Errorf("td other than int not impl")
+			}
+
+		default:
+			return false, errors.New("encoding other than direct_v2 for int not impl")
+		}
+
+	default:
+		return false, errors.New("type other than int not impl")
+	}
+
 	return
 }
 
