@@ -118,7 +118,7 @@ func (irl *intRunLengthV1) writeValues(out OutputStream) error {
 
 // int run length encoding v2
 type intRleV2 struct {
-	sub         byte
+	sub         byte // sub encoding
 	signed      bool
 	literals    []int64 // fixme: allocate
 	uliterals   []uint64

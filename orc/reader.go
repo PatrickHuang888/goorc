@@ -158,17 +158,17 @@ type stripeReader struct {
 }
 
 type columnReader struct {
-	id           int
-	td           *TypeDescription
-	encoding     *pb.ColumnEncoding
-	streams      []*pb.Stream
-	present      bool
-	f            *os.File
-	si           *pb.StripeInformation
+	id              int
+	td              *TypeDescription
+	encoding        *pb.ColumnEncoding
+	streams         map[pb.Stream_Kind]*pb.Stream
+	present         bool
+	f               *os.File
+	si              *pb.StripeInformation
 	compressionKind pb.CompressionKind
-	chunkBufSize uint64 //default 256k
-	indexStart   uint64
-	dataStart    uint64
+	chunkBufSize    uint64 //default 256k
+	indexStart      uint64
+	dataStart       uint64
 }
 
 func (cr *columnReader) Print() {
@@ -201,16 +201,23 @@ func (sr *stripeReader) NextStripe() bool {
 			chunkBufSize: sr.tail.Postscript.GetCompressionBlockSize()}
 	}
 
-	var columnOffset map[uint32]uint64
+	var indexOffsets, dataOffsets map[uint32]uint64
 	for _, stream := range sf.GetStreams() {
 		c := stream.GetColumn()
-		crs[c].streams = append(crs[c].streams, stream)
-		columnOffset[c]+=stream.GetLength()
+		crs[c].streams[stream.GetKind()] = stream
+		// fixme: row_index other data ?
+		if stream.GetKind() == pb.Stream_ROW_INDEX {
+			indexOffsets[c] += stream.GetLength()
+		} else {
+			dataOffsets[c] += stream.GetLength()
+		}
 	}
-
-	crs[0].dataStart= sr.tail.Footer.Stripes[sr.currentStripe].GetOffset()+
-	for i:=1; i<len(crs); i++ {
-		crs[i]
+	si := sr.tail.Footer.Stripes[sr.currentStripe]
+	crs[0].indexStart = si.GetOffset()
+	crs[0].dataStart = si.GetOffset() + si.GetIndexLength()
+	for i := 1; i < len(crs); i++ {
+		crs[i].indexStart = crs[i-1].indexStart + indexOffsets[uint32(i)]
+		crs[i].dataStart = crs[i-1].dataStart + dataOffsets[uint32(i)]
 	}
 
 	sr.crs = crs
@@ -236,67 +243,63 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 
 func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 	fmt.Println("fill batch=====")
-	offset := cr.si.GetOffset()
-	stripeDataStart := offset + cr.si.GetIndexLength()
-	stripeDataLength := cr.si.GetDataLength()
-	if _, err = cr.f.Seek(int64(stripeDataStart), 0); err != nil {
-		return false, errors.WithStack(err)
-	}
+
 	enc := cr.encoding.GetKind()
 
 	switch cr.td.Kind {
 	case pb.Type_INT:
-
 		switch enc {
-		case pb.ColumnEncoding_DIRECT_V2:
-			if cr.td.Kind == pb.Type_INT { // Signed Integer RLE v2
-				for i, stream := range cr.streams {
-					fmt.Printf("stream %d\n", i)
-					fmt.Println(stream.String())
-					switch stream.GetKind() {
-					case pb.Stream_ROW_INDEX
+		case pb.ColumnEncoding_DIRECT_V2: // Signed Integer RLE v2
+
+			if _, present := cr.streams[pb.Stream_PRESENT]; present {
+				//todo:
+				return false, errors.New("present not impl")
+			} else {
+				if _, err = cr.f.Seek(int64(cr.dataStart), 0); err != nil {
+					return false, errors.WithStack(err)
+				}
+				dataStream, _ := cr.streams[pb.Stream_DATA]
+				chunkBuf := make([]byte, cr.chunkBufSize)
+				decompressed:=make([]byte, cr.chunkBufSize)
+				dataLength := dataStream.GetLength()
+				var read uint64
+				for read < dataLength {
+					// read head
+					head := make([]byte, 3)
+					if _, err = io.ReadFull(cr.f, head); err != nil {
+						return false, errors.WithStack(err)
 					}
-					if stream.GetKind() == pb.Stream_DATA {
-						streamLength := stream.GetLength()
+					read += 3
+					original := (head[0] & 0x01) == 1
+					chunkLength := int(head[2])<<15 | int(head[1])<<7 | int(head[0])>>1
+					if uint64(chunkLength) > dataStream.GetLength() {
+						return false, errors.New("chunk length large than compression buffer size")
+					}
+					if _, err = io.ReadFull(cr.f, chunkBuf[:chunkLength]); err != nil {
+						return false, errors.WithStack(err)
+					}
+					read += uint64(chunkLength)
 
-						chunkBuf := make([]byte, cr.chunkBufSize)
-						var pos uint64
-						chunkStart := dataStart
-						for pos < dataLength {
-							if _, err = cr.f.Seek(int64(chunkStart), 0); err != nil {
-								return false, errors.WithStack(err)
+					if original {
+						return false, errors.New("compression origin not impl")
+					} else {
+						var n int
+						switch cr.compressionKind {
+						case pb.CompressionKind_ZLIB:
+							r := flate.NewReader(bytes.NewReader(chunkBuf))
+							n, err = r.Read(decompressed)
+							r.Close()
+							if err != nil && err != io.EOF {
+								return false, errors.Wrapf(err, "decompress chunk data error when read footer")
 							}
-							// header
-							header := make([]byte, 3)
-							if _, err = io.ReadFull(cr.f, header); err != nil {
-								return false, errors.WithStack(err)
-							}
-							original := (header[0] & 0x01) == 1
-							chunkLength := uint64(header[2])<<15 | uint64(header[1])<<7 | uint64(header[0])>>1
-							if chunkLength > cr.chunkBufSize {
-								return false, errors.New("chunk length larger than chunk buffer size")
-							}
-						}
-
-						if _, err = io.ReadFull(cr.f, buf); err != nil {
-							return false, errors.Wrapf(err, "fill batch, read stream DATA error")
-						}
-						decompressed, err := ReadChunks(buf, cr.compressKind, int(cr.chunkBufSize))
-						if err != nil {
-							return false, errors.Wrapf(err, "decompress stream DATA")
-						}
-						// signed int rle v2
-						irl := &intRleV2{signed: true, literals: make([]int64, )}
-						//decoder.readValues(decompressed, vector)
-						err = irl.readValues(bytes.NewReader(decompressed))
-						if err != nil {
-							errors.Wrapf(err, "decode int vector error")
+						default:
+							return false, errors.New("compression kind other than zlib not impl")
 						}
 
+						rle:= &intRleV2{signed:true, literals:batch.(LongColumnVector).Vector}
+						rle.readValues(bytes.NewBuffer(decompressed[:n]))
 					}
 				}
-			} else {
-				return false, errors.Errorf("td other than int not impl")
 			}
 
 		default:
