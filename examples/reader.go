@@ -51,6 +51,9 @@ func main() {
 			fmt.Printf("%+v", err)
 		}
 	}
+
+	it.Close()
+
 	/*for it.NextBatch(batch) {
 		for row := 0; row < batch.Size; row++ {
 			xRow := 0

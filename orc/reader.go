@@ -233,6 +233,9 @@ func (sr *stripeReader) NextStripe() bool {
 func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 	// todo: check batch column id
 	columnReader := sr.crs[batch.ColumnId()]
+
+	columnReader.streams[pb.Stream_ROW_INDEX]
+	
 	result, err := columnReader.fillBatch(batch)
 	if err != nil {
 		sr.err = err
@@ -241,8 +244,6 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 }
 
 func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
-	fmt.Println("fill batch=====")
-
 	enc := cr.encoding.GetKind()
 
 	switch cr.td.Kind {
@@ -264,7 +265,7 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 				decompressed := make([]byte, cr.chunkBufSize)
 				dataLength := dataStream.GetLength()
 				var read uint64
-				var rows uint64
+				var readRows uint64
 				var chunkCount int
 				v, ok := batch.(*LongColumnVector)
 				if !ok {
@@ -315,17 +316,16 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 						if err = rle.readValues(bytes.NewBuffer(decompressed[:n])); err != nil {
 							return false, errors.WithStack(err)
 						}
-						if rows+uint64(rle.numLiterals) > uint64(len(v.Vector)) {
+						if readRows+uint64(rle.numLiterals) > uint64(len(v.Vector)) {
 							return false, errors.New("not impl")
 						}
 						for _, value := range rle.literals {
-							v.Vector[rows] = value
-							rows++
+							v.Vector[readRows] = value
+							readRows++
 						}
 					}
 				}
-				v.rows = rows
-
+				v.rows = readRows
 			}
 
 		default:

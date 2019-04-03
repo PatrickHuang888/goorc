@@ -328,7 +328,7 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		for i < length {
 			switch deltaWidth {
 			case 0:
-				// no delta, just delta base ?
+				// fix delta based on delta base
 				if deltaBase > 0 {
 					rle.setValue(i, true, uint64(deltaBase))
 				} else {
