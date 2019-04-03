@@ -10,14 +10,25 @@ const (
 type ColumnVector interface {
 	T() pb.Type_Kind
 	ColumnId() uint32
+	Rows() uint64
+	Reset()
 }
 
 type columnVector struct {
-	Id uint32
+	Id   uint32
+	rows uint64
 }
 
-func (cv *columnVector) ColumnId() uint32  {
+func (cv *columnVector) ColumnId() uint32 {
 	return cv.Id
+}
+
+func (cv *columnVector) Rows() uint64 {
+	return cv.rows
+}
+
+func (cv *columnVector) Reset() {
+	cv.rows = 0
 }
 
 // nullable int column vector for all integer types

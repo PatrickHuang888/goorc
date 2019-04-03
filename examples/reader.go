@@ -41,7 +41,14 @@ func main() {
 
 	for it.NextStripe() {
 		for it.NextBatch(batch) {
-
+			for i := uint64(0); i < batch.Rows(); i++ {
+				x := batch.(*orc.LongColumnVector).Vector[i]
+				fmt.Println(x)
+			}
+			batch.Reset()
+		}
+		if err = it.Err(); err != nil {
+			fmt.Printf("%+v", err)
 		}
 	}
 	/*for it.NextBatch(batch) {

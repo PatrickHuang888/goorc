@@ -198,10 +198,12 @@ func (sr *stripeReader) NextStripe() bool {
 	for i := 0; i < len(crs); i++ {
 		crs[i] = &columnReader{id: i, td: sr.tds[i], encoding: sf.GetColumns()[i],
 			si: sr.tail.Footer.Stripes[currentStripe], compressionKind: sr.tail.Postscript.GetCompression(),
-			chunkBufSize: sr.tail.Postscript.GetCompressionBlockSize()}
+			chunkBufSize: sr.tail.Postscript.GetCompressionBlockSize(),
+			streams:      make(map[pb.Stream_Kind]*pb.Stream), f: sr.f}
 	}
 
-	var indexOffsets, dataOffsets map[uint32]uint64
+	indexOffsets := make(map[uint32]uint64)
+	dataOffsets := make(map[uint32]uint64)
 	for _, stream := range sf.GetStreams() {
 		c := stream.GetColumn()
 		crs[c].streams[stream.GetKind()] = stream
@@ -216,8 +218,8 @@ func (sr *stripeReader) NextStripe() bool {
 	crs[0].indexStart = si.GetOffset()
 	crs[0].dataStart = si.GetOffset() + si.GetIndexLength()
 	for i := 1; i < len(crs); i++ {
-		crs[i].indexStart = crs[i-1].indexStart + indexOffsets[uint32(i)]
-		crs[i].dataStart = crs[i-1].dataStart + dataOffsets[uint32(i)]
+		crs[i].indexStart = crs[i-1].indexStart + indexOffsets[uint32(i-1)]
+		crs[i].dataStart = crs[i-1].dataStart + dataOffsets[uint32(i-1)]
 	}
 
 	sr.crs = crs
@@ -232,13 +234,10 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 	// todo: check batch column id
 	columnReader := sr.crs[batch.ColumnId()]
 	result, err := columnReader.fillBatch(batch)
-	if err == nil {
-		return result
-	} else {
+	if err != nil {
 		sr.err = err
-		return false
 	}
-	return false
+	return result
 }
 
 func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
@@ -255,30 +254,46 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 				//todo:
 				return false, errors.New("present not impl")
 			} else {
+
 				if _, err = cr.f.Seek(int64(cr.dataStart), 0); err != nil {
 					return false, errors.WithStack(err)
 				}
+
 				dataStream, _ := cr.streams[pb.Stream_DATA]
 				chunkBuf := make([]byte, cr.chunkBufSize)
-				decompressed:=make([]byte, cr.chunkBufSize)
+				decompressed := make([]byte, cr.chunkBufSize)
 				dataLength := dataStream.GetLength()
 				var read uint64
+				var rows uint64
+				var chunkCount int
+				v, ok := batch.(*LongColumnVector)
+				if !ok {
+					return false, errors.New("batch is not LongColumnVector")
+				}
+
 				for read < dataLength {
+					fmt.Printf("read chunk count %d\n", chunkCount)
+					chunkCount++
 					// read head
 					head := make([]byte, 3)
 					if _, err = io.ReadFull(cr.f, head); err != nil {
 						return false, errors.WithStack(err)
 					}
 					read += 3
+
 					original := (head[0] & 0x01) == 1
 					chunkLength := int(head[2])<<15 | int(head[1])<<7 | int(head[0])>>1
-					if uint64(chunkLength) > dataStream.GetLength() {
+					if uint64(chunkLength) > cr.chunkBufSize {
 						return false, errors.New("chunk length large than compression buffer size")
 					}
-					if _, err = io.ReadFull(cr.f, chunkBuf[:chunkLength]); err != nil {
+					if dataLength > cr.chunkBufSize {
+						// fixme:
+						return false, errors.New("stream data length large than chunk buffer size")
+					}
+					if _, err = io.ReadFull(cr.f, chunkBuf[:dataLength]); err != nil {
 						return false, errors.WithStack(err)
 					}
-					read += uint64(chunkLength)
+					read += uint64(dataLength)
 
 					if original {
 						return false, errors.New("compression origin not impl")
@@ -286,20 +301,31 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 						var n int
 						switch cr.compressionKind {
 						case pb.CompressionKind_ZLIB:
-							r := flate.NewReader(bytes.NewReader(chunkBuf))
+							r := flate.NewReader(bytes.NewReader(chunkBuf[:dataLength]))
 							n, err = r.Read(decompressed)
 							r.Close()
 							if err != nil && err != io.EOF {
-								return false, errors.Wrapf(err, "decompress chunk data error when read footer")
+								return false, errors.Wrapf(err, "decompress chunk data error when read data")
 							}
 						default:
 							return false, errors.New("compression kind other than zlib not impl")
 						}
 
-						rle:= &intRleV2{signed:true, literals:batch.(LongColumnVector).Vector}
-						rle.readValues(bytes.NewBuffer(decompressed[:n]))
+						rle := &intRleV2{signed: true}
+						if err = rle.readValues(bytes.NewBuffer(decompressed[:n])); err != nil {
+							return false, errors.WithStack(err)
+						}
+						if rows+uint64(rle.numLiterals) > uint64(len(v.Vector)) {
+							return false, errors.New("not impl")
+						}
+						for _, value := range rle.literals {
+							v.Vector[rows] = value
+							rows++
+						}
 					}
 				}
+				v.rows = rows
+
 			}
 
 		default:
@@ -310,7 +336,7 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 		return false, errors.New("type other than int not impl")
 	}
 
-	return
+	return true, nil
 }
 
 func (sr *stripeReader) Err() error {
@@ -331,12 +357,12 @@ type ReaderOptions struct {
 func CreateReader(path string) (r Reader, err error) {
 
 	/*tail := opts.OrcTail
-	if tail == nil {
-		tail, err: = extractFileTail(path, )
-	} else {
-		// checkOrcVersion(path, tail.PostScript)
-	}
-	ri.tail = tail*/
+	  if tail == nil {
+	  	tail, err: = extractFileTail(path, )
+	  } else {
+	  	// checkOrcVersion(path, tail.PostScript)
+	  }
+	  ri.tail = tail*/
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -528,9 +554,9 @@ func extractPostScript(buf []byte) (ps *pb.PostScript, err error) {
 
 	// Check compression codec.
 	/*switch ps.GetCompression() {
-	default:
-		return nil, errors.New("unknown compression")
-	}*/
+	  default:
+	  	return nil, errors.New("unknown compression")
+	  }*/
 	fmt.Printf("Postscript: %s\n", ps.String())
 	return ps, err
 }

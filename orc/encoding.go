@@ -150,10 +150,11 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		}
 
 		if rle.signed { // zigzag
-			rle.literals[0] = DecodeZigzag(x)
+			rle.literals = []int64{DecodeZigzag(x)}
 		} else {
-			rle.uliterals[0] = x
+			rle.uliterals = []uint64{x}
 		}
+
 	case Encoding_DIRECT:
 		b1, err := in.ReadByte()
 		if err != nil {
@@ -167,6 +168,12 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		}
 		length := header&0x1FF + 1
 		rle.numLiterals = uint32(length)
+		if rle.signed {
+			rle.literals = make([]int64, length)
+		} else {
+			rle.uliterals = make([]uint64, length)
+		}
+
 		for i := uint16(0); i < length; i++ {
 			var x uint64
 			switch width {
@@ -286,6 +293,11 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		}
 		length := uint32(header[0])&0x01<<8 | uint32(header[1]) + 1
 		rle.numLiterals = length
+		if rle.signed {
+			rle.literals = make([]int64, length)
+		} else {
+			rle.uliterals = make([]uint64, length)
+		}
 
 		if rle.signed {
 			baseValue, err := binary.ReadVarint(in)
@@ -316,9 +328,14 @@ func (rle *intRleV2) readValues(in InputStream) error {
 		for i < length {
 			switch deltaWidth {
 			case 0:
-				// no delta ?
-				// fixme:
-				return errors.New("int rle v2 encoding delta width 0 no impl")
+				// no delta, just delta base ?
+				if deltaBase > 0 {
+					rle.setValue(i, true, uint64(deltaBase))
+				} else {
+					rle.setValue(i, false, uint64(-deltaBase))
+				}
+				i++
+
 			case 2:
 				b, err := in.ReadByte()
 				if err != nil {
