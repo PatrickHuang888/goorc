@@ -40,12 +40,16 @@ func main() {
 	y := batch.Cols[1].(*hive.BytesColumnVector)*/
 
 	for it.NextStripe() {
-		for it.NextBatch(batch) {
+		for {
+			next := it.NextBatch(batch)
 			for i := uint64(0); i < batch.Rows(); i++ {
 				x := batch.(*orc.LongColumnVector).Vector[i]
 				fmt.Println(x)
 			}
 			batch.Reset()
+			if !next {
+				break
+			}
 		}
 		if err = it.Err(); err != nil {
 			fmt.Printf("%+v", err)

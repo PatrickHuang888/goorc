@@ -232,11 +232,58 @@ func (sr *stripeReader) NextStripe() bool {
 
 func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 	// todo: check batch column id
-	columnReader := sr.crs[batch.ColumnId()]
+	cr := sr.crs[batch.ColumnId()]
 
-	columnReader.streams[pb.Stream_ROW_INDEX]
-	
-	result, err := columnReader.fillBatch(batch)
+	indexStream := cr.streams[pb.Stream_ROW_INDEX]
+	fmt.Println("==========")
+	fmt.Println(indexStream.String())
+
+	if _, err := cr.f.Seek(int64(cr.indexStart), 0); err != nil {
+		fmt.Printf("%+v", err)
+		return false
+	}
+
+	head := make([]byte, 3)
+	if _, err := io.ReadFull(cr.f, head); err != nil {
+		fmt.Printf("%+v", errors.WithStack(err))
+		return false
+	}
+
+	original := (head[0] & 0x01) == 1
+	chunkLength := int(head[2])<<15 | int(head[1])<<7 | int(head[0])>>1
+
+	indexBuf := make([]byte, chunkLength)
+	if _, err := io.ReadFull(cr.f, indexBuf); err != nil {
+		fmt.Printf("%+v", err)
+	}
+
+	if original {
+		fmt.Println("orgin+++++")
+		ri := &pb.RowIndex{}
+		if err := proto.Unmarshal(indexBuf, ri); err != nil {
+			fmt.Printf("%+v", errors.WithStack(err))
+			return false
+		}
+		fmt.Println(ri.String())
+	} else {
+
+		decompressed := make([]byte, cr.chunkBufSize)
+		r := flate.NewReader(bytes.NewReader(indexBuf))
+		n, err := r.Read(decompressed)
+		r.Close()
+		if err != nil && err != io.EOF {
+			fmt.Printf("%+v", errors.WithStack(err))
+			return false
+		}
+		ri := &pb.RowIndex{}
+		if err := proto.Unmarshal(decompressed[:n], ri); err != nil {
+			fmt.Printf("%+v", errors.WithStack(err))
+			return false
+		}
+		fmt.Println(ri.String())
+	}
+
+	result, err := cr.fillBatch(batch)
 	if err != nil {
 		sr.err = err
 	}
@@ -336,7 +383,7 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 		return false, errors.New("type other than int not impl")
 	}
 
-	return true, nil
+	return
 }
 
 func (sr *stripeReader) Err() error {
