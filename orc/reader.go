@@ -169,6 +169,7 @@ type columnReader struct {
 	chunkBufSize    uint64 //default 256k
 	indexStart      uint64
 	dataStart       uint64
+	buf             *bytes.Buffer
 }
 
 func (cr *columnReader) Print() {
@@ -309,7 +310,7 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 
 				dataStream, _ := cr.streams[pb.Stream_DATA]
 				chunkBuf := make([]byte, cr.chunkBufSize)
-				decompressed := make([]byte, cr.chunkBufSize)
+				//decompressed := make([]byte, cr.chunkBufSize)
 				dataLength := dataStream.GetLength()
 				var read uint64
 				var readRows uint64
@@ -359,16 +360,24 @@ func (cr *columnReader) fillBatch(batch ColumnVector) (next bool, err error) {
 							return false, errors.New("compression kind other than zlib not impl")
 						}
 
+						decompressedBuf := bytes.NewBuffer(decompressed[:n])
 						rle := &intRleV2{signed: true}
-						if err = rle.readValues(bytes.NewBuffer(decompressed[:n])); err != nil {
-							return false, errors.WithStack(err)
-						}
-						if readRows+uint64(rle.numLiterals) > uint64(len(v.Vector)) {
-							return false, errors.New("not impl")
-						}
-						for _, value := range rle.literals {
-							v.Vector[readRows] = value
-							readRows++
+						for {
+							if decompressedBuf.Len() == 0 {
+								break
+							}
+							if err = rle.readValues(decompressedBuf); err != nil {
+								return false, errors.WithStack(err)
+							}
+							if readRows+uint64(rle.numLiterals) > uint64(len(v.Vector)) {
+								return false, errors.New("not impl")
+							}
+							for _, value := range rle.literals {
+								v.Vector[readRows] = value
+								readRows++
+							}
+							// todo:
+							// reuse rle buf
 						}
 					}
 				}

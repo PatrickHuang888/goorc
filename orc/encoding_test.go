@@ -1,6 +1,7 @@
 package orc
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -90,7 +91,7 @@ func TestIntRunLengthV1(t *testing.T) {
 
 func TestIntRunLengthV2(t *testing.T) {
 	//short repeat
-	t1 := &bstream{value: []byte{0x0a, 0x27, 0x10}}
+	t1 := bytes.NewBuffer([]byte{0x0a, 0x27, 0x10})
 	irl := &intRleV2{}
 	err := irl.readValues(t1)
 	assert.Nil(t, err)
@@ -100,7 +101,7 @@ func TestIntRunLengthV2(t *testing.T) {
 
 	//direct
 	r := []uint64{23713, 43806, 57005, 48879}
-	t2 := &bstream{value: []byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef}}
+	t2 := bytes.NewBuffer([]byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef})
 	err = irl.readValues(t2)
 	if err != nil {
 		fmt.Printf("error %+v", err)
@@ -111,7 +112,7 @@ func TestIntRunLengthV2(t *testing.T) {
 
 	//delta
 	r = []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
-	t3 := &bstream{value: []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}}
+	t3 := bytes.NewBuffer([]byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46})
 	err = irl.readValues(t3)
 	if err != nil {
 		fmt.Printf("error %+v", err)

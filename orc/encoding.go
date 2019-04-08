@@ -1,6 +1,7 @@
 package orc
 
 import (
+	"bytes"
 	"encoding/binary"
 	"github.com/pkg/errors"
 	"io"
@@ -125,11 +126,16 @@ type intRleV2 struct {
 	numLiterals uint32
 }
 
-func (rle *intRleV2) readValues(in InputStream) error {
+func (rle *intRleV2) reset()  {
+	rle.sub=0
+
+}
+
+func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 	// header from MSB to LSB
 	firstByte, err := in.ReadByte()
 	if err != nil {
-		errors.WithStack(err)
+		return errors.WithStack(err)
 	}
 	rle.sub = firstByte >> 6
 	switch rle.sub {
@@ -144,7 +150,7 @@ func (rle *intRleV2) readValues(in InputStream) error {
 			i--
 			b, err := in.ReadByte()
 			if err != nil {
-				errors.WithStack(err)
+				return errors.WithStack(err)
 			}
 			x |= uint64(b) << (8 * i)
 		}
@@ -158,7 +164,7 @@ func (rle *intRleV2) readValues(in InputStream) error {
 	case Encoding_DIRECT:
 		b1, err := in.ReadByte()
 		if err != nil {
-			errors.WithStack(err)
+			return errors.WithStack(err)
 		}
 		header := uint16(firstByte)<<8 | uint16(b1) // 2 byte header
 		w := (header >> 9) & 0x1F                   // 5bit([3,8)) width
