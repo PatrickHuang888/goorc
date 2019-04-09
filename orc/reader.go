@@ -408,21 +408,28 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 				decompressedBuf := bytes.NewBuffer(decompressed[:n])
 				rle := cr.rle
 				for {
-					if decompressedBuf.Len() == 0 {
+					if v.rows==cap(v.Vector) {
 						break
 					}
 					if err = rle.readValues(decompressedBuf); err != nil {
 						return false, errors.WithStack(err)
 					}
-					if readRows+int(rle.numLiterals) > len(v.Vector) {
+					if v.rows+int(rle.numLiterals) > cap(v.Vector) {
 						return false, errors.New("not impl")
 					}
-					for _, value := range rle.literals {
-						v.Vector[readRows] = value
-						readRows++
+					for i := 0; i < int(rle.numLiterals); i++ {
+						v.rows++
+						cr.fillPosition = i
+						if v.rows < len(v.Vector){
+							v.Vector[v.rows] = rle.literals[i]
+						}else {
+							if v.rows < cap(v.Vector){
+								v.Vector= append(v.Vector, rle.literals[i])
+							}else {
+								return true, nil
+							}
+						}
 					}
-					// todo:
-					// reuse rle buf
 				}
 			}
 		}
