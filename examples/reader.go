@@ -42,11 +42,11 @@ func main() {
 	for it.NextStripe() {
 		for {
 			next := it.NextBatch(batch)
-			for i := uint64(0); i < batch.Rows(); i++ {
-				x := batch.(*orc.LongColumnVector).Vector[i]
+			data := batch.(*orc.LongColumnVector).Vector
+			for i := 0; i < len(data); i++ {
+				x := data[i]
 				fmt.Println(x)
 			}
-			batch.Reset()
 			if !next {
 				break
 			}

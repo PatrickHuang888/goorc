@@ -174,11 +174,11 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 		}
 		length := header&0x1FF + 1
 		rle.numLiterals = uint32(length)
-		if rle.signed {
+		/*if rle.signed {
 			rle.literals = make([]int64, length)
 		} else {
 			rle.uliterals = make([]uint64, length)
-		}
+		}*/
 
 		for i := uint16(0); i < length; i++ {
 			var x uint64
