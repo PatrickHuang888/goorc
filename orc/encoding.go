@@ -119,16 +119,17 @@ func (irl *intRunLengthV1) writeValues(out OutputStream) error {
 
 // int run length encoding v2
 type intRleV2 struct {
-	sub         byte // sub encoding
-	signed      bool
-	literals    []int64 // fixme: allocate
-	uliterals   []uint64
-	numLiterals uint32
+	sub          byte // sub encoding
+	signed       bool
+	literals     []int64 // fixme: allocate
+	uliterals    []uint64
+	numLiterals  uint32
+	consumeIndex int
 }
 
-func (rle *intRleV2) reset()  {
-	rle.sub=0
-
+func (rle *intRleV2) reset() {
+	rle.sub = 0
+	rle.consumeIndex = 0
 }
 
 func (rle *intRleV2) readValues(in *bytes.Buffer) error {

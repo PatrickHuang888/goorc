@@ -97,6 +97,10 @@ func (td *TypeDescription) Print() {
 */
 
 func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err error) {
+	if maxSize < DEFAULT_ROW_SIZE {
+		maxSize = DEFAULT_ROW_SIZE
+	}
+
 	switch td.Kind {
 	case Type_BOOLEAN:
 		fallthrough
@@ -112,11 +116,11 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 		cv = &LongColumnVector{columnVector: columnVector{id: td.Id}, Vector: make([]int64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_TIMESTAMP:
 		cv = &TimestampColumnVector{columnVector: columnVector{id: td.Id},
-			vector: make([]uint64, DEFAULT_ROW_SIZE, maxSize)}
+			Vector: make([]uint64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_FLOAT:
 		fallthrough
 	case Type_DOUBLE:
-		cv = &DoubleColumnVector{columnVector: columnVector{Id: td.Id},
+		cv = &DoubleColumnVector{columnVector: columnVector{id: td.Id},
 			Vector: make([]float64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_DECIMAL:
 	// todo:
@@ -136,7 +140,7 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 				return nil, errors.WithStack(err)
 			}
 		}
-		cv = &StructColumnVector{columnVector: columnVector{Id: td.Id}, Fields: f}
+		cv = &StructColumnVector{columnVector: columnVector{id: td.Id}, Fields: f}
 	case Type_UNION:
 	// todo:
 	case Type_LIST:
