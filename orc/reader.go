@@ -158,17 +158,22 @@ type stripeReader struct {
 }
 
 type columnReader struct {
-	id              int
-	td              *TypeDescription
-	encoding        *pb.ColumnEncoding
-	streams         map[pb.Stream_Kind]*pb.Stream
-	present         bool
-	f               *os.File
-	si              *pb.StripeInformation
-	compressionKind pb.CompressionKind
-	indexStart      uint64
-	dataStart       uint64
-	decmpBuf        []byte //decompressed chunk buffer
+	id                  int
+	td                  *TypeDescription
+	encoding            *pb.ColumnEncoding
+	streams             map[pb.Stream_Kind]*pb.Stream
+	present             bool
+	f                   *os.File
+	si                  *pb.StripeInformation
+	compressionKind     pb.CompressionKind
+	chunkSize           int
+	indexStart          uint64
+	dataStart           uint64
+	currentDataPosition int64         // init with dataStart
+	dataBuf             *bytes.Buffer // buffer for compressed data read from file
+	chunkData           *bytes.Buffer // decompressed chunk buffer
+	dataLength          int64
+	dataRead            int64 // already read data
 
 	// decoder
 	rle *intRleV2
@@ -303,32 +308,6 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 			//reset vector
 			v.rows = 0
 
-			if cr.rle == nil {
-				// refactor: init literals size
-				cr.rle = &intRleV2{signed: true, literals: make([]int64, cap(v.Vector))}
-			}
-			rle := cr.rle
-
-			//has leftover
-			if rle.consumeIndex != 0 {
-				for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
-					if v.rows < len(v.Vector) {
-						v.Vector[v.rows] = rle.literals[rle.consumeIndex]
-					} else {
-						if v.rows < cap(v.Vector) {
-							// refactor:
-							v.Vector = append(v.Vector, rle.literals[rle.consumeIndex])
-						} else {
-							// still not finished
-							return true
-						}
-					}
-					v.rows++
-				}
-				//leftover finished
-				rle.reset()
-			}
-
 			result, err := cr.fillIntVector(v)
 			if err != nil {
 				sr.err = err
@@ -348,96 +327,144 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 }
 
 func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error) {
+	var chunkCount int
+	fmt.Printf("read chunk count %d\n", chunkCount)
+	chunkCount++
+
+	if cr.rle == nil {
+		// refactor: init literals size
+		cr.rle = &intRleV2{signed: true, literals: make([]int64, cap(v.Vector))}
+	}
+	rle := cr.rle
+
+	//has decoded leftover
+	if rle.consumeIndex != 0 {
+		for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
+			if v.rows < len(v.Vector) {
+				v.Vector[v.rows] = rle.literals[rle.consumeIndex]
+			} else {
+				if v.rows < cap(v.Vector) {
+					// refactor:
+					v.Vector = append(v.Vector, rle.literals[rle.consumeIndex])
+				} else {
+					// still not finished
+					return true, nil
+				}
+			}
+			v.rows++
+		}
+		//leftover finished
+		rle.reset()
+	}
 
 	if _, present := cr.streams[pb.Stream_PRESENT]; present {
 		//todo:
 		return false, errors.New("present not impl")
 	} else {
 
-		if _, err = cr.f.Seek(int64(cr.dataStart), 0); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		dataStream, _ := cr.streams[pb.Stream_DATA]
-		// refactor:
-		chunkSize := len(cr.decmpBuf)
-		chunkBuf := make([]byte, chunkSize)
-		decompressed := cr.decmpBuf
-		dataLength := dataStream.GetLength()
-		var read uint64
-		var chunkCount int
-
-		for read < dataLength {
-			fmt.Printf("read chunk count %d\n", chunkCount)
-			chunkCount++
-			// read head
-			head := make([]byte, 3)
-			if _, err = io.ReadFull(cr.f, head); err != nil {
+		//read more
+		if cr.dataRead< cr.dataLength {
+			// refactor: seek every time?
+			if _, err = cr.f.Seek(cr.currentDataPosition, 0); err != nil {
 				return false, errors.WithStack(err)
 			}
-			read += 3
 
-			original := (head[0] & 0x01) == 1
-			chunkLength := int(head[2])<<15 | int(head[1])<<7 | int(head[0])>>1
-			if chunkLength > chunkSize {
-				return false, errors.New("chunk length large than compression buffer size")
-			}
-			if int(dataLength) > chunkSize {
-				// todo:
-				return false, errors.New("stream data length large than chunk buffer size, not impl")
-			}
-			if _, err = io.ReadFull(cr.f, chunkBuf[:dataLength]); err != nil {
-				return false, errors.WithStack(err)
-			}
-			read += dataLength
-
-			if original {
-				return false, errors.New("compression origin not impl")
-			} else {
-				var n int
-				switch cr.compressionKind {
-				case pb.CompressionKind_ZLIB:
-					r := flate.NewReader(bytes.NewReader(chunkBuf[:dataLength]))
-					n, err = r.Read(decompressed)
-					r.Close()
-					if err != nil && err != io.EOF {
-						return false, errors.Wrapf(err, "decompress chunk data error when read data")
-					}
-				default:
-					return false, errors.New("compression kind other than zlib not impl")
-				}
-
-				decompressedBuf := bytes.NewBuffer(decompressed[:n])
-				rle := cr.rle
-				if err = rle.readValues(decompressedBuf); err != nil {
+			var r int64
+			available:= cr.dataBuf.Cap()- cr.dataBuf.Len()
+			if cr.dataRead+int64(cr.dataBuf.Len()) > cr.dataLength {
+				r = cr.dataLength - cr.dataRead
+				if _, err = io.CopyN(cr.dataBuf, cr.f, r); err != nil {
 					return false, errors.WithStack(err)
 				}
-
-				for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
-					if v.rows < len(v.Vector) {
-						v.Vector[v.rows] = rle.literals[rle.consumeIndex]
-					} else {
-						if v.rows < cap(v.Vector) {
-							// refactor:
-							v.Vector = append(v.Vector, cr.rle.literals[rle.consumeIndex])
-						} else {
-							//full
-							return true, nil
-						}
-					}
-					v.rows++
+			} else {
+				r = int64(cr.dataBuf.Len())
+				if _, err = io.CopyN(cr.dataBuf, cr.f, r); err != nil {
+					return false, errors.WithStack(err)
 				}
-				//all consumed
-				cr.rle.reset()
 			}
+			cr.dataRead += r
+			cr.currentDataPosition += r
 		}
+
+		// read head
+		head := make([]byte, 3)
+		if _, err = io.ReadFull(cr.dataBuf, head); err != nil {
+			return false, errors.WithStack(err)
+		}
+		original := (head[0] & 0x01) == 1
+		chunkLength := int(head[2])<<15 | int(head[1])<<7 | int(head[0])>>1
+		if chunkLength > cr.chunkSize {
+			return false, errors.New("chunk length large than compression buffer size")
+		}
+
+			dataBuf := decompress(cr.dataBuf, original, chunkLength)
+
+			if err := rle.readValues(dataBuf); err != nil {
+				sr.err
+				return false
+			}
+
+			for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
+				if v.rows < len(v.Vector) {
+					v.Vector[v.rows] = rle.literals[rle.consumeIndex]
+				} else {
+					if v.rows < cap(v.Vector) {
+						// refactor:
+						v.Vector = append(v.Vector, cr.rle.literals[rle.consumeIndex])
+					} else {
+						//full
+						return true, nil
+					}
+				}
+				v.rows++
+			}
+			//all consumed
+			cr.rle.reset()
+
+
+
+
+
+		//dataStream, _ := cr.streams[pb.Stream_DATA]
+		//dataLength := dataStream.GetLength()
+
+
+
+
+		dataBuf := decompress(cr.dataBuf, original, chunkLength)
+
+		rle := cr.rle
+
+		for dataBuf.Len() != 0 {
+			if err = rle.readValues(dataBuf); err != nil {
+				return false, errors.WithStack(err)
+			}
+
+			for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
+				if v.rows < len(v.Vector) {
+					v.Vector[v.rows] = rle.literals[rle.consumeIndex]
+				} else {
+					if v.rows < cap(v.Vector) {
+						// refactor:
+						v.Vector = append(v.Vector, cr.rle.literals[rle.consumeIndex])
+					} else {
+						//full
+						return true, nil
+					}
+				}
+				v.rows++
+			}
+			//all consumed
+			cr.rle.reset()
+		}
+
 	}
 
-	if v.rows == 0 {
-		return false, nil
-	} else {
-		return true, nil
-	}
+	return v.rows != 0, nil
+}
+
+func decompress(buf *bytes.Buffer, original bool, chunkLength int) *bytes.Buffer {
+
 }
 
 func (sr *stripeReader) Err() error {
