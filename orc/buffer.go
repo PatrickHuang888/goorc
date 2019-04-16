@@ -4,7 +4,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-type readOp int8
 
 // like Java ByteBuffer, limit set to len of buffer slice
 type ByteBuffer struct {
@@ -45,6 +44,9 @@ func (bb *ByteBuffer) Read(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	if bb.position >= bb.limit {
+		return 0, errors.New("buffer under flow")
+	}
 	n = copy(p, bb.buf[bb.position:bb.limit])
 	bb.position += n
 	return n, nil
@@ -60,6 +62,16 @@ func (bb *ByteBuffer) WriteByte(c byte) error {
 }
 
 func (bb *ByteBuffer) Write(p []byte) (n int, err error) {
-	n= copy(bb.buf[bb.position:bb.limit], p)
-	
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if bb.position >= bb.limit {
+		return 0, errors.New("buffer over flow")
+	}
+	n = copy(bb.buf[bb.position:bb.limit], p)
+	bb.position += n
+	if n < len(p) {
+		return n, errors.New("buffer over flow")
+	}
+	return n, nil
 }

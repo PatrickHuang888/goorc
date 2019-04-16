@@ -17,6 +17,8 @@ const (
 	Encoding_DIRECT            = 1
 	Encoding_PATCHED_BASE      = 2
 	Encoding_DELTA             = 3
+
+	MAX_NUM_LITERALS= 
 )
 
 type RunLengthEncoding interface {
