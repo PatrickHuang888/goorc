@@ -158,20 +158,19 @@ type stripeReader struct {
 }
 
 type columnReader struct {
-	id                  int
-	td                  *TypeDescription
-	encoding            *pb.ColumnEncoding
-	streams             map[pb.Stream_Kind]*pb.Stream
-	present             bool
-	f                   *os.File
-	si                  *pb.StripeInformation
-	compressionKind     pb.CompressionKind
-	chunkSize           int
-	indexStart          uint64
-	dataStart           int64
-	currentDataPosition int64 // init with dataStart
-	dataLength          int64
-	dataRead            int64 // already read data
+	id              int
+	td              *TypeDescription
+	encoding        *pb.ColumnEncoding
+	streams         map[pb.Stream_Kind]*pb.Stream
+	present         bool
+	f               *os.File
+	si              *pb.StripeInformation
+	compressionKind pb.CompressionKind
+	chunkSize       int
+	indexStart      uint64
+	dataStart       int64
+	dataLength      int64
+	dataRead        int64 // already read data
 
 	// decoder
 	rle *intRleV2
@@ -206,7 +205,8 @@ func (sr *stripeReader) NextStripe() bool {
 	for i := 0; i < len(crs); i++ {
 		crs[i] = &columnReader{id: i, td: sr.tds[i], encoding: sf.GetColumns()[i],
 			si: sr.tail.Footer.Stripes[currentStripe], compressionKind: sr.tail.Postscript.GetCompression(),
-			streams: make(map[pb.Stream_Kind]*pb.Stream), f: sr.f, batchCount: -1}
+			streams: make(map[pb.Stream_Kind]*pb.Stream), f: sr.f, batchCount: -1,
+			chunkSize: int(sr.tail.Postscript.GetCompressionBlockSize())}
 	}
 
 	indexOffsets := make(map[uint32]uint64)
@@ -227,6 +227,7 @@ func (sr *stripeReader) NextStripe() bool {
 	for i := 1; i < len(crs); i++ {
 		crs[i].indexStart = crs[i-1].indexStart + indexOffsets[uint32(i-1)]
 		crs[i].dataStart = crs[i-1].dataStart + int64(dataOffsets[uint32(i-1)])
+		crs[i].dataLength = int64(dataOffsets[uint32(i)])
 	}
 
 	sr.crs = crs
@@ -330,7 +331,7 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 
 	if cr.rle == nil {
 		// refactor: init literals size
-		cr.rle = &intRleV2{signed: true, literals: make([]int64, cap(v.Vector))}
+		cr.rle = &intRleV2{signed: true}
 	}
 	rle := cr.rle
 

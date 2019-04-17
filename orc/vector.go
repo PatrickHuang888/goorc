@@ -23,7 +23,7 @@ func (cv *columnVector) ColumnId() uint32 {
 }
 
 func (cv *columnVector) Len() int {
-	return cv.rows+1
+	return cv.rows
 }
 
 // nullable int column vector for all integer types

@@ -92,9 +92,7 @@ func TestIntRunLengthV1(t *testing.T) {
 func TestIntRunLengthV2(t *testing.T) {
 	//short repeat
 	t1 := bytes.NewBuffer([]byte{0x0a, 0x27, 0x10})
-	irl := &intRleV2{
-		uliterals: make([]uint64, MAX_LITERAL_SIZE),
-	}
+	irl := &intRleV2{}
 	//irl := &intRleV2{}
 	err := irl.readValues(t1)
 	assert.Nil(t, err)
