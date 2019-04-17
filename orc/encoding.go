@@ -33,6 +33,11 @@ type OutputStream interface {
 	io.WriteCloser
 }
 
+type Decoder interface {
+	readValues(buffer *bytes.Buffer) error
+	reset()
+}
+
 type byteRunLength struct {
 	repeat      bool
 	literals    []byte

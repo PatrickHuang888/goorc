@@ -173,7 +173,7 @@ type columnReader struct {
 	dataRead        int64 // already read data
 
 	// decoder
-	rle *intRleV2
+	rle Decoder
 
 	batchCount int
 }
@@ -317,6 +317,22 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 			return false
 		}
 
+	case pb.Type_STRING:
+		switch enc {
+		case pb.ColumnEncoding_DIRECT_V2:
+			v, ok := batch.(*BytesColumnVector)
+			if !ok {
+				sr.err = errors.New("batch is not BytesColumnVector")
+			}
+			//reset vector
+			v.rows = 0
+			result, err := cr.fillBytesVector(v)
+			if err != nil {
+				sr.err = err
+			}
+			return result
+		}
+
 	default:
 		sr.err = errors.New("type other than int not impl")
 		return false
@@ -324,12 +340,18 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 	return false
 }
 
+func (cr *columnReader) fillBytesVector(v *BytesColumnVector) (next bool, err error) {
+	if cr.rle == nil {
+		cr.rle= &bytes
+	}
+}
+
 func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error) {
 	if cr.rle == nil {
 		// refactor: init literals size
 		cr.rle = &intRleV2{signed: true}
 	}
-	rle := cr.rle
+	rle := cr.rle.(*intRleV2)
 
 	//has decoded leftover
 	if rle.consumeIndex != 0 {
