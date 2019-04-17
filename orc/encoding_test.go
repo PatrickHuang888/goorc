@@ -101,6 +101,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.Equal(t, 10000, int(irl.uliterals[0]))
 
 	//direct
+	irl.reset()
 	r := []uint64{23713, 43806, 57005, 48879}
 	t2 := bytes.NewBuffer([]byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef})
 	err = irl.readValues(t2)
@@ -112,6 +113,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.EqualValues(t, r, irl.uliterals[0:4])
 
 	//delta
+	irl.reset()
 	r = []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
 	t3 := bytes.NewBuffer([]byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46})
 	err = irl.readValues(t3)

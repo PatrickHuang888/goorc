@@ -325,10 +325,6 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 }
 
 func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error) {
-	var chunkCount int
-	fmt.Printf("read chunk count %d\n", chunkCount)
-	chunkCount++
-
 	if cr.rle == nil {
 		// refactor: init literals size
 		cr.rle = &intRleV2{signed: true}

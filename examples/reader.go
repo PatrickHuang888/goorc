@@ -15,13 +15,8 @@ func main() {
 	}
 	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
-	/*schema := orc.NewTypeDescription(pb.Type_STRUCT)
-	xtd := orc.NewTypeDescription(pb.Type_INT)
-	ytd := orc.NewTypeDescription(pb.Type_STRING)
-	schema.AddField("x", xtd)
-	schema.AddField("y", ytd)*/
-
-	schema, err := reader.GetColumnSchema(1)
+	//schema, err := reader.GetColumnSchema(1)
+	schema, err := reader.GetColumnSchema(2)
 	if err != nil {
 		fmt.Printf("get schema error %+v", err)
 		os.Exit(1)
@@ -36,12 +31,10 @@ func main() {
 		fmt.Printf("%+v", err)
 	}
 
-	/*x := batch.Cols[0].(*hive.LongColumnVector)
-	y := batch.Cols[1].(*hive.BytesColumnVector)*/
-
 	for it.NextStripe() {
 		for ; it.NextBatch(batch); {
-			data := batch.(*orc.LongColumnVector).Vector
+			//data := batch.(*orc.LongColumnVector).Vector
+			data := batch.(*orc.BytesColumnVector).Vector
 			for i := 0; i < batch.Len(); i++ {
 				x := data[i]
 				fmt.Println(x)
@@ -53,16 +46,4 @@ func main() {
 	}
 
 	it.Close()
-
-	/*for it.NextBatch(batch) {
-		for row := 0; row < batch.Size; row++ {
-			xRow := 0
-			if !x.Repeating {
-				xRow = row
-			}
-			fmt.Printf("x: %d\n", x.Vector[xRow])
-			fmt.Printf("y: %s\n", string(y.Vector[row]))
-		}
-	}
-	it.Close()*/
 }

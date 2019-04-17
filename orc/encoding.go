@@ -17,8 +17,7 @@ const (
 	Encoding_DIRECT            = 1
 	Encoding_PATCHED_BASE      = 2
 	Encoding_DELTA             = 3
-
-	)
+)
 
 type RunLengthEncoding interface {
 	Read(reader io.Reader) (next byte, err error)
@@ -131,6 +130,7 @@ type intRleV2 struct {
 func (rle *intRleV2) reset() {
 	rle.sub = 0
 	rle.consumeIndex = 0
+	rle.numLiterals = 0
 }
 
 func (rle *intRleV2) readValues(in *bytes.Buffer) error {
@@ -147,6 +147,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			header := firstByte
 			width := 1 + (header>>3)&0x07 // 3bit([3,)6) width
 			repeatCount := 3 + (header & 0x07)
+			// fixme:
 			rle.numLiterals = uint32(repeatCount)
 
 			var x uint64
@@ -177,12 +178,17 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.WithStack(err)
 			}
 			length := header&0x1FF + 1
-			rle.numLiterals = uint32(length)
-			/*if rle.signed {
-				rle.literals = make([]int64, length)
+			mark := rle.numLiterals
+			rle.numLiterals += uint32(length)
+			if rle.signed {
+				ls := make([]int64, rle.numLiterals)
+				copy(ls, rle.literals)
+				rle.literals = ls
 			} else {
-				rle.uliterals = make([]uint64, length)
-			}*/
+				ls := make([]uint64, rle.numLiterals)
+				copy(ls, rle.uliterals)
+				rle.uliterals = ls
+			}
 
 			for i := uint16(0); i < length; i++ {
 				var x uint64
@@ -253,9 +259,9 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				}
 
 				if rle.signed {
-					rle.literals[i] = DecodeZigzag(x)
+					rle.literals[mark+uint32(i)] = DecodeZigzag(x)
 				} else {
-					rle.uliterals[i] = x
+					rle.uliterals[mark+uint32(i)] = x
 				}
 			}
 
@@ -307,6 +313,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			rle.numLiterals += length
 
 			// rethink: oom?
+			// fixme: allocate every time
 			if rle.signed {
 				ls := make([]int64, rle.numLiterals)
 				copy(ls, rle.literals)
@@ -483,7 +490,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			return errors.Errorf("sub encoding %d for int rle v2 not recognized", rle.sub)
 		}
 
-	}  // finish read buffer
+	} // finish read buffer
 
 	return nil
 }
