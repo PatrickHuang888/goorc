@@ -122,6 +122,24 @@ func (irl *intRunLengthV1) writeValues(out OutputStream) error {
 	return nil
 }
 
+type stringContentDecoder struct {
+	num          int
+	consumeIndex int
+	content      [][]byte
+	length       []int64
+}
+
+func (d *stringContentDecoder) reset() {
+	d.num = 0
+	d.consumeIndex = 0
+}
+
+func (d *stringContentDecoder) readValues(in *bytes.Buffer) error {
+	for in.Len() > 0 {
+
+	}
+}
+
 // int run length encoding v2
 type intRleV2 struct {
 	sub          byte // sub encoding
@@ -318,7 +336,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			rle.numLiterals += length
 
 			// rethink: oom?
-			// fixme: allocate every time
+			// fixme: allocate every time ?
 			if rle.signed {
 				ls := make([]int64, rle.numLiterals)
 				copy(ls, rle.literals)
