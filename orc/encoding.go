@@ -135,8 +135,11 @@ func (d *stringContentDecoder) reset() {
 }
 
 func (d *stringContentDecoder) readValues(in *bytes.Buffer) error {
+	d.content= make([][]byte, len(d.length))
 	for in.Len() > 0 {
-
+		d.content(d.consumeIndex)
+		in.Read()
+		d.consumeIndex++
 	}
 }
 
