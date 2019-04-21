@@ -131,7 +131,8 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 	case Type_CHAR:
 		fallthrough
 	case Type_VARCHAR:
-		cv = &BytesColumnVector{Vector: make([][]byte, DEFAULT_ROW_SIZE, maxSize)}
+		cv = &BytesColumnVector{columnVector: columnVector{id:td.Id},
+		Vector: make([][]byte, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_STRUCT:
 		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {

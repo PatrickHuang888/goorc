@@ -127,6 +127,7 @@ type stringContentDecoder struct {
 	consumeIndex int
 	content      [][]byte
 	length       []int64
+	lengthMark uint64
 }
 
 func (d *stringContentDecoder) reset() {
@@ -135,12 +136,17 @@ func (d *stringContentDecoder) reset() {
 }
 
 func (d *stringContentDecoder) readValues(in *bytes.Buffer) error {
-	d.content= make([][]byte, len(d.length))
 	for in.Len() > 0 {
-		d.content(d.consumeIndex)
-		in.Read()
+		length:= d.length[d.lengthMark]
+		b:= make([]byte, length)
+		if _, err:= io.ReadFull(in, b);err!=nil {
+			return errors.WithStack(err)
+		}
+		d.content[d.consumeIndex]= b
 		d.consumeIndex++
+		d.lengthMark++
 	}
+	return nil
 }
 
 // int run length encoding v2
