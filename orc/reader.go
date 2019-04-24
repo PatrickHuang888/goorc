@@ -782,7 +782,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 		offset += 3
 		r = offset + chunkLength
 
-		if original {
+    if original {
 			// todo:
 			return nil, errors.New("chunk original not implemented!")
 		} else {
