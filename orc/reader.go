@@ -165,14 +165,14 @@ type columnReader struct {
 	f               *os.File
 	si              *pb.StripeInformation
 	compressionKind pb.CompressionKind
-	chunkSize       int
+	chunkSize       uint64
 
-	indexStart  uint64 // index area start
-	dataStart   uint64  // data area start
-	dataRead    uint64  // data stream already read
+	indexStart uint64 // index area start
+	dataStart  uint64 // data area start
+	dataRead   uint64 // data stream already read
 	// fixme: assuming present and length data can be read into memory
 	present []bool
-	length []int64
+	length  []uint64
 
 	// decoder
 	//pstDcr  Decoder // present decoder
@@ -180,9 +180,10 @@ type columnReader struct {
 	//lngDcr  Decoder // length decoder
 
 	batchCount int
-	cursor uint64  // current read position
+	cursor     uint64 // current read position
 
-	decmpBuf *bytes.Buffer  // decompressed buffer for a chunk
+	cmpBuf   *bytes.Buffer
+	decmpBuf *bytes.Buffer // decompressed buffer for a chunk
 }
 
 func (cr *columnReader) Print() {
@@ -209,11 +210,15 @@ func (sr *stripeReader) NextStripe() bool {
 
 	crs := make([]*columnReader, len(sr.tds))
 
+	chunkSize := sr.tail.Postscript.GetCompressionBlockSize()
 	for i := 0; i < len(crs); i++ {
+		cmpBuf := bytes.NewBuffer(make([]byte, chunkSize))
+		decmpBuf := bytes.NewBuffer(make([]byte, chunkSize))
 		crs[i] = &columnReader{id: i, td: sr.tds[i], encoding: sf.GetColumns()[i],
 			si: sr.tail.Footer.Stripes[currentStripe], compressionKind: sr.tail.Postscript.GetCompression(),
 			streams: make(map[pb.Stream_Kind]*pb.Stream), f: sr.f, batchCount: -1,
-			chunkSize: int(sr.tail.Postscript.GetCompressionBlockSize())}
+			chunkSize: chunkSize,
+			cmpBuf:    cmpBuf, decmpBuf: decmpBuf}
 	}
 
 	indexOffsets := make(map[uint32]uint64)
@@ -341,7 +346,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 			}
 			return result
 		default:
-			sr.err=errors.New("string encoding other than direct_v2 not impl")
+			sr.err = errors.New("string encoding other than direct_v2 not impl")
 		}
 
 	default:
@@ -389,14 +394,14 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 	dataLength := dataStream.GetLength()
 
 	// decoding length stream
-	if cr.length==nil {
-		lengthDecoder := &intRleV2{signed:true}
+	// fixme: assuming read length stream totally in memory
+	if cr.length == nil {
+		lengthDecoder := &intRleV2{signed: false}
 		lengthStream := cr.streams[pb.Stream_LENGTH]
 		lengthStart := dataStart + dataLength
 		lengthLength := lengthStream.GetLength()
 		var lengthRead uint64
 		for lengthRead < lengthLength {
-			// refactor: seek every time?
 			if _, err = cr.f.Seek(int64(lengthStart+lengthRead), 0); err != nil {
 				return false, errors.WithStack(err)
 			}
@@ -409,28 +414,29 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 			r += 3
 			original := (head[0] & 0x01) == 1
 			chunkLength := int(head[2])<<15 | int(head[1])<<7 | int(head[0])>>1
-			if chunkLength > cr.chunkSize {
+			if uint64(chunkLength) > cr.chunkSize {
 				return false, errors.New("chunk length large than compression buffer size")
 			}
-			// fixme: allocate
-			chunkBuffer := make([]byte, cr.chunkSize)
-			if _, err = io.ReadFull(cr.f, chunkBuffer[:chunkLength]); err != nil {
+			cr.cmpBuf.Reset()
+			if _, err = io.CopyN(cr.cmpBuf, cr.f, int64(chunkLength)); err != nil {
 				return false, errors.WithStack(err)
 			}
 			r += chunkLength
 			lengthRead += uint64(r)
 			// decompress
-			decomBuf, err := decompress(cr.compressionKind, original, chunkBuffer[:chunkLength], cr.chunkSize)
+			cr.decmpBuf.Reset()
+			_, err := bufferDecompress(cr.compressionKind, original, cr.cmpBuf, cr.decmpBuf)
 			if err != nil {
 				return false, errors.WithStack(err)
 			}
 			// decode
-			if err := lengthDecoder.readValues(bytes.NewBuffer(decomBuf)); err != nil {
+			if err := lengthDecoder.readValues(cr.decmpBuf); err != nil {
 				return false, errors.WithStack(err)
 			}
 			// set decoded length data
-			// refactor: append
-			cr.length = append(cr.length, lengthDecoder.literals[:lengthDecoder.numLiterals]...)
+			// refactor: use ref or append ?
+			cr.length = append(cr.length, lengthDecoder.uliterals[:lengthDecoder.numLiterals]...)
+			stringDecoder.length = cr.length
 		}
 	}
 
@@ -450,23 +456,24 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 			r += 3
 			original := (head[0] & 0x01) == 1
 			chunkLength := int(head[2])<<15 | int(head[1])<<7 | int(head[0])>>1
-			if chunkLength > cr.chunkSize {
+			if uint64(chunkLength) > cr.chunkSize {
 				return false, errors.New("chunk length large than compression buffer size")
 			}
 			// refactor: make every time?
-			chunkBuffer := make([]byte, cr.chunkSize)
-			if _, err = io.ReadFull(cr.f, chunkBuffer[:chunkLength]); err != nil {
+			cr.cmpBuf.Reset()
+			if _, err = io.CopyN(cr.cmpBuf, cr.f, int64(chunkLength)); err != nil {
 				return false, errors.WithStack(err)
 			}
 			r += chunkLength
 			cr.dataRead += uint64(r)
 			// decompress
-			decomBuf, err := decompress(cr.compressionKind, original, chunkBuffer[:chunkLength], cr.chunkSize)
+			cr.decmpBuf.Reset()
+			_, err := bufferDecompress(cr.compressionKind, original, cr.cmpBuf, cr.decmpBuf)
 			if err != nil {
 				return false, errors.WithStack(err)
 			}
 			// decode
-			if err := stringDecoder.readValues(bytes.NewBuffer(decomBuf)); err != nil {
+			if err := stringDecoder.readValues(cr.decmpBuf); err != nil {
 				return false, errors.WithStack(err)
 			}
 
@@ -486,7 +493,7 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 				v.rows++
 			}
 			stringDecoder.reset()
-		}else {
+		} else {
 			break
 		}
 	}
@@ -546,7 +553,7 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 		r += 3
 		original := (head[0] & 0x01) == 1
 		chunkLength := int(head[2])<<15 | int(head[1])<<7 | int(head[0])>>1
-		if chunkLength > cr.chunkSize {
+		if uint64(chunkLength) > cr.chunkSize {
 			return false, errors.New("chunk length large than compression buffer size")
 		}
 		chunkBuffer := make([]byte, cr.chunkSize)
@@ -588,7 +595,29 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 	return v.rows != 0, nil
 }
 
-func decompress(compress pb.CompressionKind, original bool, buf []byte, chunkSize int) ([]byte, error) {
+func bufferDecompress(compress pb.CompressionKind, original bool, cmpBuf *bytes.Buffer,
+	decmpBuf *bytes.Buffer) (int64, error) {
+	if original {
+		// todo:
+		return 0, errors.New("chunk original not implemented!")
+	} else {
+		switch compress {
+		case pb.CompressionKind_ZLIB:
+			r := flate.NewReader(cmpBuf)
+			//n, err := r.Read(decompBuf)
+			n, err := decmpBuf.ReadFrom(r)
+			r.Close()
+			if err != nil && err != io.EOF {
+				return 0, errors.Wrapf(err, "decompress chunk data error when read footer")
+			}
+			return n, nil
+		default:
+			return 0, errors.New("compression kind other than zlib not impl")
+		}
+	}
+}
+
+func decompress(compress pb.CompressionKind, original bool, buf []byte, chunkSize uint64) ([]byte, error) {
 	decompBuf := make([]byte, chunkSize)
 	if original {
 		// todo:
@@ -598,7 +627,10 @@ func decompress(compress pb.CompressionKind, original bool, buf []byte, chunkSiz
 		case pb.CompressionKind_ZLIB:
 			b := bytes.NewBuffer(buf)
 			r := flate.NewReader(b)
-			n, err := r.Read(decompBuf)
+			//n, err := r.Read(decompBuf)
+			bb := bytes.NewBuffer(decompBuf)
+			bb.Reset()
+			n, err := bb.ReadFrom(r)
 			r.Close()
 			if err != nil && err != io.EOF {
 				return nil, errors.Wrapf(err, "decompress chunk data error when read footer")

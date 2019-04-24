@@ -126,8 +126,8 @@ type stringContentDecoder struct {
 	num          int
 	consumeIndex int
 	content      [][]byte
-	length       []int64
-	lengthMark uint64
+	length       []uint64
+	lengthMark   uint64
 }
 
 func (d *stringContentDecoder) reset() {
@@ -137,13 +137,15 @@ func (d *stringContentDecoder) reset() {
 
 func (d *stringContentDecoder) readValues(in *bytes.Buffer) error {
 	for in.Len() > 0 {
-		length:= d.length[d.lengthMark]
-		b:= make([]byte, length)
-		if _, err:= io.ReadFull(in, b);err!=nil {
+		length := d.length[d.lengthMark]
+		b := make([]byte, length)
+		if _, err := io.ReadFull(in, b); err != nil {
+			panic(err)
 			return errors.WithStack(err)
 		}
-		d.content[d.consumeIndex]= b
-		d.consumeIndex++
+		// append?
+		d.content = append(d.content, b)
+		d.num++
 		d.lengthMark++
 	}
 	return nil
@@ -178,9 +180,18 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 		case Encoding_SHORT_REPEAT:
 			header := firstByte
 			width := 1 + (header>>3)&0x07 // 3bit([3,)6) width
-			repeatCount := 3 + (header & 0x07)
-			// fixme:
-			rle.numLiterals = uint32(repeatCount)
+			repeatCount := uint32(3 + (header & 0x07))
+			mark := rle.numLiterals
+			rle.numLiterals += repeatCount
+			if rle.signed {
+				ls := make([]int64, rle.numLiterals)
+				copy(ls, rle.literals)
+				rle.literals = ls
+			} else {
+				ls := make([]uint64, rle.numLiterals)
+				copy(ls, rle.uliterals)
+				rle.uliterals = ls
+			}
 
 			var x uint64
 			for i := width; i > 0; { // big endian
@@ -193,9 +204,13 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 
 			if rle.signed { // zigzag
-				rle.literals = []int64{DecodeZigzag(x)}
+				for i := uint32(0); i < repeatCount; i++ {
+					rle.literals[mark+i] = DecodeZigzag(x)
+				}
 			} else {
-				rle.uliterals = []uint64{x}
+				for i := uint32(0); i < repeatCount; i++ {
+					rle.uliterals[mark+i] = x
+				}
 			}
 
 		case Encoding_DIRECT:
@@ -351,7 +366,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				copy(ls, rle.literals)
 				rle.literals = ls
 			} else {
-				ls := make([]uint64, length)
+				ls := make([]uint64, rle.numLiterals)
 				copy(ls, rle.uliterals)
 				rle.uliterals = ls
 			}

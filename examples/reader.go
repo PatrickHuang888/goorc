@@ -37,7 +37,7 @@ func main() {
 			data := batch.(*orc.BytesColumnVector).Vector
 			for i := 0; i < batch.Len(); i++ {
 				x := data[i]
-				fmt.Println(x)
+				fmt.Println(string(x))
 			}
 		}
 		if err = it.Err(); err != nil {
