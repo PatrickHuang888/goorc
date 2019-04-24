@@ -15,13 +15,18 @@ func main() {
 	}
 	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
-	//schema, err := reader.GetColumnSchema(1)
-	schema, err := reader.GetColumnSchema(2)
+	schema1, err := reader.GetColumnSchema(1)
+	schema2, err := reader.GetColumnSchema(2)
 	if err != nil {
 		fmt.Printf("get schema error %+v", err)
 		os.Exit(1)
 	}
-	batch, err := schema.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
+	batch1, err := schema1.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
+	if err != nil {
+		fmt.Printf("create row batch error %+v", err)
+		os.Exit(1)
+	}
+	batch2, err := schema2.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("create row batch error %+v", err)
 		os.Exit(1)
@@ -32,12 +37,22 @@ func main() {
 	}
 
 	for it.NextStripe() {
-		for ; it.NextBatch(batch); {
-			//data := batch.(*orc.LongColumnVector).Vector
-			data := batch.(*orc.BytesColumnVector).Vector
-			for i := 0; i < batch.Len(); i++ {
+		for ; it.NextBatch(batch1); {
+			data := batch1.(*orc.LongColumnVector).Vector
+			for i := 0; i < batch1.Len(); i++ {
 				x := data[i]
 				fmt.Println(x)
+			}
+		}
+		if err = it.Err(); err != nil {
+			fmt.Printf("%+v", err)
+		}
+
+		for ; it.NextBatch(batch2); {
+			data := batch2.(*orc.BytesColumnVector).Vector
+			for i := 0; i < batch2.Len(); i++ {
+				x := data[i]
+				fmt.Println(string(x))
 			}
 		}
 		if err = it.Err(); err != nil {
