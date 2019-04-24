@@ -171,7 +171,7 @@ type columnReader struct {
 	dataStart  uint64 // data area start
 	dataRead   uint64 // data stream already read
 	//present []bool
-	length  []uint64  // length data
+	length []uint64 // length data
 
 	//pstDcr  Decoder // present decoder
 	dataDcr Decoder // data decoder
