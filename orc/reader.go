@@ -170,19 +170,16 @@ type columnReader struct {
 	indexStart uint64 // index area start
 	dataStart  uint64 // data area start
 	dataRead   uint64 // data stream already read
-	// fixme: assuming present and length data can be read into memory
-	present []bool
-	length  []uint64
+	//present []bool
+	length  []uint64  // length data
 
-	// decoder
 	//pstDcr  Decoder // present decoder
 	dataDcr Decoder // data decoder
 	//lngDcr  Decoder // length decoder
 
 	batchCount int
-	cursor     uint64 // current read position
 
-	cmpBuf   *bytes.Buffer
+	cmpBuf   *bytes.Buffer // compressed buffer for a chunk
 	decmpBuf *bytes.Buffer // decompressed buffer for a chunk
 }
 
@@ -425,7 +422,7 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 			lengthRead += uint64(r)
 			// decompress
 			cr.decmpBuf.Reset()
-			_, err := bufferDecompress(cr.compressionKind, original, cr.cmpBuf, cr.decmpBuf)
+			_, err := decompress(cr.compressionKind, original, cr.cmpBuf, cr.decmpBuf)
 			if err != nil {
 				return false, errors.WithStack(err)
 			}
@@ -459,7 +456,6 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 			if uint64(chunkLength) > cr.chunkSize {
 				return false, errors.New("chunk length large than compression buffer size")
 			}
-			// refactor: make every time?
 			cr.cmpBuf.Reset()
 			if _, err = io.CopyN(cr.cmpBuf, cr.f, int64(chunkLength)); err != nil {
 				return false, errors.WithStack(err)
@@ -468,7 +464,7 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 			cr.dataRead += uint64(r)
 			// decompress
 			cr.decmpBuf.Reset()
-			_, err := bufferDecompress(cr.compressionKind, original, cr.cmpBuf, cr.decmpBuf)
+			_, err := decompress(cr.compressionKind, original, cr.cmpBuf, cr.decmpBuf)
 			if err != nil {
 				return false, errors.WithStack(err)
 			}
@@ -556,21 +552,20 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 		if uint64(chunkLength) > cr.chunkSize {
 			return false, errors.New("chunk length large than compression buffer size")
 		}
-		chunkBuffer := make([]byte, cr.chunkSize)
-		if _, err = io.ReadFull(cr.f, chunkBuffer[:chunkLength]); err != nil {
+		cr.cmpBuf.Reset()
+		if _, err = io.CopyN(cr.cmpBuf, cr.f, int64(chunkLength)); err != nil {
 			return false, errors.WithStack(err)
 		}
 		r += chunkLength
 		cr.dataRead += uint64(r)
-
 		// decompress
-		decomBuf, err := decompress(cr.compressionKind, original, chunkBuffer[:chunkLength], cr.chunkSize)
+		cr.decmpBuf.Reset()
+		_, err := decompress(cr.compressionKind, original, cr.cmpBuf, cr.decmpBuf)
 		if err != nil {
 			return false, errors.WithStack(err)
 		}
-
 		// decode
-		if err := rle.readValues(bytes.NewBuffer(decomBuf)); err != nil {
+		if err := rle.readValues(cr.decmpBuf); err != nil {
 			return false, errors.WithStack(err)
 		}
 
@@ -595,7 +590,7 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 	return v.rows != 0, nil
 }
 
-func bufferDecompress(compress pb.CompressionKind, original bool, cmpBuf *bytes.Buffer,
+func decompress(compress pb.CompressionKind, original bool, cmpBuf *bytes.Buffer,
 	decmpBuf *bytes.Buffer) (int64, error) {
 	if original {
 		// todo:
@@ -613,31 +608,6 @@ func bufferDecompress(compress pb.CompressionKind, original bool, cmpBuf *bytes.
 			return n, nil
 		default:
 			return 0, errors.New("compression kind other than zlib not impl")
-		}
-	}
-}
-
-func decompress(compress pb.CompressionKind, original bool, buf []byte, chunkSize uint64) ([]byte, error) {
-	decompBuf := make([]byte, chunkSize)
-	if original {
-		// todo:
-		return nil, errors.New("chunk original not implemented!")
-	} else {
-		switch compress {
-		case pb.CompressionKind_ZLIB:
-			b := bytes.NewBuffer(buf)
-			r := flate.NewReader(b)
-			//n, err := r.Read(decompBuf)
-			bb := bytes.NewBuffer(decompBuf)
-			bb.Reset()
-			n, err := bb.ReadFrom(r)
-			r.Close()
-			if err != nil && err != io.EOF {
-				return nil, errors.Wrapf(err, "decompress chunk data error when read footer")
-			}
-			return decompBuf[:n], nil
-		default:
-			return nil, errors.New("compression kind other than zlib not impl")
 		}
 	}
 }
