@@ -27,29 +27,25 @@ func (bs *bstream) Read(p []byte) (n int, err error) {
 }
 
 func TestByteRunLength(t *testing.T) {
-	t1 := &bstream{value: []byte{0x61, 0x00}}
+	t1 := bytes.NewBuffer([]byte{0x61, 0x00})
 
-	brl := &byteRunLength{
-		literals: make([]byte, MAX_LITERAL_SIZE),
-	}
-	if err := brl.readValues(false, t1); err != nil {
+	brl := &byteRunLength{}
+	if err := brl.readValues(t1); err != nil {
 		t.Error(err)
 	}
 	if brl.repeat == false {
-		t.Fatal("repeat should be false")
+		t.Fatal("repeat should be true")
 	}
 	if brl.numLiterals != 100 {
 		t.Fatal("literal number should be 100")
 	}
-	if brl.literals[0] != 0 {
+	if brl.literals[0] != 0 || brl.literals[99]!=0{
 		t.Fatal("literal value should 0x00")
 	}
 
-	t2 := &bstream{value: []byte{0xfe, 0x44, 0x45}}
-	brl = &byteRunLength{
-		literals: make([]byte, MAX_LITERAL_SIZE),
-	}
-	if err := brl.readValues(false, t2); err != nil {
+	t2 := bytes.NewBuffer([]byte{0xfe, 0x44, 0x45})
+	brl = &byteRunLength{}
+	if err := brl.readValues(t2); err != nil {
 		t.Error(err)
 	}
 	if brl.repeat == true {
@@ -64,7 +60,7 @@ func TestByteRunLength(t *testing.T) {
 }
 
 func TestIntRunLengthV1(t *testing.T) {
-	t1 := &bstream{value: []byte{0x61, 0x00, 0x07}}
+	t1 := bytes.NewBuffer([]byte{0x61, 0x00, 0x07})
 	irl := &intRunLengthV1{
 		literals: make([]uint64, MAX_LITERAL_SIZE),
 	}
@@ -81,7 +77,7 @@ func TestIntRunLengthV1(t *testing.T) {
 		t.Fatal("literal error")
 	}
 
-	t2 := &bstream{value: []byte{0xfb, 0x02, 0x03, 0x04, 0x07, 0xb}}
+	t2 := bytes.NewBuffer([]byte{0xfb, 0x02, 0x03, 0x04, 0x07, 0xb})
 	err := irl.readValues(t2)
 	assert.Nil(t, err)
 	assert.Equal(t, irl.run, false)
