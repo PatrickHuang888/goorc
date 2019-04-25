@@ -346,8 +346,22 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 			sr.err = errors.New("string encoding other than direct_v2 not impl")
 		}
 
+	case pb.Type_STRUCT:
+		v, ok := batch.(*StructColumnVector)
+		if !ok {
+			sr.err = errors.New("batch is not StructColumnVector")
+		}
+		// todo: present
+		var ret bool
+		for _, vf := range v.Fields {
+			if sr.NextBatch(vf) {
+				ret = true
+			}
+		}
+		return ret
+
 	default:
-		sr.err = errors.New("type other than int not impl")
+		sr.err = errors.Errorf("type %s not impl", cr.td.Kind.String())
 		return false
 	}
 	return false

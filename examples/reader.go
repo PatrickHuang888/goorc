@@ -15,7 +15,41 @@ func main() {
 	}
 	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
-	schema1, err := reader.GetColumnSchema(1)
+	schema, err := reader.GetColumnSchema(0)
+	if err != nil {
+		fmt.Printf("get schema error %+v", err)
+		os.Exit(1)
+	}
+	it, err := reader.Stripes()
+	if err != nil {
+		fmt.Printf("%+v", err)
+	}
+	batch, err := schema.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
+	if err != nil {
+		fmt.Printf("create row batch error %+v", err)
+		os.Exit(1)
+	}
+	for it.NextStripe() {
+		// fixme: should be iterating on struct batch?
+		for ; it.NextBatch(batch); {
+			data := batch.(*orc.StructColumnVector).Fields
+			xs:= data[0].(*orc.LongColumnVector)
+			for i := 0; i < xs.Len(); i++ {
+				x := xs.Vector[i]
+				fmt.Println(x)
+			}
+			ys:= data[1].(*orc.BytesColumnVector)
+			for i := 0; i < ys.Len(); i++ {
+				y := ys.Vector[i]
+				fmt.Println(string(y))
+			}
+		}
+		if err = it.Err(); err != nil {
+			fmt.Printf("%+v", err)
+		}
+	}
+
+	/*schema1, err := reader.GetColumnSchema(1)
 	schema2, err := reader.GetColumnSchema(2)
 	if err != nil {
 		fmt.Printf("get schema error %+v", err)
@@ -58,7 +92,7 @@ func main() {
 		if err = it.Err(); err != nil {
 			fmt.Printf("%+v", err)
 		}
-	}
+	}*/
 
 	it.Close()
 }
