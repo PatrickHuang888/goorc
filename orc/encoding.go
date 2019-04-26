@@ -23,7 +23,6 @@ type Decoder interface {
 }
 
 type byteRunLength struct {
-	repeat      bool
 	literals    []byte
 	numLiterals int
 }
@@ -35,7 +34,6 @@ func (brl *byteRunLength) readValues(in *bytes.Buffer) error {
 			return errors.WithStack(err)
 		}
 		if control < 0x80 { // run
-			brl.repeat = true
 			mark := brl.numLiterals
 			brl.numLiterals += int(control) + MIN_REPEAT_SIZE
 			ls := make([]byte, brl.numLiterals)
@@ -49,7 +47,6 @@ func (brl *byteRunLength) readValues(in *bytes.Buffer) error {
 				brl.literals[mark+i] = val
 			}
 		} else { // literals
-			brl.repeat = false
 			mark := brl.numLiterals
 			//brl.numLiterals += 0x100 - int(control)
 			brl.numLiterals += int(-int8(control))
@@ -64,44 +61,101 @@ func (brl *byteRunLength) readValues(in *bytes.Buffer) error {
 	return nil
 }
 
+func (brl *byteRunLength)reset()  {
+	brl.numLiterals= 0
+}
+
 type intRunLengthV1 struct {
+	signed bool
 	numLiterals int
-	run         bool
-	delta       int8
-	literals    []uint64
-	sLiterals   []int64
-	signed      bool
+	literals    []int64
+	uliterals []uint64
 }
 
 func (irl *intRunLengthV1) readValues(in *bytes.Buffer) error {
-	control, err := in.ReadByte()
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	if control < 0x80 { // run
-		irl.numLiterals = int(control) + MIN_REPEAT_SIZE
-		irl.run = true
-		b, err := in.ReadByte()
+	for in.Len() > 0 {
+		control, err := in.ReadByte()
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		irl.delta = int8(b)
-		irl.literals[0], err = ReadVUint(in)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-	} else {
-		irl.run = false
-		n := -int(int8(control))
-		irl.numLiterals = n
-		for i := 0; i < n; i++ {
-			irl.literals[i], err = ReadVUint(in)
+		mark := irl.numLiterals
+		if control < 0x80 { // run
+			num := int(control) + MIN_REPEAT_SIZE
+			irl.numLiterals += num
+			if irl.signed {
+				ls := make([]int64, irl.numLiterals)
+				copy(ls, irl.literals)
+				irl.literals = ls
+			}else {
+				ls := make([]uint64, irl.numLiterals)
+				copy(ls, irl.uliterals)
+				irl.uliterals = ls
+			}
+			// delta
+			d, err := in.ReadByte()
 			if err != nil {
 				return errors.WithStack(err)
+			}
+			delta := int64(int8(d))
+			if irl.signed {
+				v, err := binary.ReadVarint(in)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				for i := 0; i < num; i++ {
+					irl.literals[mark+i] = v + delta
+				}
+			}else {
+				v, err:= binary.ReadUvarint(in)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				for i := 0; i < num; i++ {
+					if delta>0 {
+						irl.uliterals[mark+i] = v + uint64(delta)
+					}else {
+						irl.uliterals[mark+i] = v - uint64(-delta)
+					}
+				}
+			}
+
+		} else {
+			num := -int(int8(control))
+			irl.numLiterals += num
+			if irl.signed {
+				ls := make([]int64, irl.numLiterals)
+				copy(ls, irl.literals)
+				irl.literals = ls
+			}else {
+				ls := make([]uint64, irl.numLiterals)
+				copy(ls, irl.uliterals)
+				irl.uliterals = ls
+			}
+			if irl.signed {
+				for i := 0; i < num; i++ {
+					v, err := binary.ReadVarint(in)
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					irl.literals[mark+i] = v
+				}
+			}else {
+				for i := 0; i < num; i++ {
+					v, err := binary.ReadUvarint(in)
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					irl.uliterals[mark+i] = v
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func (irl *intRunLengthV1)reset()  {
+	irl.numLiterals= 0
+	irl.signed= false
 }
 
 func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {

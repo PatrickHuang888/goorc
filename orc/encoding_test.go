@@ -33,9 +33,6 @@ func TestByteRunLength(t *testing.T) {
 	if err := brl.readValues(t1); err != nil {
 		t.Error(err)
 	}
-	if brl.repeat == false {
-		t.Fatal("repeat should be true")
-	}
 	if brl.numLiterals != 100 {
 		t.Fatal("literal number should be 100")
 	}
@@ -48,9 +45,6 @@ func TestByteRunLength(t *testing.T) {
 	if err := brl.readValues(t2); err != nil {
 		t.Error(err)
 	}
-	if brl.repeat == true {
-		t.Fatal("repeat error")
-	}
 	if brl.numLiterals != 2 {
 		t.Fatal("literal number error")
 	}
@@ -61,28 +55,28 @@ func TestByteRunLength(t *testing.T) {
 
 func TestIntRunLengthV1(t *testing.T) {
 	t1 := bytes.NewBuffer([]byte{0x61, 0x00, 0x07})
-	irl := &intRunLengthV1{
-		literals: make([]uint64, MAX_LITERAL_SIZE),
-	}
+	irl := &intRunLengthV1{signed:false}
 	if err := irl.readValues(t1); err != nil {
 		t.Error(err)
-	}
-	if irl.run != true {
-		t.Fatal("run error")
 	}
 	if irl.numLiterals != 100 {
 		t.Fatal("num literals error")
 	}
-	if irl.literals[0] != 7 {
+	if irl.uliterals[0] != 7 || irl.uliterals[99]!=7{
 		t.Fatal("literal error")
 	}
-
+	irl.reset()
+	irl.signed= false
 	t2 := bytes.NewBuffer([]byte{0xfb, 0x02, 0x03, 0x04, 0x07, 0xb})
 	err := irl.readValues(t2)
 	assert.Nil(t, err)
-	assert.Equal(t, irl.run, false)
 	assert.Equal(t, irl.numLiterals, 5)
-	assert.Equal(t, irl.literals[4], uint64(11))
+	if irl.uliterals[0]!= 2{
+		t.Fatal("uliteral error")
+	}
+	if irl.uliterals[4]!=11 {
+		t.Fatal("uliteral error")
+	}
 }
 
 func TestIntRunLengthV2(t *testing.T) {
