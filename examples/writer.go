@@ -2,35 +2,31 @@ package main
 
 import (
 	"fmt"
-	"github.com/PatrickHuang888/goorc/hive"
 	"github.com/PatrickHuang888/goorc/orc"
+	"github.com/PatrickHuang888/goorc/pb/pb"
 	"os"
 )
 
 func main() {
-	schema := orc.NewTypeDescription(orc.STRUCT)
-	x := orc.NewTypeDescription(orc.INT)
-	y := orc.NewTypeDescription(orc.STRING)
-	schema.AddField("x", x)
-	schema.AddField("y", y)
-	opts := &orc.WriterOptions{Schema: schema}
-	writer := orc.NewWriter("my-file.orc", opts)
+	//schema := &orc.TypeDescription{Kind:pb.Type_STRUCT}
+	x := &orc.TypeDescription{Kind:pb.Type_INT}
+	//y := &orc.TypeDescription{Kind:pb.Type_STRING}
+	//schema.ChildrenNames= []string{"x", "y"}
+	//schema.Children=[]*orc.TypeDescription{x, y}
+	writer := orc.NewWriter("my-file.orc", x)
 
-	batch, err := schema.CreateRowBatch(orc.ORIGINAL, hive.DEFAULT_ROW_SIZE)
+	batch, err := x.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("got error when create row batch %v+", err)
 		os.Exit(1)
 	}
-	vx := batch.Cols[0]
-	vy := batch.Cols[1]
 
 	for r := 0; r < 10000; r++ {
-		row := batch.size
-		batch.size += 1
-		vx.Vector[row] = r
-		vy.Vector[row] = "Last-" + string(r*3)
 
-		if batch.size == MAXSIZE {
+		batch.(*orc.LongColumnVector).Vector[row] = int64(r)
+		//vy.Vector[row] = "Last-" + string(r*3)
+
+		if batch.Len() == cap() {
 			writer.AddRowBatch(batch)
 			batch.reset()
 		}

@@ -30,18 +30,15 @@ func main() {
 		os.Exit(1)
 	}
 	for it.NextStripe() {
-		// fixme: should be iterating on struct batch?
 		for ; it.NextBatch(batch); {
-			data := batch.(*orc.StructColumnVector).Fields
-			xs:= data[0].(*orc.LongColumnVector)
-			for i := 0; i < xs.Len(); i++ {
-				x := xs.Vector[i]
-				fmt.Println(x)
+			data := batch.(*orc.StructColumnVector).GetFields()
+			x:= data[0].(*orc.LongColumnVector)
+			for _, v := range x.GetVector(){
+				fmt.Println(v)
 			}
-			ys:= data[1].(*orc.BytesColumnVector)
-			for i := 0; i < ys.Len(); i++ {
-				y := ys.Vector[i]
-				fmt.Println(string(y))
+			y:= data[1].(*orc.BytesColumnVector)
+			for _,v := range y.GetVector() {
+				fmt.Println(string(v))
 			}
 		}
 		if err = it.Err(); err != nil {

@@ -113,7 +113,7 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 	case Type_LONG:
 		fallthrough
 	case Type_DATE:
-		cv = &LongColumnVector{columnVector: columnVector{id: td.Id}, Vector: make([]int64, DEFAULT_ROW_SIZE, maxSize)}
+		cv = &LongColumnVector{columnVector: columnVector{id: td.Id}, vector: make([]int64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_TIMESTAMP:
 		cv = &TimestampColumnVector{columnVector: columnVector{id: td.Id},
 			Vector: make([]uint64, DEFAULT_ROW_SIZE, maxSize)}
@@ -132,7 +132,7 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 		fallthrough
 	case Type_VARCHAR:
 		cv = &BytesColumnVector{columnVector: columnVector{id:td.Id},
-		Vector: make([][]byte, DEFAULT_ROW_SIZE, maxSize)}
+		vector: make([][]byte, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_STRUCT:
 		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {
@@ -141,7 +141,7 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 				return nil, errors.WithStack(err)
 			}
 		}
-		cv = &StructColumnVector{columnVector: columnVector{id: td.Id}, Fields: f}
+		cv = &StructColumnVector{columnVector: columnVector{id: td.Id}, fields: f}
 	case Type_UNION:
 	// todo:
 	case Type_LIST:

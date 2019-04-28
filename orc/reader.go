@@ -353,7 +353,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 		}
 		// todo: present
 		var ret bool
-		for _, vf := range v.Fields {
+		for _, vf := range v.fields {
 			if sr.NextBatch(vf) {
 				ret = true
 			}
@@ -376,12 +376,12 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 	// has leftover
 	if stringDecoder.consumeIndex != 0 {
 		for ; stringDecoder.consumeIndex < stringDecoder.num; stringDecoder.consumeIndex++ {
-			if v.rows < len(v.Vector) {
-				v.Vector[v.rows] = stringDecoder.content[stringDecoder.consumeIndex]
+			if v.rows < len(v.vector) {
+				v.vector[v.rows] = stringDecoder.content[stringDecoder.consumeIndex]
 			} else {
-				if v.rows < cap(v.Vector) {
+				if v.rows < cap(v.vector) {
 					// refactor:
-					v.Vector = append(v.Vector, stringDecoder.content[stringDecoder.consumeIndex])
+					v.vector = append(v.vector, stringDecoder.content[stringDecoder.consumeIndex])
 				} else {
 					// still not finished
 					return true, nil
@@ -452,7 +452,7 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 	}
 
 	// decoding data stream
-	for v.rows < cap(v.Vector) {
+	for v.rows < cap(v.vector) {
 		if cr.dataRead < dataLength {
 			// refactor: seek every time?
 			if _, err = cr.f.Seek(int64(cr.dataStart+cr.dataRead), 0); err != nil {
@@ -488,13 +488,13 @@ func (cr *columnReader) fillBytesDirectV2Vector(v *BytesColumnVector) (next bool
 			}
 
 			for ; stringDecoder.consumeIndex < stringDecoder.num; stringDecoder.consumeIndex++ {
-				if v.rows < len(v.Vector) {
+				if v.rows < len(v.vector) {
 					// slice reference
-					v.Vector[v.rows] = stringDecoder.content[stringDecoder.consumeIndex]
+					v.vector[v.rows] = stringDecoder.content[stringDecoder.consumeIndex]
 				} else {
-					if v.rows < cap(v.Vector) {
+					if v.rows < cap(v.vector) {
 						// refactor: allocate
-						v.Vector = append(v.Vector, stringDecoder.content[stringDecoder.consumeIndex])
+						v.vector = append(v.vector, stringDecoder.content[stringDecoder.consumeIndex])
 					} else {
 						//full
 						return true, nil
@@ -521,12 +521,12 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 	//has decoded leftover
 	if rle.consumeIndex != 0 {
 		for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
-			if v.rows < len(v.Vector) {
-				v.Vector[v.rows] = rle.literals[rle.consumeIndex]
+			if v.rows < len(v.vector) {
+				v.vector[v.rows] = rle.literals[rle.consumeIndex]
 			} else {
-				if v.rows < cap(v.Vector) {
+				if v.rows < cap(v.vector) {
 					// refactor:
-					v.Vector = append(v.Vector, rle.literals[rle.consumeIndex])
+					v.vector = append(v.vector, rle.literals[rle.consumeIndex])
 				} else {
 					// still not finished
 					return true, nil
@@ -584,12 +584,12 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 		}
 
 		for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
-			if v.rows < len(v.Vector) {
-				v.Vector[v.rows] = rle.literals[rle.consumeIndex]
+			if v.rows < len(v.vector) {
+				v.vector[v.rows] = rle.literals[rle.consumeIndex]
 			} else {
-				if v.rows < cap(v.Vector) {
+				if v.rows < cap(v.vector) {
 					// refactor:
-					v.Vector = append(v.Vector, rle.literals[rle.consumeIndex])
+					v.vector = append(v.vector, rle.literals[rle.consumeIndex])
 				} else {
 					//full
 					return true, nil
