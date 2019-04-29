@@ -11,98 +11,49 @@ const (
 	MIN_REPEAT_SIZE  = 3
 	MAX_LITERAL_SIZE = 128
 
-	Encoding_INT_RLEV2 = iota
-
 	Encoding_SHORT_REPEAT byte = 0
 	Encoding_DIRECT            = 1
 	Encoding_PATCHED_BASE      = 2
 	Encoding_DELTA             = 3
 )
 
-type RunLengthEncoding interface {
-	Read(reader io.Reader) (next byte, err error)
-}
-
-type InputStream interface {
-	io.Reader
-	io.ByteReader
-}
-
-type OutputStream interface {
-	io.ByteWriter
-	io.WriteCloser
+type Decoder interface {
+	readValues(buffer *bytes.Buffer) error
+	reset()
 }
 
 type byteRunLength struct {
-	repeat      bool
 	literals    []byte
 	numLiterals int
 }
 
-func (brl *byteRunLength) readValues(ignoreEof bool, in InputStream) (err error) {
-	control, err := in.ReadByte()
-	if err != nil {
-		if err == io.EOF {
-			if !ignoreEof {
-				return errors.Errorf("read past end RLE byte")
-			}
-		}
-		return errors.WithStack(err)
-	}
-	if control < 0x80 { // control
-		brl.repeat = true
-		brl.numLiterals = int(control) + MIN_REPEAT_SIZE
-		val, err := in.ReadByte()
-		if err != nil {
-			if err == io.EOF {
-				return errors.New("reading RLE byte go EOF")
-			}
-			return errors.WithStack(err)
-		}
-		brl.literals[0] = val
-	} else { // literals
-		brl.repeat = false
-		brl.numLiterals = 0x100 - int(control)
-		if _, err = io.ReadFull(in, brl.literals[:brl.numLiterals]); err != nil {
-			return errors.WithStack(err)
-		}
-	}
-	return
-}
-
-type intRunLengthV1 struct {
-	numLiterals int
-	run         bool
-	delta       int8
-	literals    []uint64
-	sLiterals   []int64
-	signed      bool
-}
-
-func (irl *intRunLengthV1) readValues(in InputStream) error {
-	control, err := in.ReadByte()
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	if control < 0x80 { // run
-		irl.numLiterals = int(control) + MIN_REPEAT_SIZE
-		irl.run = true
-		b, err := in.ReadByte()
+func (brl *byteRunLength) readValues(in *bytes.Buffer) error {
+	for in.Len() > 0 {
+		control, err := in.ReadByte()
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		irl.delta = int8(b)
-		irl.literals[0], err = ReadVUint(in)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-	} else {
-		irl.run = false
-		n := -int(int8(control))
-		irl.numLiterals = n
-		for i := 0; i < n; i++ {
-			irl.literals[i], err = ReadVUint(in)
+		if control < 0x80 { // run
+			mark := brl.numLiterals
+			brl.numLiterals += int(control) + MIN_REPEAT_SIZE
+			ls := make([]byte, brl.numLiterals)
+			copy(ls, brl.literals)
+			brl.literals = ls
+			val, err := in.ReadByte()
 			if err != nil {
+				return errors.WithStack(err)
+			}
+			for i := 0; i < int(control); i++ {
+				brl.literals[mark+i] = val
+			}
+		} else { // literals
+			mark := brl.numLiterals
+			//brl.numLiterals += 0x100 - int(control)
+			brl.numLiterals += int(-int8(control))
+			ls := make([]byte, brl.numLiterals)
+			copy(ls, brl.literals)
+			brl.literals = ls
+			if _, err = io.ReadFull(in, brl.literals[mark:brl.numLiterals]); err != nil {
 				return errors.WithStack(err)
 			}
 		}
@@ -110,9 +61,135 @@ func (irl *intRunLengthV1) readValues(in InputStream) error {
 	return nil
 }
 
-func (irl *intRunLengthV1) writeValues(out OutputStream) error {
+func (brl *byteRunLength)reset()  {
+	brl.numLiterals= 0
+}
+
+type intRunLengthV1 struct {
+	signed bool
+	numLiterals int
+	literals    []int64
+	uliterals []uint64
+}
+
+func (irl *intRunLengthV1) readValues(in *bytes.Buffer) error {
+	for in.Len() > 0 {
+		control, err := in.ReadByte()
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		mark := irl.numLiterals
+		if control < 0x80 { // run
+			num := int(control) + MIN_REPEAT_SIZE
+			irl.numLiterals += num
+			if irl.signed {
+				ls := make([]int64, irl.numLiterals)
+				copy(ls, irl.literals)
+				irl.literals = ls
+			}else {
+				ls := make([]uint64, irl.numLiterals)
+				copy(ls, irl.uliterals)
+				irl.uliterals = ls
+			}
+			// delta
+			d, err := in.ReadByte()
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			delta := int64(int8(d))
+			if irl.signed {
+				v, err := binary.ReadVarint(in)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				for i := 0; i < num; i++ {
+					irl.literals[mark+i] = v + delta
+				}
+			}else {
+				v, err:= binary.ReadUvarint(in)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				for i := 0; i < num; i++ {
+					if delta>0 {
+						irl.uliterals[mark+i] = v + uint64(delta)
+					}else {
+						irl.uliterals[mark+i] = v - uint64(-delta)
+					}
+				}
+			}
+
+		} else {
+			num := -int(int8(control))
+			irl.numLiterals += num
+			if irl.signed {
+				ls := make([]int64, irl.numLiterals)
+				copy(ls, irl.literals)
+				irl.literals = ls
+			}else {
+				ls := make([]uint64, irl.numLiterals)
+				copy(ls, irl.uliterals)
+				irl.uliterals = ls
+			}
+			if irl.signed {
+				for i := 0; i < num; i++ {
+					v, err := binary.ReadVarint(in)
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					irl.literals[mark+i] = v
+				}
+			}else {
+				for i := 0; i < num; i++ {
+					v, err := binary.ReadUvarint(in)
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					irl.uliterals[mark+i] = v
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (irl *intRunLengthV1)reset()  {
+	irl.numLiterals= 0
+	irl.signed= false
+}
+
+func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 	if irl.numLiterals != 0 {
 
+	}
+	return nil
+}
+
+type stringContentDecoder struct {
+	num          int
+	consumeIndex int
+	content      [][]byte
+	length       []uint64
+	lengthMark   uint64
+}
+
+func (d *stringContentDecoder) reset() {
+	d.num = 0
+	d.consumeIndex = 0
+}
+
+func (d *stringContentDecoder) readValues(in *bytes.Buffer) error {
+	for in.Len() > 0 {
+		length := d.length[d.lengthMark]
+		b := make([]byte, length)
+		if _, err := io.ReadFull(in, b); err != nil {
+			panic(err)
+			return errors.WithStack(err)
+		}
+		// append?
+		d.content = append(d.content, b)
+		d.num++
+		d.lengthMark++
 	}
 	return nil
 }
@@ -146,9 +223,18 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 		case Encoding_SHORT_REPEAT:
 			header := firstByte
 			width := 1 + (header>>3)&0x07 // 3bit([3,)6) width
-			repeatCount := 3 + (header & 0x07)
-			// fixme:
-			rle.numLiterals = uint32(repeatCount)
+			repeatCount := uint32(3 + (header & 0x07))
+			mark := rle.numLiterals
+			rle.numLiterals += repeatCount
+			if rle.signed {
+				ls := make([]int64, rle.numLiterals)
+				copy(ls, rle.literals)
+				rle.literals = ls
+			} else {
+				ls := make([]uint64, rle.numLiterals)
+				copy(ls, rle.uliterals)
+				rle.uliterals = ls
+			}
 
 			var x uint64
 			for i := width; i > 0; { // big endian
@@ -161,9 +247,13 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 
 			if rle.signed { // zigzag
-				rle.literals = []int64{DecodeZigzag(x)}
+				for i := uint32(0); i < repeatCount; i++ {
+					rle.literals[mark+i] = DecodeZigzag(x)
+				}
 			} else {
-				rle.uliterals = []uint64{x}
+				for i := uint32(0); i < repeatCount; i++ {
+					rle.uliterals[mark+i] = x
+				}
 			}
 
 		case Encoding_DIRECT:
@@ -313,13 +403,13 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			rle.numLiterals += length
 
 			// rethink: oom?
-			// fixme: allocate every time
+			// fixme: allocate every time ?
 			if rle.signed {
 				ls := make([]int64, rle.numLiterals)
 				copy(ls, rle.literals)
 				rle.literals = ls
 			} else {
-				ls := make([]uint64, length)
+				ls := make([]uint64, rle.numLiterals)
 				copy(ls, rle.uliterals)
 				rle.uliterals = ls
 			}

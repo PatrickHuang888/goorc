@@ -10,7 +10,6 @@ const (
 type ColumnVector interface {
 	T() pb.Type_Kind
 	ColumnId() uint32
-	Len() int
 }
 
 type columnVector struct {
@@ -29,12 +28,21 @@ func (cv *columnVector) Len() int {
 // nullable int column vector for all integer types
 type LongColumnVector struct {
 	columnVector
-	Vector    []int64
-	Repeating bool
+	vector    []int64
+	repeating bool
 }
 
 func (*LongColumnVector) T() pb.Type_Kind {
 	return pb.Type_LONG
+}
+
+func (cv *LongColumnVector) GetVector() []int64 {
+	return cv.vector[:cv.rows]
+}
+
+func (cv *LongColumnVector) SetVector(vector []int64) {
+	cv.vector = vector
+	cv.rows = len(vector)
 }
 
 type TimestampColumnVector struct {
@@ -57,7 +65,11 @@ func (*DoubleColumnVector) T() pb.Type_Kind {
 
 type BytesColumnVector struct {
 	columnVector
-	Vector [][]byte
+	vector [][]byte
+}
+
+func (cv *BytesColumnVector) GetVector() [][]byte {
+	return cv.vector[:cv.rows]
 }
 
 func (*BytesColumnVector) T() pb.Type_Kind {
@@ -66,7 +78,11 @@ func (*BytesColumnVector) T() pb.Type_Kind {
 
 type StructColumnVector struct {
 	columnVector
-	Fields []ColumnVector
+	fields []ColumnVector
+}
+
+func (cv *StructColumnVector) GetFields() []ColumnVector {
+	return cv.fields
 }
 
 func (*StructColumnVector) T() pb.Type_Kind {
