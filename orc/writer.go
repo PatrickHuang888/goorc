@@ -1,7 +1,9 @@
 package orc
 
 import (
+	"bytes"
 	"github.com/PatrickHuang888/goorc/pb/pb"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
 	"os"
 )
@@ -34,6 +36,11 @@ type writer struct {
 	pw             PhysicalWriter
 	rowIndexStride int
 	rowsInIndex    int
+	f              *os.File
+	buf            *proto.Buffer // chunk data buffer
+	cmpBuf         *bytes.Buffer // compressed chunk buffer
+	kind           pb.CompressionKind
+	chunkSize      uint64
 }
 
 func (w *writer) GetSchema() *TypeDescription {
@@ -44,7 +51,7 @@ func (w *writer) AddRowBatch(batch ColumnVector) error {
 	if w.buildIndex {
 
 	} else {
-		//w.rowsInStripe += batch.Size
+
 	}
 	return nil
 }
@@ -67,16 +74,47 @@ func (w *writer) createRowIndexEntry() error {
 	return nil
 }
 
-func NewWriter(path string, opts *WriterOptions) (Writer, error) {
-	buildIndex := opts.RowIndexStride > 0
-	pw := &physicalFsWriter{path: path, opts: opts}
-	pw.WriteHeader()
+func (w *writer) writeFileTail(tail *pb.FileTail) error {
 
-	if buildIndex && opts.RowIndexStride < MIN_ROW_INDEX_STRIDE {
-		return nil, errors.Errorf("row stride must be at least %d", MIN_ROW_INDEX_STRIDE)
+}
+
+func (w *writer) writeFooter(footer *pb.Footer) error {
+	w.buf.Reset()
+	err := w.buf.Marshal(footer)
+	if err != nil {
+		return errors.Wrap(err, "marshall footer error")
 	}
-	return nil, nil
-	//return &writer{schema: opts.Schema, pw: pw}, nil
+	compress(w.kind, w.buf, w.cmpBuf)
+}
+
+// compress buf into chunked buffer, into 1 buffer, assuming all can be in memory
+func compress(kind pb.CompressionKind, buf *proto.Buffer, cmpBuf *bytes.Buffer) error {
+
+}
+
+func (w *writer) writePostScript(ps *pb.PostScript) error {
+	bs, err := proto.Marshal(ps)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	n, err := w.f.Write(bs)
+	if err != nil {
+		return errors.Wrap(err, "write PS error")
+	}
+	// last byte is ps length
+	if _, err = w.f.Write([]byte{byte(n)}); err != nil {
+		return errors.Wrap(err, "write PS length error")
+	}
+	return nil
+}
+
+func NewWriter(path string, schema *TypeDescription) (Writer, error) {
+	// fixme: truncate if exist?
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return &writer{schema: schema, path: path, f: f}, nil
 }
 
 type PhysicalWriter interface {

@@ -6,50 +6,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-const (
-	ORIGINAL RowBatchVersion = iota
-	DECIMAL64
-)
-
-// type Category
-type Category Type_Kind
-
-type catData struct {
-	name        string
-	isPrimitive bool
-}
-
-var cat = []catData{
-	{"boolean", true},
-	{"tinyint", true},
-	{"smallint", true},
-	{"int", true},
-	{"bigint", true},
-	{"float", true},
-	{"double", true},
-	{"string", true},
-	{"date", true},
-	{"timestamp", true},
-	{"binary", true},
-	{"decimal", true},
-	{"varchar", true},
-	{"char", true},
-	{"array", false},
-	{"map", false},
-	{"struct", false},
-	{"uniontype", false},
-}
-
-func (c Category) Name() string {
-	return cat[c].name
-}
-
-func (c Category) IsPrimitive() bool {
-	return cat[c].isPrimitive
-}
-
-type RowBatchVersion int
-
 type TypeDescription struct {
 	Id            uint32
 	Kind          Type_Kind
@@ -64,6 +20,36 @@ func (td *TypeDescription) Print() {
 		fmt.Printf("Children of %d:", td.Id)
 		n.Print()
 	}
+}
+
+// normalize type description
+func CreateSchema(td *TypeDescription) (*TypeDescription, error) {
+	schema, err := walkSchema(td)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	for i := 0; i < len(schema); i++ {
+		schema[i].Id = uint32(i)
+	}
+	return schema[0], nil
+}
+
+// pre-order traverse, turn type description tree into slice
+func walkSchema(node *TypeDescription) (schema []*TypeDescription, err error) {
+	if node.Kind == Type_STRUCT || node.Kind == Type_LIST {
+		for _, td := range node.Children {
+			ts, err := walkSchema(td)
+			if err != nil {
+				return nil, err
+			}
+			schema = append(schema, ts...)
+		}
+	} else if node.Kind == Type_UNION || node.Kind == Type_MAP {
+		err = errors.New("type union or map no impl")
+	} else {
+		schema = []*TypeDescription{node}
+	}
+	return
 }
 
 /*func (td *TypeDescription) CreateRowBatch(maxSize int) (batch ColumnVector, err error) {
@@ -131,8 +117,8 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 	case Type_CHAR:
 		fallthrough
 	case Type_VARCHAR:
-		cv = &BytesColumnVector{columnVector: columnVector{id:td.Id},
-		vector: make([][]byte, DEFAULT_ROW_SIZE, maxSize)}
+		cv = &BytesColumnVector{columnVector: columnVector{id: td.Id},
+			vector: make([][]byte, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_STRUCT:
 		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {
