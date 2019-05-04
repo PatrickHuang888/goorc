@@ -22,6 +22,10 @@ type Decoder interface {
 	reset()
 }
 
+type Encoder interface {
+	writeValues(buf *bytes.Buffer) error
+}
+
 type byteRunLength struct {
 	literals    []byte
 	numLiterals int
@@ -202,6 +206,10 @@ type intRleV2 struct {
 	uliterals    []uint64
 	numLiterals  uint32
 	consumeIndex int
+}
+
+func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
+
 }
 
 func (rle *intRleV2) reset() {

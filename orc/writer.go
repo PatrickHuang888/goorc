@@ -41,17 +41,78 @@ type writer struct {
 	cmpBuf         *bytes.Buffer // compressed chunk buffer
 	kind           pb.CompressionKind
 	chunkSize      uint64
+
+	stripes []*pb.Str
+}
+
+type stripeWriter struct {
+
+	info *pb.StripeInformation
+	stats *pb.StripeStatistics
+}
+
+type streamWriter struct {
+	td *TypeDescription
+	info *pb.Stream
+	encoding *pb.ColumnEncoding
+	enc Encoder
+	writeBuf *proto.Buffer
+	cmpBuf *bytes.Buffer
+}
+
+// write data stream
+func (sw *streamWriter) writeData(cv ColumnVector)  error {
+	switch sw.td.Kind {
+	case pb.Type_INT:
+		if err:=sw.writeLongData(cv.(*LongColumnVector));err!=nil {
+			return errors.WithStack(err)
+		}
+	default:
+		return errors.New("write data sream other than int not impl")
+	}
+
+	if err:= compress(pb.CompressionKind_ZLIB, sw.writeBuf, sw.cmpBuf);err!=nil {
+		return errors.WithStack(err)
+	}
+
+	return nil
+}
+
+// write long vector data stream
+func (sw *streamWriter) writeLongData(vector *LongColumnVector) error {
+	switch sw.encoding.GetKind() {
+	case pb.ColumnEncoding_DIRECT_V2:
+		return sw.writeIrlV2(vector)
+	default:
+		return errors.New("write int encoding other than direct v2 not impl")
+	}
+	return nil
+}
+
+func (sw *streamWriter) writeIrlV2(lcv *LongColumnVector) error {
+	if sw.enc==nil {
+		sw.enc= &intRleV2{signed:true}
+	}
+	// todo: write present stream
+	vector:= lcv.GetVector()
+	irl:= sw.enc.(*intRleV2)
+	irl.literals= vector
+	irl.numLiterals= uint32(len(vector))
+	irl.writeValues(sw.writeBuf)
+	return nil
 }
 
 func (w *writer) GetSchema() *TypeDescription {
 	return w.schema
 }
 
-func (w *writer) AddRowBatch(batch ColumnVector) error {
-	if w.buildIndex {
-
-	} else {
-
+func (w *writer)AddRowBatch(batch ColumnVector) error {
+	switch batch.T(){
+	case pb.Type_INT:
+		bch:= batch.(*LongColumnVector)
+		bch.GetVector()
+	default:
+		return errors.New("type other than int not impl")
 	}
 	return nil
 }
@@ -74,8 +135,35 @@ func (w *writer) createRowIndexEntry() error {
 	return nil
 }
 
-func (w *writer) writeFileTail(tail *pb.FileTail) error {
+func (w *writer) writeHeader() error  {
+	if _, err:= w.f.Write([]byte(MAGIC)); err!=nil {
+		return errors.Wrap(err, "write header errror")
+	}
+	return nil
+}
 
+func (w *writer) writeFileTail() error {
+	// metadata
+	
+	var footer *pb.Footer
+	// header length
+
+	// content length
+
+	//footer.Stripes=
+	// stripe info array
+
+	//footer.Types=
+	// types: from schema to types array
+
+
+	// metadata
+
+	w.writeFooter(footer)
+
+	var ps *pb.PostScript
+	w.writePostScript(ps)
+	return nil
 }
 
 func (w *writer) writeFooter(footer *pb.Footer) error {
@@ -84,10 +172,19 @@ func (w *writer) writeFooter(footer *pb.Footer) error {
 	if err != nil {
 		return errors.Wrap(err, "marshall footer error")
 	}
-	compress(w.kind, w.buf, w.cmpBuf)
+	err= compress(w.kind, w.buf, w.cmpBuf)
+	if err!=nil {
+		return errors.Wrap(err, "compress buffer error")
+	}
+	_, err= w.cmpBuf.WriteTo(w.f)
+	if err!=nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
-// compress buf into chunked buffer, into 1 buffer, assuming all can be in memory
+// compress buf into 1 buffer may contain several chunked buffer,
+// assuming all can be in memory
 func compress(kind pb.CompressionKind, buf *proto.Buffer, cmpBuf *bytes.Buffer) error {
 
 }
