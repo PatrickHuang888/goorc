@@ -209,7 +209,7 @@ type intRleV2 struct {
 }
 
 func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
-
+	return nil
 }
 
 func (rle *intRleV2) reset() {
