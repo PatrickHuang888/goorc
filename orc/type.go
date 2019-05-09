@@ -34,6 +34,15 @@ func CreateSchema(td *TypeDescription) (*TypeDescription, error) {
 	return schema[0], nil
 }
 
+func (td *TypeDescription) normalize() []*TypeDescription {
+	ss, err := walkSchema(td)
+	if err != nil {
+		fmt.Printf("%v+", err)
+		return nil
+	}
+	return ss
+}
+
 // pre-order traverse, turn type description tree into slice
 func walkSchema(node *TypeDescription) (schema []*TypeDescription, err error) {
 	if node.Kind == Type_STRUCT || node.Kind == Type_LIST {
@@ -50,6 +59,18 @@ func walkSchema(node *TypeDescription) (schema []*TypeDescription, err error) {
 		schema = []*TypeDescription{node}
 	}
 	return
+}
+
+func schemasToTypes(schemas []*TypeDescription) []*Type {
+	t := make([]*Type, len(schemas))
+	for i, v := range schemas {
+		*t[i].Kind = v.Kind
+		t[i].FieldNames = make([]string, len(v.ChildrenNames))
+		copy(t[i].FieldNames, v.ChildrenNames)
+
+		// todo
+	}
+	return t
 }
 
 /*func (td *TypeDescription) CreateRowBatch(maxSize int) (batch ColumnVector, err error) {
