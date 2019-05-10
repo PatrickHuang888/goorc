@@ -873,6 +873,13 @@ func ensureOrcFooter(f *os.File, psLen int, buf []byte) error {
 	return nil
 }
 
+func MinUint64(x, y uint64) uint64 {
+	if x < y {
+		return x
+	}
+	return y
+}
+
 func Min(x, y int64) int64 {
 	if x < y {
 		return x

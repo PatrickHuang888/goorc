@@ -2,6 +2,7 @@ package orc
 
 import (
 	"bytes"
+	"compress/flate"
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
@@ -17,6 +18,7 @@ const (
 	DEFAULT_LENGTH_SIZE          = 100 * 1024
 	DEFAULT_ENCODING_BUFFER_SIZE = 100 * 1024
 	DEFAULT_CHUNK_SIZE           = 256 * 1024
+	MAX_CHUNK_LENGTH             = uint64(32768) // 15 bit
 )
 
 type WriterOptions struct {
@@ -200,11 +202,11 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 			return errors.WithStack(err)
 		}
 		// write to data stream buffer
-		n, err := compressTo(stp.opts.cmpKind, stm.buf, stp.dataBuf)
+		n, err := compressTo(stp.opts.cmpKind, stp.opts.chunkSize, stm.buf, stp.dataBuf)
 		if err != nil {
 			return errors.Wrap(err, "compressing data stream error")
 		}
-		*stm.info.Length += n
+		*stm.info.Length += uint64(n)
 
 	default:
 		return errors.New("no impl")
@@ -249,7 +251,7 @@ func (stp *stripeWriter) flushStripe(f *os.File) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	b, err := compressByteSlice(stp.opts.cmpKind, sfm)
+	b, err := compressByteSlice(stp.opts.cmpKind, stp.opts.chunkSize, sfm)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -326,7 +328,7 @@ func (w *writer) writeFileTail() error {
 	if err != nil {
 		return errors.Wrap(err, "marshall footer error")
 	}
-	b, err := compressByteSlice(w.opts.cmpKind, ftb)
+	b, err := compressByteSlice(w.opts.cmpKind, w.opts.chunkSize, ftb)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -357,14 +359,85 @@ func (w *writer) writeFileTail() error {
 	return nil
 }
 
-// compress buf into 1 buffer, maybe to several chunked buffer,
-// assuming all can be in memory
-func compressTo(kind pb.CompressionKind, src *bytes.Buffer, dst *bytes.Buffer) (cmpLength uint64, err error) {
-	return nil
+// compressing src buf into dst, maybe to several chunks
+func compressTo(kind pb.CompressionKind, chunkSize uint64, src *bytes.Buffer, dst *bytes.Buffer) (cmpLength int64, err error) {
+	switch kind {
+	case pb.CompressionKind_ZLIB:
+		chunkLength := MinUint64(MAX_CHUNK_LENGTH, chunkSize)
+		bb := bytes.NewBuffer(make([]byte, chunkLength))
+		w, err := flate.NewWriter(bb, -1)
+		if err != nil {
+			return 0, errors.WithStack(err)
+		}
+		srcLen := src.Len()
+		if uint64(srcLen) < chunkLength {
+			if _, err := src.WriteTo(w); err != nil {
+				return 0, errors.WithStack(err)
+			}
+			var header []byte
+			orig := bb.Len() >= src.Len()
+			if orig {
+				header = encChunkHeader(src.Len(), orig)
+			} else {
+				header = encChunkHeader(bb.Len(), orig)
+			}
+			if _, err = dst.Write(header); err != nil {
+				return 0, err
+			}
+			if orig {
+				if n, err := src.WriteTo(dst); err != nil {
+					return n, err
+				}
+			} else {
+				if n, err := bb.WriteTo(dst); err != nil {
+					return n, err
+				}
+			}
+
+		} else {
+			// todo:
+			return 0, errors.New("no impl")
+		}
+
+	default:
+		return 0, errors.New("compression other than zlib not impl")
+	}
+	return
 }
 
-func compressByteSlice(kind pb.CompressionKind, b []byte) ([]byte, error) {
+func encChunkHeader(l int, orig bool) (header []byte) {
+	header = make([]byte, 3)
+	if orig {
+		header[0] = 0x01 | byte(l<<1)
+	} else {
+		header[0] = byte(l << 1)
+	}
+	header[1] = byte(l >> 7)
+	header[2] = byte(l >> 15)
+	return
+}
 
+func decChunkHeader(h []byte) (length int, orig bool) {
+	_= h[2]
+	return int(h[2])<<15 | int(h[1])<<7 | int(h[0])>>1, h[0]&0x01 == 0x01
+}
+
+// compress byte slice into chunks, used in stripe footer, tail footer
+// thinking should be smaller than chunksize
+func compressByteSlice(kind pb.CompressionKind, chunkSize uint64, b []byte) (compressed []byte, err error) {
+	switch kind {
+	case pb.CompressionKind_ZLIB:
+		src := bytes.NewBuffer(b)
+		dst := bytes.NewBuffer(make([]byte, len(b)))
+		if _, err = compressTo(kind, chunkSize, src, dst); err != nil {
+			return nil, err
+		}
+		return dst.Bytes(), nil
+
+	default:
+		return nil, errors.New("compression other than zlib not impl")
+	}
+	return
 }
 
 func compressProtoBuf(kind pb.CompressionKind, src *proto.Buffer, dst *bytes.Buffer) (uint64, error) {
