@@ -13,19 +13,21 @@ func main() {
 	//y := &orc.TypeDescription{Kind:pb.Type_STRING}
 	//schema.ChildrenNames= []string{"x", "y"}
 	//schema.Children=[]*orc.TypeDescription{x, y}
-	schema, err:= orc.CreateSchema(x)
+	/*schema, err:= orc.CreateSchema(x)
 	if err!=nil {
 		fmt.Printf("create schema error %v+", err)
 		os.Exit(1)
-	}
+	}*/
 
-	writer, err := orc.NewWriter("my-file.orc", schema)
+	opts:= orc.NewWriterOptions(x)
+
+	writer, err := orc.NewWriter("my-file-w.orc", opts)
 	if err != nil {
 		fmt.Printf("create writer error %v+", err)
 		os.Exit(1)
 	}
 
-	batch, err := schema.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
+	batch, err := x.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
 	if err != nil {
 		fmt.Printf("got error when create row batch %v+", err)
 		os.Exit(1)
@@ -37,10 +39,10 @@ func main() {
 	}
 	batch.(*orc.LongColumnVector).SetVector(v)
 	// fixme: write directly or cached in buffer ?
-	writer.AddRowBatch(batch)
+	writer.Write(batch)
 	//writer.WriteBatch()
-	batch.(*orc.LongColumnVector).SetVector(v[:1000])
-	writer.AddRowBatch(batch)
+	//batch.(*orc.LongColumnVector).SetVector(v[:1000])
+	//writer.AddRowBatch(batch)
 	//writer.Flush()
 	writer.Close()
 }
