@@ -3,11 +3,17 @@ package orc
 import (
 	"bytes"
 	"compress/flate"
+	"flag"
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"os"
 )
+
+func init() {
+
+}
 
 const (
 	MIN_ROW_INDEX_STRIDE         = 1000
@@ -26,15 +32,22 @@ type WriterOptions struct {
 	chunkSize  uint64
 	cmpKind    pb.CompressionKind
 	stripeSize int
+	logLevel   log.Level
 }
 
 func NewWriterOptions(schema *TypeDescription) *WriterOptions {
-	s := &WriterOptions{}
-	s.cmpKind = pb.CompressionKind_ZLIB
-	s.stripeSize = STRIPE_LIMIT
-	s.chunkSize = DEFAULT_CHUNK_SIZE
-	s.schemas = schema.normalize()
-	return s
+	debug := flag.Bool("debug", false, "-debug")
+	flag.Parse()
+	o := &WriterOptions{logLevel: log.InfoLevel}
+	o.cmpKind = pb.CompressionKind_ZLIB
+	o.stripeSize = STRIPE_LIMIT
+	o.chunkSize = DEFAULT_CHUNK_SIZE
+	o.schemas = schema.normalize()
+	if *debug {
+		o.logLevel = log.DebugLevel
+		log.SetLevel(o.logLevel)
+	}
+	return o
 }
 
 type Writer interface {
@@ -87,6 +100,7 @@ type streamWriter struct {
 
 func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 	// fixme: create new one, error when exist
+	log.Infof("open %s", path)
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -108,7 +122,8 @@ func newStripeWriter(opts *WriterOptions) *stripeWriter {
 	dataBuf := bytes.NewBuffer(make([]byte, DEFAULT_DATA_SIZE))
 	lghBuf := bytes.NewBuffer(make([]byte, DEFAULT_LENGTH_SIZE))
 	ss := make(map[uint32][3]*streamWriter)
-	si := &pb.StripeInformation{}
+	si := &pb.StripeInformation{Offset: new(uint64), IndexLength: new(uint64), DataLength: new(uint64),
+		FooterLength: new(uint64), NumberOfRows: new(uint64)}
 	stp := &stripeWriter{opts: opts, idxBuf: idxBuf, pstBuf: pstBuf, dataBuf: dataBuf, lghBuf: lghBuf,
 		streams: ss, info: si}
 	return stp
@@ -138,6 +153,7 @@ func (w *writer) shouldFlush() bool {
 }
 
 func (w *writer) flushStripe() error {
+	log.Debugln("flush stripe")
 	// fixme: assuming 1 stripe all in memory
 	// a stripe should contains whole row
 	stp := w.stripe
@@ -181,15 +197,16 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 			stp.streams[cv.ColumnId()] = ss
 		}
 		ss := stp.streams[cv.ColumnId()]
+		// data stream
 		if ss[1] == nil {
-			s := &pb.Stream{}
-			*s.Kind = pb.Stream_DATA
-			*s.Column = uint32(cv.ColumnId())
+			info := &pb.Stream{Kind: new(pb.Stream_Kind), Column: new(uint32), Length: new(uint64)}
+			*info.Kind = pb.Stream_DATA
+			*info.Column = uint32(cv.ColumnId())
 			b := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
 			enc := &intRleV2{signed: true}
 			dv2 := pb.ColumnEncoding_DIRECT_V2
 			encoding := &pb.ColumnEncoding{Kind: &dv2}
-			sw := &streamWriter{info: s, buf: b, encoding: encoding, enc: enc}
+			sw := &streamWriter{info: info, buf: b, encoding: encoding, enc: enc}
 			ss[1] = sw
 		}
 		v, ok := cv.(*LongColumnVector)
@@ -259,6 +276,7 @@ func (stp *stripeWriter) flushStripe(f *os.File) error {
 	if _, err := f.Write(b); err != nil {
 		return errors.WithStack(err)
 	}
+	log.Debugf("write stripe footer, length: %d", ftLength)
 
 	// refactor: stripe info field value setting scattering everywhere
 	*stp.info.IndexLength = idxLength
@@ -289,7 +307,7 @@ func (w *writer) GetSchema() *TypeDescription {
 }
 
 func (w *writer) Close() error {
-	if err := w.stripe.flushStripe(w.f); err != nil {
+	if err := w.flushStripe(); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := w.writeFileTail(); err != nil {
@@ -311,7 +329,8 @@ func (w *writer) writeHeader() (uint64, error) {
 }
 
 func (w *writer) writeFileTail() error {
-	ft := &pb.Footer{}
+	// todo: rowsinstrde
+	ft := &pb.Footer{HeaderLength: new(uint64), ContentLength: new(uint64), NumberOfRows: new(uint64)}
 	*ft.HeaderLength = 3 // always 3
 	for _, v := range w.stripeInfos {
 		*ft.ContentLength += v.GetIndexLength() + v.GetDataLength() + v.GetFooterLength()
@@ -336,9 +355,11 @@ func (w *writer) writeFileTail() error {
 	if _, err := w.f.Write(b); err != nil {
 		return errors.WithStack(err)
 	}
+	log.Debugf("write footer with length: %d", ftl)
 
 	// write postscript
-	ps := &pb.PostScript{}
+	ps := &pb.PostScript{FooterLength: new(uint64), Compression: new(pb.CompressionKind),
+		CompressionBlockSize: new(uint64), Magic: new(string)}
 	*ps.FooterLength = ftl
 	*ps.Compression = w.opts.cmpKind
 	*ps.CompressionBlockSize = w.opts.chunkSize
@@ -351,6 +372,7 @@ func (w *writer) writeFileTail() error {
 	if err != nil {
 		return errors.Wrap(err, "write PS error")
 	}
+	log.Debugf("write postscript with length %d", n)
 	// last byte is ps length
 	if _, err = w.f.Write([]byte{byte(n)}); err != nil {
 		return errors.Wrap(err, "write PS length error")
@@ -418,7 +440,7 @@ func encChunkHeader(l int, orig bool) (header []byte) {
 }
 
 func decChunkHeader(h []byte) (length int, orig bool) {
-	_= h[2]
+	_ = h[2]
 	return int(h[2])<<15 | int(h[1])<<7 | int(h[0])>>1, h[0]&0x01 == 0x01
 }
 

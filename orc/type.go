@@ -64,11 +64,13 @@ func walkSchema(node *TypeDescription) (schema []*TypeDescription, err error) {
 func schemasToTypes(schemas []*TypeDescription) []*Type {
 	t := make([]*Type, len(schemas))
 	for i, v := range schemas {
+		t[i] = &Type{Kind: new(Type_Kind), Subtypes: make([]uint32, len(v.Children)),
+			FieldNames: make([]string, len(v.ChildrenNames))}
 		*t[i].Kind = v.Kind
-		t[i].FieldNames = make([]string, len(v.ChildrenNames))
 		copy(t[i].FieldNames, v.ChildrenNames)
-
-		// todo
+		for j, vc := range v.Children {
+			t[i].Subtypes[j] = vc.Id
+		}
 	}
 	return t
 }
