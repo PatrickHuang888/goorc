@@ -118,9 +118,13 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 
 func newStripeWriter(opts *WriterOptions) *stripeWriter {
 	idxBuf := bytes.NewBuffer(make([]byte, DEFAULT_INDEX_SIZE))
+	idxBuf.Reset()
 	pstBuf := bytes.NewBuffer(make([]byte, DEFAULT_PRESENT_SIZE))
+	pstBuf.Reset()
 	dataBuf := bytes.NewBuffer(make([]byte, DEFAULT_DATA_SIZE))
+	dataBuf.Reset()
 	lghBuf := bytes.NewBuffer(make([]byte, DEFAULT_LENGTH_SIZE))
+	lghBuf.Reset()
 	ss := make(map[uint32][3]*streamWriter)
 	si := &pb.StripeInformation{Offset: new(uint64), IndexLength: new(uint64), DataLength: new(uint64),
 		FooterLength: new(uint64), NumberOfRows: new(uint64)}
@@ -175,7 +179,11 @@ func (stp *stripeWriter) reset() {
 	stp.dataBuf.Reset()
 	stp.lghBuf.Reset()
 
-	stp.info = &pb.StripeInformation{}
+	*stp.info.Offset = 0
+	*stp.info.FooterLength = 0
+	*stp.info.DataLength = 0
+	*stp.info.NumberOfRows = 0
+
 	for _, v := range stp.streams {
 		if v[0] != nil {
 			v[0].reset()
@@ -203,11 +211,13 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 			*info.Kind = pb.Stream_DATA
 			*info.Column = uint32(cv.ColumnId())
 			b := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
+			b.Reset()
 			enc := &intRleV2{signed: true}
 			dv2 := pb.ColumnEncoding_DIRECT_V2
 			encoding := &pb.ColumnEncoding{Kind: &dv2}
 			sw := &streamWriter{info: info, buf: b, encoding: encoding, enc: enc}
 			ss[1] = sw
+			stp.streams[cv.ColumnId()] = ss
 		}
 		v, ok := cv.(*LongColumnVector)
 		if !ok {
@@ -242,16 +252,20 @@ func (stp *stripeWriter) flushStripe(f *os.File) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
+	log.Debugf("flush index with %d", idxLength)
 
 	if _, err = stp.pstBuf.WriteTo(f); err != nil {
 		return errors.WithStack(err)
 	}
+	log.Debugf("flush present stream with %d", idxLength)
 	if _, err = stp.dataBuf.WriteTo(f); err != nil {
 		return errors.WithStack(err)
 	}
+	log.Debugf("flush data stream with %d", idxLength)
 	if _, err = stp.lghBuf.WriteTo(f); err != nil {
 		return errors.WithStack(err)
 	}
+	log.Debugf("flush length stream with %d", idxLength)
 
 	// write stripe footer
 	sf := &pb.StripeFooter{}
