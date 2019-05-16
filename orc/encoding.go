@@ -209,7 +209,7 @@ type intRleV2 struct {
 }
 
 func (rle *intRleV2) reset() {
-	rle.signed= false
+	rle.signed = false
 	rle.sub = 0
 	rle.consumeIndex = 0
 	rle.numLiterals = 0
@@ -228,12 +228,20 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 					}
 				}
 				x := EncodeZigzag(rle.literals[i])
-				i+=c+3
+				i += c + 3
 				if err := rle.writeShortRepeat(c, x, out); err != nil {
 					return errors.WithStack(err)
 				}
 			} else {
-				return errors.New("not impl")
+				if rle.literals[i] != rle.literals[i+1] { // maybe delta
+					var increase bool
+					if rle.literals[i] <= rle.literals[i+1] {
+						increase = true
+					}
+					for j := i; j < int(rle.numLiterals); j++ {
+						if increase &&
+					}
+				}
 			}
 		} else {
 			// short repeat
@@ -245,7 +253,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 					}
 				}
 				x := rle.uliterals[i]
-				i+=c+3
+				i += c + 3
 				if err := rle.writeShortRepeat(c, x, out); err != nil {
 					return errors.WithStack(err)
 				}
@@ -258,7 +266,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 }
 
 func (rle *intRleV2) writeShortRepeat(count int, x uint64, out *bytes.Buffer) error {
-	header := byte(count & 0x07)        // count
+	header := byte(count & 0x07)         // count
 	header |= Encoding_SHORT_REPEAT << 6 // encoding
 	var w byte
 	bb := bytes.NewBuffer(make([]byte, 8))
@@ -266,7 +274,7 @@ func (rle *intRleV2) writeShortRepeat(count int, x uint64, out *bytes.Buffer) er
 	for j := 7; j >= 0; j-- { //
 		b := byte(x >> uint(8*j))
 		if b != 0x00 {
-			if byte(j) > w {  // [1, 8]
+			if byte(j) > w { // [1, 8]
 				w = byte(j)
 			}
 			if err := bb.WriteByte(b); err != nil {
