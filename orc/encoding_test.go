@@ -83,12 +83,32 @@ func TestIntRunLengthV2(t *testing.T) {
 	//short repeat
 	t1 := bytes.NewBuffer([]byte{0x0a, 0x27, 0x10})
 	irl := &intRleV2{}
-	//irl := &intRleV2{}
 	err := irl.readValues(t1)
 	assert.Nil(t, err)
 	assert.Equal(t, Encoding_SHORT_REPEAT, irl.sub)
 	assert.Equal(t, uint32(5), irl.numLiterals)
 	assert.Equal(t, 10000, int(irl.uliterals[0]))
+	assert.Equal(t, 10000, int(irl.uliterals[4]))
+	bb:=bytes.NewBuffer(make([]byte, 3))
+	bb.Reset()
+	irl.writeValues(bb)
+	assert.Equal(t, []byte{0x0a, 0x27, 0x10}, bb.Bytes())
+
+	irl.reset()
+	irl.signed= true
+	irl.numLiterals= 10
+	v:=make([]int64, 10)
+	for i:=0; i<10; i++ {
+		v[i]= -1
+	}
+	irl.literals= v
+	bb.Reset()
+	irl.writeValues(bb)
+	irl.reset()
+	irl.readValues(bb)
+	assert.Equal(t, 10, int(irl.numLiterals))
+	assert.Equal(t, int64(-1), irl.literals[0])
+	assert.Equal(t, int64(-1), irl.literals[9])
 
 	//direct
 	irl.reset()

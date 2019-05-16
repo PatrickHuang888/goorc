@@ -65,15 +65,15 @@ func (brl *byteRunLength) readValues(in *bytes.Buffer) error {
 	return nil
 }
 
-func (brl *byteRunLength)reset()  {
-	brl.numLiterals= 0
+func (brl *byteRunLength) reset() {
+	brl.numLiterals = 0
 }
 
 type intRunLengthV1 struct {
-	signed bool
+	signed      bool
 	numLiterals int
 	literals    []int64
-	uliterals []uint64
+	uliterals   []uint64
 }
 
 func (irl *intRunLengthV1) readValues(in *bytes.Buffer) error {
@@ -90,7 +90,7 @@ func (irl *intRunLengthV1) readValues(in *bytes.Buffer) error {
 				ls := make([]int64, irl.numLiterals)
 				copy(ls, irl.literals)
 				irl.literals = ls
-			}else {
+			} else {
 				ls := make([]uint64, irl.numLiterals)
 				copy(ls, irl.uliterals)
 				irl.uliterals = ls
@@ -109,15 +109,15 @@ func (irl *intRunLengthV1) readValues(in *bytes.Buffer) error {
 				for i := 0; i < num; i++ {
 					irl.literals[mark+i] = v + delta
 				}
-			}else {
-				v, err:= binary.ReadUvarint(in)
+			} else {
+				v, err := binary.ReadUvarint(in)
 				if err != nil {
 					return errors.WithStack(err)
 				}
 				for i := 0; i < num; i++ {
-					if delta>0 {
+					if delta > 0 {
 						irl.uliterals[mark+i] = v + uint64(delta)
-					}else {
+					} else {
 						irl.uliterals[mark+i] = v - uint64(-delta)
 					}
 				}
@@ -130,7 +130,7 @@ func (irl *intRunLengthV1) readValues(in *bytes.Buffer) error {
 				ls := make([]int64, irl.numLiterals)
 				copy(ls, irl.literals)
 				irl.literals = ls
-			}else {
+			} else {
 				ls := make([]uint64, irl.numLiterals)
 				copy(ls, irl.uliterals)
 				irl.uliterals = ls
@@ -143,7 +143,7 @@ func (irl *intRunLengthV1) readValues(in *bytes.Buffer) error {
 					}
 					irl.literals[mark+i] = v
 				}
-			}else {
+			} else {
 				for i := 0; i < num; i++ {
 					v, err := binary.ReadUvarint(in)
 					if err != nil {
@@ -157,9 +157,9 @@ func (irl *intRunLengthV1) readValues(in *bytes.Buffer) error {
 	return nil
 }
 
-func (irl *intRunLengthV1)reset()  {
-	irl.numLiterals= 0
-	irl.signed= false
+func (irl *intRunLengthV1) reset() {
+	irl.numLiterals = 0
+	irl.signed = false
 }
 
 func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
@@ -208,16 +208,83 @@ type intRleV2 struct {
 	consumeIndex int
 }
 
-func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
-	return nil
-}
-
 func (rle *intRleV2) reset() {
+	rle.signed= false
 	rle.sub = 0
 	rle.consumeIndex = 0
 	rle.numLiterals = 0
 }
 
+// write all literals to buffer
+func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
+	for i := 0; i < int(rle.numLiterals); {
+		if rle.signed {
+			// short repeat
+			if rle.literals[i+1] == rle.literals[i] && rle.literals[i+2] == rle.literals[i] {
+				c := 0
+				for ; c <= 7; c++ { // repeat count number [3, 10]
+					if i+c+3 >= int(rle.numLiterals) || rle.literals[i+c+3] != rle.literals[i] {
+						break
+					}
+				}
+				x := EncodeZigzag(rle.literals[i])
+				i+=c+3
+				if err := rle.writeShortRepeat(c, x, out); err != nil {
+					return errors.WithStack(err)
+				}
+			} else {
+				return errors.New("not impl")
+			}
+		} else {
+			// short repeat
+			if rle.uliterals[i+1] == rle.uliterals[i] && rle.uliterals[i+2] == rle.uliterals[i] {
+				c := 0
+				for ; c <= 7; c++ { // repeat count number [3, 10]
+					if i+c+3 >= int(rle.numLiterals) || rle.uliterals[i+c+3] != rle.uliterals[i] {
+						break
+					}
+				}
+				x := rle.uliterals[i]
+				i+=c+3
+				if err := rle.writeShortRepeat(c, x, out); err != nil {
+					return errors.WithStack(err)
+				}
+			} else {
+				return errors.New("not impl")
+			}
+		}
+	}
+	return nil
+}
+
+func (rle *intRleV2) writeShortRepeat(count int, x uint64, out *bytes.Buffer) error {
+	header := byte(count & 0x07)        // count
+	header |= Encoding_SHORT_REPEAT << 6 // encoding
+	var w byte
+	bb := bytes.NewBuffer(make([]byte, 8))
+	bb.Reset()
+	for j := 7; j >= 0; j-- { //
+		b := byte(x >> uint(8*j))
+		if b != 0x00 {
+			if byte(j) > w {  // [1, 8]
+				w = byte(j)
+			}
+			if err := bb.WriteByte(b); err != nil {
+				return errors.WithStack(err)
+			}
+		}
+	}
+	header |= w << 3 // W
+	if err := out.WriteByte(header); err != nil {
+		return errors.WithStack(err)
+	}
+	if _, err := bb.WriteTo(out); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+// read buffer all to literals
 func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 	for in.Len() > 0 {
 
