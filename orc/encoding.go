@@ -210,7 +210,7 @@ type intRleV2 struct {
 
 func (rle *intRleV2) reset() {
 	rle.signed = false
-	rle.sub = 0
+	rle.sub = 0 // fixme
 	rle.consumeIndex = 0
 	rle.numLiterals = 0
 }
@@ -218,51 +218,55 @@ func (rle *intRleV2) reset() {
 // write all literals to buffer
 func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 	for i := 0; i < int(rle.numLiterals); {
-		if rle.signed {
-			// short repeat
-			if rle.literals[i+1] == rle.literals[i] && rle.literals[i+2] == rle.literals[i] {
-				c := 0
-				for ; c <= 7; c++ { // repeat count number [3, 10]
-					if i+c+3 >= int(rle.numLiterals) || rle.literals[i+c+3] != rle.literals[i] {
-						break
-					}
+		c := rle.getRepeat(i)
+		if c >= 3 {
+			if c <= 10 { // short repeat
+				rle.sub = Encoding_SHORT_REPEAT
+				var x uint64
+				if rle.signed {
+					x = EncodeZigzag(rle.literals[i])
+				} else {
+					x = rle.uliterals[i]
 				}
-				x := EncodeZigzag(rle.literals[i])
-				i += c + 3
-				if err := rle.writeShortRepeat(c, x, out); err != nil {
+				i += c
+				if err := rle.writeShortRepeat(c-3, x, out); err != nil {
 					return errors.WithStack(err)
 				}
-			} else {
-				if rle.literals[i] != rle.literals[i+1] { // maybe delta
-					var increase bool
-					if rle.literals[i] <= rle.literals[i+1] {
-						increase = true
-					}
-					for j := i; j < int(rle.numLiterals); j++ {
-						if increase &&
-					}
-				}
+			} else { // fixed delta 0
+				rle.sub = Encoding_DELTA
 			}
 		} else {
-			// short repeat
-			if rle.uliterals[i+1] == rle.uliterals[i] && rle.uliterals[i+2] == rle.uliterals[i] {
-				c := 0
-				for ; c <= 7; c++ { // repeat count number [3, 10]
-					if i+c+3 >= int(rle.numLiterals) || rle.uliterals[i+c+3] != rle.uliterals[i] {
-						break
-					}
-				}
-				x := rle.uliterals[i]
-				i += c + 3
-				if err := rle.writeShortRepeat(c, x, out); err != nil {
-					return errors.WithStack(err)
-				}
+
+		}
+
+
+	}
+	return nil
+}
+
+// get repeated count from position i, min return is 1 means no repeat
+// max return is 512 for fixed delta
+func (rle *intRleV2) getRepeat(i int) (count int) {
+	count = 1
+	for j := 1; j <= 512; j++ {
+		if i+j >= int(rle.numLiterals) {
+			break
+		}
+		if rle.signed {
+			if rle.literals[i] == rle.literals[i+j] {
+				count = j + 1
 			} else {
-				return errors.New("not impl")
+				break
+			}
+		} else {
+			if rle.uliterals[i] == rle.uliterals[i+j] {
+				count = j + 1
+			} else {
+				break
 			}
 		}
 	}
-	return nil
+	return
 }
 
 func (rle *intRleV2) writeShortRepeat(count int, x uint64, out *bytes.Buffer) error {
