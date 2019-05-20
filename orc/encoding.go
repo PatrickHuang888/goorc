@@ -204,7 +204,7 @@ type intRleV2 struct {
 	signed       bool
 	literals     []int64 // fixme: allocate
 	uliterals    []uint64
-	numLiterals  uint32
+	numLiterals  int
 	consumeIndex int
 }
 
@@ -234,13 +234,45 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 				}
 			} else { // fixed delta 0
 				rle.sub = Encoding_DELTA
+				var x uint64
+				if rle.signed {
+					x = EncodeZigzag(rle.literals[i])
+				} else {
+					x = rle.uliterals[i]
+				}
+				i += c
+				if err := rle.writeDelta(x, 0, c-1, []uint64{}); err != nil {
+					return errors.WithStack(err)
+				}
+			}
+		} else {
+			if c == 1 { // try delta, run [1, 512]
+				//d, deltas := rle.getDel111taCount(i)
+			}
+		}
+
+	}
+	return nil
+}
+
+// if monotonically increasing or decreasing sequences, get count
+// means [i, i+1, i+2] should be increasing or decreasing, at this time return 3
+// if count <3, then deltas should be ignored
+func (rle *intRleV2) getDeltaCount(idx int) (count int, deltas []uint64) {
+	/*if idx+1<rle.numLiterals &&
+	for i := idx; i < int(rle.numLiterals); i++ {
+		if rle.signed {
+			if incr {
+				if rle.
 			}
 		} else {
 
 		}
+	}*/
+	return
+}
 
-
-	}
+func (rle *intRleV2) writeDelta(base uint64, deltaBase int64, count int, deltas []uint64) error {
 	return nil
 }
 
@@ -310,7 +342,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 		case Encoding_SHORT_REPEAT:
 			header := firstByte
 			width := 1 + (header>>3)&0x07 // 3bit([3,)6) width
-			repeatCount := uint32(3 + (header & 0x07))
+			repeatCount := int(3 + (header & 0x07))
 			mark := rle.numLiterals
 			rle.numLiterals += repeatCount
 			if rle.signed {
@@ -334,11 +366,11 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 
 			if rle.signed { // zigzag
-				for i := uint32(0); i < repeatCount; i++ {
+				for i := 0; i < repeatCount; i++ {
 					rle.literals[mark+i] = DecodeZigzag(x)
 				}
 			} else {
-				for i := uint32(0); i < repeatCount; i++ {
+				for i := 0; i < repeatCount; i++ {
 					rle.uliterals[mark+i] = x
 				}
 			}
@@ -356,7 +388,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 			length := header&0x1FF + 1
 			mark := rle.numLiterals
-			rle.numLiterals += uint32(length)
+			rle.numLiterals += int(length)
 			if rle.signed {
 				ls := make([]int64, rle.numLiterals)
 				copy(ls, rle.literals)
@@ -367,7 +399,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				rle.uliterals = ls
 			}
 
-			for i := uint16(0); i < length; i++ {
+			for i := 0; i < int(length); i++ {
 				var x uint64
 				switch width {
 				case 0:
@@ -436,9 +468,9 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				}
 
 				if rle.signed {
-					rle.literals[mark+uint32(i)] = DecodeZigzag(x)
+					rle.literals[mark+i] = DecodeZigzag(x)
 				} else {
-					rle.uliterals[mark+uint32(i)] = x
+					rle.uliterals[mark+i] = x
 				}
 			}
 
@@ -484,7 +516,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			length := uint32(header[0])&0x01<<8 | uint32(header[1]) + 1
+			length := int(header[0])&0x01<<8 | int(header[1]) + 1
 
 			mark := rle.numLiterals
 			rle.numLiterals += length
@@ -526,7 +558,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 
 			// delta values: W * (L-2)
-			i := uint32(2)
+			i := 2
 			for i < length {
 				switch deltaWidth {
 				case 0:
@@ -543,8 +575,8 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 					if err != nil {
 						return errors.WithStack(err)
 					}
-					for j := uint32(0); j < 4; j++ {
-						delta := uint64(b) >> (3 - j) * 2 & 0x03
+					for j := 0; j < 4; j++ {
+						delta := uint64(b) >> byte(3 - j) * 2 & 0x03
 						if i+j <= length {
 							rle.setValue(mark+i+j, deltaBase > 0, delta)
 						}
@@ -672,7 +704,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 	return nil
 }
 
-func (rle *intRleV2) setValue(i uint32, positive bool, delta uint64) {
+func (rle *intRleV2) setValue(i int, positive bool, delta uint64) {
 	if rle.signed {
 		if positive {
 			rle.literals[i] = rle.literals[i-1] + int64(delta)

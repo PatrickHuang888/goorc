@@ -304,7 +304,7 @@ func (stm *streamWriter) writeIrlV2(lcv *LongColumnVector) error {
 	vector := lcv.GetVector()
 	irl := stm.enc.(*intRleV2)
 	irl.literals = vector
-	irl.numLiterals = uint32(len(vector))
+	irl.numLiterals = len(vector)
 	if err := irl.writeValues(stm.buf); err != nil {
 		return errors.WithStack(err)
 	}

@@ -86,7 +86,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	err := irl.readValues(t1)
 	assert.Nil(t, err)
 	assert.Equal(t, Encoding_SHORT_REPEAT, irl.sub)
-	assert.Equal(t, uint32(5), irl.numLiterals)
+	assert.Equal(t, 5, irl.numLiterals)
 	assert.Equal(t, 10000, int(irl.uliterals[0]))
 	assert.Equal(t, 10000, int(irl.uliterals[4]))
 	bb:=bytes.NewBuffer(make([]byte, 3))
@@ -119,7 +119,7 @@ func TestIntRunLengthV2(t *testing.T) {
 		fmt.Printf("error %+v", err)
 		t.Fatal(err)
 	}
-	assert.Equal(t, uint32(4), irl.numLiterals)
+	assert.Equal(t, 4, irl.numLiterals)
 	assert.EqualValues(t, r, irl.uliterals[0:4])
 
 	//delta
@@ -131,7 +131,7 @@ func TestIntRunLengthV2(t *testing.T) {
 		fmt.Printf("error %+v", err)
 		t.Fatal(err)
 	}
-	assert.Equal(t, uint32(10), irl.numLiterals)
+	assert.Equal(t, 10, irl.numLiterals)
 	assert.EqualValues(t, r, irl.uliterals[0:10])
 }
 
