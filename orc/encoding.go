@@ -241,39 +241,181 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 					x = rle.uliterals[i]
 				}
 				i += c
-				if err := rle.writeDelta(x, 0, c-1, []uint64{}); err != nil {
+				if err := rle.writeDelta(x, 0, c-2, []uint64{}, out); err != nil {
 					return errors.WithStack(err)
 				}
 			}
 		} else {
-			if c == 1 { // try delta, run [1, 512]
-				//d, deltas := rle.getDel111taCount(i)
+			var dv *deltaValues
+			if rle.tryDeltaEncoding(i, dv) {
+				var x uint64
+				if rle.signed {
+					x = EncodeZigzag(rle.literals[i])
+				} else {
+					x = rle.uliterals[i]
+				}
+				i += dv.length
+				if err := rle.writeDelta(x, dv.base, dv.length-2, dv.deltas, out); err != nil {
+					return errors.WithStack(err)
+				}
+			} else {
+				if rle.tryDirectEncoding(i) {
+
+				} else if rle.tryPatchedBase(i) {
+
+				} else {
+					return errors.New("no encoding tried")
+				}
 			}
 		}
-
 	}
 	return nil
 }
 
-// if monotonically increasing or decreasing sequences, get count
-// means [i, i+1, i+2] should be increasing or decreasing, at this time return 3
-// if count <3, then deltas should be ignored
-func (rle *intRleV2) getDeltaCount(idx int) (count int, deltas []uint64) {
-	/*if idx+1<rle.numLiterals &&
-	for i := idx; i < int(rle.numLiterals); i++ {
-		if rle.signed {
-			if incr {
-				if rle.
-			}
-		} else {
-
-		}
-	}*/
-	return
+func (rle *intRleV2) tryDirectEncoding(idx int) bool {
+	return false
 }
 
-func (rle *intRleV2) writeDelta(base uint64, deltaBase int64, count int, deltas []uint64) error {
+func (rle *intRleV2) tryPatchedBase(idx int) bool {
+	return false
+}
+
+type deltaValues struct {
+	base   int64
+	length int
+	deltas []uint64
+}
+
+// for monotonically increasing or decreasing sequences
+// run length should be at least 3
+func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
+	if idx+2 < rle.numLiterals {
+		if rle.signed {
+			if rle.literals[idx] == rle.literals[idx+1] { // can not be same for first 2
+				return false
+			} else {
+				dv.base = rle.literals[idx+1] - rle.literals[idx]
+			}
+
+			if dv.base > 0 { // increasing
+				if rle.literals[idx+2] > rle.literals[idx+1] {
+					dv.deltas = append(dv.deltas, uint64(rle.literals[idx+2]-rle.literals[idx+1]))
+				} else {
+					return false
+				}
+			} else {
+				if rle.literals[idx+2] < rle.literals[idx+1] {
+					dv.deltas = append(dv.deltas, uint64(rle.literals[idx+1]-rle.literals[idx+2]))
+				} else {
+					return false
+				}
+			}
+		} else { // uint
+			if rle.uliterals[idx] == rle.uliterals[idx+1] {
+				return false
+			} else {
+				if rle.uliterals[idx] < rle.uliterals[idx+1] {
+					dv.base = int64(rle.uliterals[idx+1] - rle.uliterals[idx])
+				} else {
+					dv.base = -int64(rle.uliterals[idx] - rle.uliterals[idx])
+				}
+			}
+
+			if dv.base > 0 {
+				if rle.uliterals[idx+2] > rle.uliterals[idx+1] {
+					dv.deltas = append(dv.deltas, rle.uliterals[idx+2]-rle.uliterals[idx+1])
+				} else {
+					return false
+				}
+			} else {
+				if rle.uliterals[idx+2] < rle.uliterals[idx+1] {
+					dv.deltas = append(dv.deltas, rle.uliterals[idx+1]-rle.uliterals[idx+2])
+				} else {
+					return false
+				}
+			}
+		}
+		dv.length = 3
+
+		for i := idx + 3; i < rle.numLiterals; i++ {
+			if rle.signed {
+				if dv.base > 0 {
+					if rle.literals[i] > rle.literals[i-1] {
+						dv.deltas = append(dv.deltas, uint64(rle.literals[i]-rle.literals[i-1]))
+					} else {
+						break
+					}
+				} else {
+					if rle.literals[i] < rle.literals[i-1] {
+						dv.deltas = append(dv.deltas, uint64(rle.literals[i-1]-rle.literals[i]))
+					} else {
+						break
+					}
+				}
+			} else {
+				if dv.base > 0 {
+					if rle.uliterals[i] > rle.uliterals[i-1] {
+						dv.deltas = append(dv.deltas, rle.uliterals[i]-rle.uliterals[i-1])
+					} else {
+						break
+					}
+				} else {
+					if rle.uliterals[i] < rle.uliterals[i-1] {
+						dv.deltas = append(dv.deltas, rle.uliterals[i-1]-rle.uliterals[i])
+					} else {
+						break
+					}
+				}
+			}
+			dv.length += 1
+		}
+
+	} else { // only 2 number cannot be delta
+		return false
+	}
+
+	rle.sub = Encoding_DELTA
+	return true
+}
+
+func (rle *intRleV2) writeDelta(first uint64, deltaBase int64, length int, deltas []uint64, out *bytes.Buffer) error {
+	var h1, h2 byte // 2 byte header
+	h1 = rle.sub << 6
+	// delta width
+	var w, width byte
+	for _, v := range deltas {
+		x := getWidth(v)
+		if x > width {
+			width = x
+		}
+	}
+	w, err := widthTable(width, true)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	h1 |= w & 0x1F << 3  // 5 bit
+	length -= 1 // [1, 512] and 9 bit
+	h1 |= byte(length >> 8) & 0x01 // 9th bit
+	h2 = byte(length & 0xFF)
+	if err := out.WriteByte(h1); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := out.WriteByte(h2); err != nil {
+		return errors.WithStack(err)
+	}
+	if 
 	return nil
+}
+
+func getWidth(x uint64) byte {
+	var width byte
+	for j := byte(7); j > 0; j-- {
+		if x>>j*8 != 0x00 {
+			width = j + 1
+			break
+		}
+	}
+	return width
 }
 
 // get repeated count from position i, min return is 1 means no repeat
@@ -382,7 +524,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 			header := uint16(firstByte)<<8 | uint16(b1) // 2 byte header
 			w := (header >> 9) & 0x1F                   // 5bit([3,8)) width
-			width, err := getWidth(byte(w), false)
+			width, err := widthTable(byte(w), false)
 			if err != nil {
 				return errors.WithStack(err)
 			}
@@ -512,7 +654,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			deltaWidth, err := getWidth(header[0]>>1&0x1f, true)
+			deltaWidth, err := widthTable(header[0]>>1&0x1f, true)
 			if err != nil {
 				return errors.WithStack(err)
 			}
@@ -576,7 +718,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 						return errors.WithStack(err)
 					}
 					for j := 0; j < 4; j++ {
-						delta := uint64(b) >> byte(3 - j) * 2 & 0x03
+						delta := uint64(b) >> byte(3-j) * 2 & 0x03
 						if i+j <= length {
 							rle.setValue(mark+i+j, deltaBase > 0, delta)
 						}
@@ -720,8 +862,8 @@ func (rle *intRleV2) setValue(i int, positive bool, delta uint64) {
 	}
 }
 
-func getWidth(w byte, delta bool) (width byte, err error) {
-	switch w {
+func widthTable(width byte, delta bool) (w byte, err error) {
+	switch width {
 	case 0:
 		if delta {
 			width = 0
