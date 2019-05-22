@@ -89,19 +89,19 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.Equal(t, 5, irl.numLiterals)
 	assert.Equal(t, 10000, int(irl.uliterals[0]))
 	assert.Equal(t, 10000, int(irl.uliterals[4]))
-	bb:=bytes.NewBuffer(make([]byte, 3))
+	bb := bytes.NewBuffer(make([]byte, 3))
 	bb.Reset()
 	irl.writeValues(bb)
 	assert.Equal(t, []byte{0x0a, 0x27, 0x10}, bb.Bytes())
 
 	irl.reset()
-	irl.signed= true
-	irl.numLiterals= 10
-	v:=make([]int64, 10)
-	for i:=0; i<10; i++ {
-		v[i]= -1
+	irl.signed = true
+	irl.numLiterals = 10
+	v := make([]int64, 10)
+	for i := 0; i < 10; i++ {
+		v[i] = -1
 	}
-	irl.literals= v
+	irl.literals = v
 	bb.Reset()
 	irl.writeValues(bb)
 	irl.reset()
@@ -125,7 +125,19 @@ func TestIntRunLengthV2(t *testing.T) {
 	//delta
 	irl.reset()
 	r = []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
-	t3 := bytes.NewBuffer([]byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46})
+	bs := []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}
+	irl.uliterals = r
+	irl.numLiterals = 10
+	b := bytes.NewBuffer(make([]byte, 10))
+	b.Reset()
+	if err = irl.writeValues(b); err != nil {
+		fmt.Printf("error %+v", err)
+		t.Fatal(err)
+	}
+	assert.Equal(t, bs, b.Bytes())
+
+	t3 := bytes.NewBuffer(bs)
+	irl.reset()
 	err = irl.readValues(t3)
 	if err != nil {
 		fmt.Printf("error %+v", err)
@@ -154,7 +166,7 @@ func TestChunkHeader(t *testing.T) {
 
 	h := encChunkHeader(l, false)
 	assert.Equal(t, h, v)
-	dl, o:= decChunkHeader(v)
+	dl, o := decChunkHeader(v)
 	assert.Equal(t, l, dl)
 	assert.Equal(t, o, false)
 }

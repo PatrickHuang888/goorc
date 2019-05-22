@@ -217,7 +217,7 @@ func (rle *intRleV2) reset() {
 
 // write all literals to buffer
 func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
-	for i := 0; i < int(rle.numLiterals); {
+	for i := 0; i < rle.numLiterals; {
 		c := rle.getRepeat(i)
 		if c >= 3 {
 			if c <= 10 { // short repeat
@@ -234,28 +234,30 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 				}
 			} else { // fixed delta 0
 				rle.sub = Encoding_DELTA
-				var x uint64
+				b := make([]byte, 8)
+				var n int
 				if rle.signed {
-					x = EncodeZigzag(rle.literals[i])
+					n = binary.PutVarint(b, rle.literals[i])
 				} else {
-					x = rle.uliterals[i]
+					n = binary.PutUvarint(b, rle.uliterals[i])
 				}
 				i += c
-				if err := rle.writeDelta(x, 0, c-2, []uint64{}, out); err != nil {
+				if err := rle.writeDelta(b[:n], 0, c-2, []uint64{}, out); err != nil {
 					return errors.WithStack(err)
 				}
 			}
 		} else {
-			var dv *deltaValues
-			if rle.tryDeltaEncoding(i, dv) {
-				var x uint64
+			var dv deltaValues
+			if rle.tryDeltaEncoding(i, &dv) {
+				b := make([]byte, 8)
+				var n int
 				if rle.signed {
-					x = EncodeZigzag(rle.literals[i])
+					n = binary.PutVarint(b, rle.literals[i])
 				} else {
-					x = rle.uliterals[i]
+					n = binary.PutUvarint(b, rle.uliterals[i])
 				}
 				i += dv.length
-				if err := rle.writeDelta(x, dv.base, dv.length-2, dv.deltas, out); err != nil {
+				if err := rle.writeDelta(b[:n], dv.base, dv.length-2, dv.deltas, out); err != nil {
 					return errors.WithStack(err)
 				}
 			} else {
@@ -378,24 +380,24 @@ func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
 	return true
 }
 
-func (rle *intRleV2) writeDelta(first uint64, deltaBase int64, length int, deltas []uint64, out *bytes.Buffer) error {
+func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length int, deltas []uint64, out *bytes.Buffer) error {
 	var h1, h2 byte // 2 byte header
 	h1 = rle.sub << 6
 	// delta width
 	var w, width byte
 	for _, v := range deltas {
-		x := getWidth(v)
-		if x > width {
-			width = x
+		bits := getWidth(v)
+		if bits > width {
+			width = bits
 		}
 	}
-	w, err := widthTable(width, true)
+	w, err := widthEncoding(width)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	h1 |= w & 0x1F << 3  // 5 bit
-	length -= 1 // [1, 512] and 9 bit
-	h1 |= byte(length >> 8) & 0x01 // 9th bit
+	h1 |= w & 0x1F << 3          // 5 bit
+	length -= 1                  // [1, 512] and 9 bit
+	h1 |= byte(length>>8) & 0x01 // 9th bit
 	h2 = byte(length & 0xFF)
 	if err := out.WriteByte(h1); err != nil {
 		return errors.WithStack(err)
@@ -403,19 +405,36 @@ func (rle *intRleV2) writeDelta(first uint64, deltaBase int64, length int, delta
 	if err := out.WriteByte(h2); err != nil {
 		return errors.WithStack(err)
 	}
-	if 
+	// write first
+	if _, err := out.Write(first); err != nil {
+		return errors.WithStack(err)
+	}
+	// write delta base
+	b := make([]byte, 8)
+	n := binary.PutVarint(b, deltaBase)
+	if _, err := out.Write(b[:n]); err != nil {
+		return errors.WithStack(err)
+	}
+	// write deltas
+	for _, v := range deltas {
+		b := make([]byte, width)
+		for i := byte(0); i < width; i++ {
+			b[i] = byte(v >> uint(8*(width-i-1)))
+		}
+		if _, err := out.Write(b); err != nil {
+			return errors.WithStack(err)
+		}
+	}
 	return nil
 }
 
 func getWidth(x uint64) byte {
-	var width byte
-	for j := byte(7); j > 0; j-- {
-		if x>>j*8 != 0x00 {
-			width = j + 1
-			break
+	for j := byte(64); j > 0; j-- {
+		if x>>(j-1) != 0x00 {
+			return j
 		}
 	}
-	return width
+	return 0
 }
 
 // get repeated count from position i, min return is 1 means no repeat
@@ -524,7 +543,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 			header := uint16(firstByte)<<8 | uint16(b1) // 2 byte header
 			w := (header >> 9) & 0x1F                   // 5bit([3,8)) width
-			width, err := widthTable(byte(w), false)
+			width, err := widthDecoding(byte(w), false)
 			if err != nil {
 				return errors.WithStack(err)
 			}
@@ -654,7 +673,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			deltaWidth, err := widthTable(header[0]>>1&0x1f, true)
+			deltaWidth, err := widthDecoding(header[0]>>1&0x1f, true)
 			if err != nil {
 				return errors.WithStack(err)
 			}
@@ -862,8 +881,51 @@ func (rle *intRleV2) setValue(i int, positive bool, delta uint64) {
 	}
 }
 
-func widthTable(width byte, delta bool) (w byte, err error) {
+func widthEncoding(width byte) (w byte, err error) {
 	switch width {
+	case 0:
+		w = 0
+	case 1:
+		w = 0
+	case 2:
+		w = 1
+	case 3:
+		w= 2 // deprecated
+	case 4:
+		w = 3
+	case 5:  // deprecated
+		fallthrough
+	case 6:  // deprecated
+		fallthrough
+	case 7:  // deprecated
+		w= width -1
+	case 8:
+		w = 7
+	case 9:
+	case 10:
+	case 16:
+		w = 15
+	case 24:
+		w = 23
+	case 32:
+		w = 27
+	case 40:
+		w = 28
+	case 48:
+		w = 29
+	case 56:
+		w = 30
+	case 64:
+		w = 31
+	default:
+		// fixme
+		return width, errors.New("width error or deprecated")
+	}
+	return
+}
+
+func widthDecoding(w byte, delta bool) (width byte, err error) {
+	switch w {
 	case 0:
 		if delta {
 			width = 0
