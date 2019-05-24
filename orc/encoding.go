@@ -11,10 +11,11 @@ const (
 	MIN_REPEAT_SIZE  = 3
 	MAX_LITERAL_SIZE = 128
 
-	Encoding_SHORT_REPEAT byte = 0
-	Encoding_DIRECT            = 1
-	Encoding_PATCHED_BASE      = 2
-	Encoding_DELTA             = 3
+	Encoding_SHORT_REPEAT = byte(0)
+	Encoding_DIRECT       = byte(1)
+	Encoding_PATCHED_BASE = byte(2)
+	Encoding_DELTA        = byte(3)
+	Encoding_UNSET        = byte(255)
 )
 
 type Decoder interface {
@@ -209,8 +210,13 @@ type intRleV2 struct {
 }
 
 func (rle *intRleV2) reset() {
+	if rle.signed {
+		rle.literals = nil
+	} else {
+		rle.uliterals = nil
+	}
 	rle.signed = false
-	rle.sub = 0 // fixme
+	rle.sub = Encoding_UNSET
 	rle.consumeIndex = 0
 	rle.numLiterals = 0
 }
@@ -242,7 +248,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 					n = binary.PutUvarint(b, rle.uliterals[i])
 				}
 				i += int(c)
-				if err := rle.writeDelta(b[:n], 0, c-2, []uint64{}, out); err != nil {
+				if err := rle.writeDelta(b[:n], 0, c, []uint64{}, out); err != nil {
 					return errors.WithStack(err)
 				}
 			}
@@ -380,7 +386,7 @@ func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
 	return true
 }
 
-// first is int64 or uint64 based on signed, length is 9 bit for run length 1 to 521
+// first is int64 or uint64 based on signed, length is 9 bit for run length 1 to 512
 func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, deltas []uint64, out *bytes.Buffer) error {
 	var h1, h2 byte   // 2 byte header
 	h1 = rle.sub << 6 // 2 bit encoding type
@@ -417,78 +423,98 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 		return errors.WithStack(err)
 	}
 	// write deltas
-	dl := int(w) * int(length-2)
-	ds := make([]byte, dl)
-	c := 0
-	for i := 0; i < dl; {
+	for c := 0; c < len(deltas); {
+		var v byte
 		switch width {
 		case 1:
 			for j := byte(7); j > 0; j-- {
-				ds[i] = byte(deltas[c]&0x01) << j
+				v |= byte(deltas[c]&0x01) << j
 				c++
+			}
+			if err := out.WriteByte(v); err != nil {
+				return errors.WithStack(err)
 			}
 		case 2:
 			for j := byte(4); j > 0; j-- {
-				ds[i] = byte(deltas[c]&0x03) << j * 2
+				v |= byte(deltas[c]&0x03) << j * 2
 				c++
 			}
+			if err := out.WriteByte(v); err != nil {
+				return errors.WithStack(err)
+			}
 		case 4:
-			ds[i] = byte(deltas[c]&0x0f) << 4
+			v |= byte(deltas[c]&0x0f) << 4
 			c++
-			ds[i] = byte(deltas[c] & 0x0f)
+			v |= byte(deltas[c] & 0x0f)
 			c++
+			if err := out.WriteByte(v); err != nil {
+				return errors.WithStack(err)
+			}
 		case 8:
-			ds[i] = byte(deltas[c] & 0xff)
+			v = byte(deltas[c] & 0xff)
 			c++
+			if err := out.WriteByte(v); err != nil {
+				return errors.WithStack(err)
+			}
 		case 16:
 			for j := byte(1); j >= 0; j-- {
-				ds[i] = byte(deltas[c] >> j * 8 & 0xff)
-				i++
+				v = byte(deltas[c] >> j * 8 & 0xff)
+				if err := out.WriteByte(v); err != nil {
+					return errors.WithStack(err)
+				}
 			}
 			c++
 		case 24:
 			for j := byte(2); j >= 0; j-- {
-				ds[i] = byte(deltas[c] >> j * 8 & 0xff)
-				i++
+				v = byte(deltas[c] >> j * 8 & 0xff)
+				if err := out.WriteByte(v); err != nil {
+					return errors.WithStack(err)
+				}
 			}
 			c++
 		case 32:
 			for j := byte(3); j >= 0; j-- {
-				ds[i] = byte(deltas[c] >> j * 8 & 0xff)
-				i++
+				v = byte(deltas[c] >> j * 8 & 0xff)
+				if err := out.WriteByte(v); err != nil {
+					return errors.WithStack(err)
+				}
 			}
 			c++
 		case 40:
 			for j := byte(4); j >= 0; j-- {
-				ds[i] = byte(deltas[c] >> j * 8 & 0xff)
-				i++
+				v = byte(deltas[c] >> j * 8 & 0xff)
+				if err := out.WriteByte(v); err != nil {
+					return errors.WithStack(err)
+				}
 			}
 			c++
 		case 48:
 			for j := byte(5); j >= 0; j-- {
-				ds[i] = byte(deltas[c] >> j * 8 & 0xff)
-				i++
+				v = byte(deltas[c] >> j * 8 & 0xff)
+				if err := out.WriteByte(v); err != nil {
+					return errors.WithStack(err)
+				}
 			}
 			c++
 		case 56:
 			for j := byte(6); j >= 0; j-- {
-				ds[i] = byte(deltas[c] >> j * 8 & 0xff)
-				i++
+				v = byte(deltas[c] >> j * 8 & 0xff)
+				if err := out.WriteByte(v); err != nil {
+					return errors.WithStack(err)
+				}
 			}
 			c++
 		case 64:
 			for j := byte(7); j >= 0; j-- {
-				ds[i] = byte(deltas[c] >> j * 8 & 0xff)
-				i++
+				v = byte(deltas[c] >> j * 8 & 0xff)
+				if err := out.WriteByte(v); err != nil {
+					return errors.WithStack(err)
+				}
 			}
 			c++
 		default:
 			return errors.Errorf("width %d not recognized", width)
 		}
-		i++
-	}
-	if _, err := out.Write(ds); err != nil {
-		return errors.WithStack(err)
 	}
 	return nil
 }
