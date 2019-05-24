@@ -427,7 +427,7 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 		var v byte
 		switch width {
 		case 1:
-			for j := byte(7); j > 0; j-- {
+			for j := byte(7); j > 0 && c < len(deltas); j-- {
 				v |= byte(deltas[c]&0x01) << j
 				c++
 			}
@@ -435,7 +435,7 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 				return errors.WithStack(err)
 			}
 		case 2:
-			for j := byte(4); j > 0; j-- {
+			for j := byte(4); j > 0 && c<len(deltas); j-- {
 				v |= byte(deltas[c]&0x03) << j * 2
 				c++
 			}
@@ -445,8 +445,10 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 		case 4:
 			v |= byte(deltas[c]&0x0f) << 4
 			c++
-			v |= byte(deltas[c] & 0x0f)
-			c++
+			if c<len(deltas) {
+				v |= byte(deltas[c] & 0x0f)
+				c++
+			}
 			if err := out.WriteByte(v); err != nil {
 				return errors.WithStack(err)
 			}
