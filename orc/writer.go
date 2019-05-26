@@ -83,8 +83,8 @@ type stripeWriter struct {
 	// streams <id, stream{present, data, length}>
 	streams map[uint32][3]*streamWriter
 
-	idxBuf  *bytes.Buffer // index area buffer
-	dataBuf *bytes.Buffer // data area buffer
+	idxBuf *bytes.Buffer // index area buffer
+	//dataBuf *bytes.Buffer // data area buffer
 
 	info *pb.StripeInformation
 }
@@ -118,17 +118,10 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 func newStripeWriter(opts *WriterOptions) *stripeWriter {
 	idxBuf := bytes.NewBuffer(make([]byte, DEFAULT_INDEX_SIZE))
 	idxBuf.Reset()
-	pstBuf := bytes.NewBuffer(make([]byte, DEFAULT_PRESENT_SIZE))
-	pstBuf.Reset()
-	dataBuf := bytes.NewBuffer(make([]byte, DEFAULT_DATA_SIZE))
-	dataBuf.Reset()
-	lghBuf := bytes.NewBuffer(make([]byte, DEFAULT_LENGTH_SIZE))
-	lghBuf.Reset()
 	ss := make(map[uint32][3]*streamWriter)
 	si := &pb.StripeInformation{Offset: new(uint64), IndexLength: new(uint64), DataLength: new(uint64),
 		FooterLength: new(uint64), NumberOfRows: new(uint64)}
-	stp := &stripeWriter{opts: opts, idxBuf: idxBuf, pstBuf: pstBuf, dataBuf: dataBuf, lghBuf: lghBuf,
-		streams: ss, info: si}
+	stp := &stripeWriter{opts: opts, idxBuf: idxBuf, streams: ss, info: si}
 	return stp
 }
 
@@ -142,17 +135,13 @@ func (w *writer) Write(cv ColumnVector) error {
 	// refactor: update stripe info in 1 place?
 	*stp.info.NumberOfRows += uint64(cv.Rows())
 
-	if w.shouldFlush() {
+	if stp.shouldFlush() {
 		if err := w.flushStripe(); err != nil {
 			return errors.WithStack(err)
 		}
 	}
 
 	return nil
-}
-
-func (w *writer) shouldFlush() bool {
-	return w.stripe.idxBuf.Len()+w.stripe.dataBuf.Len()+w.stripe.lghBuf.Len() > w.opts.stripeSize
 }
 
 func (w *writer) flushStripe() error {
@@ -167,14 +156,15 @@ func (w *writer) flushStripe() error {
 	// reset current stripe
 	w.offset += stp.info.GetOffset() + stp.info.GetIndexLength() + stp.info.GetDataLength()
 	w.stripeInfos = append(w.stripeInfos, stp.info)
-	stp.reset()
+	stp = newStripeWriter(w.opts)
+	w.stripe= stp
 	*stp.info.Offset = w.offset
 	return nil
 }
 
 func (stp *stripeWriter) reset() {
 	stp.idxBuf.Reset()
-	stp.dataBuf.Reset()
+	//stp.dataBuf.Reset()
 
 	*stp.info.Offset = 0
 	*stp.info.FooterLength = 0
@@ -190,6 +180,18 @@ func (stp *stripeWriter) reset() {
 			v[2].reset()
 		}
 	}
+}
+
+func (stp *stripeWriter) shouldFlush() bool {
+	var l uint64
+	for _, td := range stp.opts.schemas {
+		for _, s := range stp.streams[td.Id] {
+			if s != nil {
+				l += uint64(s.cmpBuf.Len())
+			}
+		}
+	}
+	return l >= stp.opts.chunkSize
 }
 
 func (stp *stripeWriter) write(cv ColumnVector) error {
@@ -209,10 +211,12 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 			*info.Column = uint32(cv.ColumnId())
 			buf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
 			buf.Reset()
+			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize)) // fixme: initial size
+			cmpBuf.Reset()
 			enc := &intRleV2{signed: true}
 			dv2 := pb.ColumnEncoding_DIRECT_V2
 			encoding := &pb.ColumnEncoding{Kind: &dv2}
-			sw := &streamWriter{info: info, buf: buf, encoding: encoding, enc: enc}
+			sw := &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
 			ss[1] = sw
 			stp.streams[cv.ColumnId()] = ss
 		}
@@ -249,17 +253,19 @@ func (stp *stripeWriter) flushStripe(f *os.File) error {
 	log.Debugf("flush index with %d", idxL)
 
 	// write data area
+	var dataL uint64
 	for _, td := range stp.opts.schemas {
-		for _, stm := range stp.streams[td.Id] {
-			stm.cmpBuf.WriteTo(stp.dataBuf)
+		for _, s := range stp.streams[td.Id] {
+			if s != nil {
+				n, err := s.cmpBuf.WriteTo(f)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				dataL += uint64(n)
+			}
 		}
 	}
-	dataL := uint64(stp.dataBuf.Len())
-	if _, err = stp.dataBuf.WriteTo(f); err != nil {
-		return errors.WithStack(err)
-	}
 	log.Debugf("flush data stream with %d", dataL)
-	stp.dataBuf.Reset()
 
 	// write stripe footer
 	sf := &pb.StripeFooter{}
@@ -288,7 +294,7 @@ func (stp *stripeWriter) flushStripe(f *os.File) error {
 
 	// refactor: stripe info field value setting scattering everywhere
 	*stp.info.IndexLength = idxL
-	*stp.info.DataLength = pstL + dataL + pstL
+	*stp.info.DataLength = dataL
 	*stp.info.FooterLength = ftLength
 
 	return nil
@@ -396,6 +402,7 @@ func (w *writer) writeFileTail() error {
 func compressTo(kind pb.CompressionKind, chunkSize uint64, src *bytes.Buffer, dst *bytes.Buffer) (cmpLength int64, err error) {
 	switch kind {
 	case pb.CompressionKind_ZLIB:
+		srcBytes:= src.Bytes()
 		chunkLength := MinUint64(MAX_CHUNK_LENGTH, chunkSize)
 		buf := bytes.NewBuffer(make([]byte, chunkLength))
 		buf.Reset()
@@ -408,11 +415,13 @@ func compressTo(kind pb.CompressionKind, chunkSize uint64, src *bytes.Buffer, ds
 			if _, err := src.WriteTo(w); err != nil {
 				return 0, errors.WithStack(err)
 			}
+			if err = w.Close(); err != nil {
+				return 0, errors.WithStack(err)
+			}
 			var header []byte
 			orig := buf.Len() >= srcLen
 			if orig {
-				// todo:
-				return 0, errors.New("no impl")
+				header= encChunkHeader(srcLen, orig)
 			} else {
 				header = encChunkHeader(buf.Len(), orig)
 			}
@@ -420,11 +429,12 @@ func compressTo(kind pb.CompressionKind, chunkSize uint64, src *bytes.Buffer, ds
 				return 0, err
 			}
 			if orig {
-				// todo:
-				return 0, errors.New("no impl")
+				if n, err := dst.Write(srcBytes); err != nil {
+					return int64(n), errors.WithStack(err)
+				}
 			} else {
 				if n, err := buf.WriteTo(dst); err != nil {
-					return n, err
+					return n, errors.WithStack(err)
 				}
 			}
 
@@ -456,13 +466,14 @@ func decChunkHeader(h []byte) (length int, orig bool) {
 	return int(h[2])<<15 | int(h[1])<<7 | int(h[0])>>1, h[0]&0x01 == 0x01
 }
 
-// compress byte slice into chunks, used in stripe footer, tail footer
+// compress byte slice into chunk slice, used in stripe footer, tail footer
 // thinking should be smaller than chunksize
 func compressByteSlice(kind pb.CompressionKind, chunkSize uint64, b []byte) (compressed []byte, err error) {
 	switch kind {
 	case pb.CompressionKind_ZLIB:
 		src := bytes.NewBuffer(b)
 		dst := bytes.NewBuffer(make([]byte, len(b)))
+		dst.Reset()
 		if _, err = compressTo(kind, chunkSize, src, dst); err != nil {
 			return nil, err
 		}

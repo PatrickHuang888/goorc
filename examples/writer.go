@@ -23,7 +23,7 @@ func main() {
 
 	writer, err := orc.NewWriter("my-file-w.orc", opts)
 	if err != nil {
-		fmt.Printf("create writer error %v+", err)
+		fmt.Printf("create writer error %+v", err)
 		os.Exit(1)
 	}
 
@@ -39,10 +39,15 @@ func main() {
 	}
 	batch.(*orc.LongColumnVector).SetVector(v)
 	// fixme: write directly or cached in buffer ?
-	writer.Write(batch)
+	if err:= writer.Write(batch); err!=nil {
+		fmt.Printf("write error %+v", err)
+		os.Exit(1)
+	}
 	//writer.WriteBatch()
 	//batch.(*orc.LongColumnVector).SetVector(v[:1000])
 	//writer.AddRowBatch(batch)
 	//writer.Flush()
-	writer.Close()
+	if err:= writer.Close(); err!=nil {
+		fmt.Printf("close error %+v", err)
+	}
 }
