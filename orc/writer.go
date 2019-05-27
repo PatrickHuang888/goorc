@@ -157,7 +157,7 @@ func (w *writer) flushStripe() error {
 	w.offset += stp.info.GetOffset() + stp.info.GetIndexLength() + stp.info.GetDataLength()
 	w.stripeInfos = append(w.stripeInfos, stp.info)
 	stp = newStripeWriter(w.opts)
-	w.stripe= stp
+	w.stripe = stp
 	*stp.info.Offset = w.offset
 	return nil
 }
@@ -330,6 +330,8 @@ func (w *writer) Close() error {
 	if err := w.writeFileTail(); err != nil {
 		return errors.WithStack(err)
 	}
+
+	w.f.Close()
 	return nil
 }
 
@@ -377,10 +379,11 @@ func (w *writer) writeFileTail() error {
 	// write postscript
 	ps := &pb.PostScript{FooterLength: new(uint64), Compression: new(pb.CompressionKind),
 		CompressionBlockSize: new(uint64), Magic: new(string)}
-	*ps.FooterLength = ftl
-	*ps.Compression = w.opts.cmpKind
-	*ps.CompressionBlockSize = w.opts.chunkSize
-	*ps.Magic = "ORC"
+	ps.FooterLength = &ftl
+	ps.Compression = &w.opts.cmpKind
+	ps.CompressionBlockSize = &w.opts.chunkSize
+	m := MAGIC
+	ps.Magic = &m
 	psb, err := proto.Marshal(ps)
 	if err != nil {
 		return errors.WithStack(err)
@@ -402,7 +405,7 @@ func (w *writer) writeFileTail() error {
 func compressTo(kind pb.CompressionKind, chunkSize uint64, src *bytes.Buffer, dst *bytes.Buffer) (cmpLength int64, err error) {
 	switch kind {
 	case pb.CompressionKind_ZLIB:
-		srcBytes:= src.Bytes()
+		srcBytes := src.Bytes()
 		chunkLength := MinUint64(MAX_CHUNK_LENGTH, chunkSize)
 		buf := bytes.NewBuffer(make([]byte, chunkLength))
 		buf.Reset()
@@ -421,7 +424,7 @@ func compressTo(kind pb.CompressionKind, chunkSize uint64, src *bytes.Buffer, ds
 			var header []byte
 			orig := buf.Len() >= srcLen
 			if orig {
-				header= encChunkHeader(srcLen, orig)
+				header = encChunkHeader(srcLen, orig)
 			} else {
 				header = encChunkHeader(buf.Len(), orig)
 			}
@@ -485,63 +488,3 @@ func compressByteSlice(kind pb.CompressionKind, chunkSize uint64, b []byte) (com
 	return
 }
 
-func compressProtoBuf(kind pb.CompressionKind, src *proto.Buffer, dst *bytes.Buffer) (uint64, error) {
-	return 0, nil
-}
-
-type PhysicalWriter interface {
-	WriteHeader() error
-	WriteIndex(index pb.RowIndex) error
-	WriteBloomFilter(bloom pb.BloomFilterIndex) error
-	FinalizeStripe(footer pb.StripeFooter, dirEntry pb.StripeInformation) error
-	WriteFileMetadata(metadate pb.Metadata) error
-	WriteFileFooter(footer pb.Footer) error
-	WritePostScript(ps pb.PostScript) error
-	Close() error
-	Flush() error
-}
-
-type physicalFsWriter struct {
-	path string
-	opts *WriterOptions
-	f    *os.File
-}
-
-func (w *physicalFsWriter) WriteHeader() (err error) {
-	if _, err = w.f.Write([]byte(MAGIC)); err != nil {
-		return errors.Wrapf(err, "write header error")
-	}
-	return err
-}
-
-func (*physicalFsWriter) WriteIndex(index pb.RowIndex) error {
-	panic("implement me")
-}
-
-func (*physicalFsWriter) WriteBloomFilter(bloom pb.BloomFilterIndex) error {
-	panic("implement me")
-}
-
-func (*physicalFsWriter) FinalizeStripe(footer pb.StripeFooter, dirEntry pb.StripeInformation) error {
-	panic("implement me")
-}
-
-func (*physicalFsWriter) WriteFileMetadata(metadate pb.Metadata) error {
-	panic("implement me")
-}
-
-func (*physicalFsWriter) WriteFileFooter(footer pb.Footer) error {
-	panic("implement me")
-}
-
-func (*physicalFsWriter) WritePostScript(ps pb.PostScript) error {
-	panic("implement me")
-}
-
-func (*physicalFsWriter) Close() error {
-	panic("implement me")
-}
-
-func (*physicalFsWriter) Flush() error {
-	panic("implement me")
-}
