@@ -2,9 +2,15 @@ package orc
 
 import (
 	"bytes"
+	"fmt"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
+
+func init() {
+	logrus.SetLevel(logrus.TraceLevel)
+}
 
 type bstream struct {
 	value []byte
@@ -78,60 +84,17 @@ func TestIntRunLengthV1(t *testing.T) {
 	}
 }
 
-func TestIntRunLengthV2(t *testing.T) {
-	//short repeat
-	bs := []byte{0x0a, 0x27, 0x10}
-	b1 := bytes.NewBuffer(bs)
+func TestIntRunLengthV2_Delta(t *testing.T)  {
+	var err error
 	irl := &intRleV2{}
-	irl.signed = false
-	err := irl.readValues(b1)
-	assert.Nil(t, err)
-	assert.Equal(t, Encoding_SHORT_REPEAT, irl.sub)
-	assert.Equal(t, 5, irl.numLiterals)
-	assert.Equal(t, 10000, int(irl.uliterals[0]))
-	assert.Equal(t, 10000, int(irl.uliterals[4]))
-	b1.Reset()
-	err = irl.writeValues(b1)
-	assert.Nil(t, err)
-	assert.Equal(t, bs, b1.Bytes())
-
-	irl.reset()
-	irl.signed = true
-	irl.numLiterals = 10
-	v := make([]int64, 10)
-	for i := 0; i < 10; i++ {
-		v[i] = -1
-	}
-	irl.literals = v
-	b1.Reset()
-	err = irl.writeValues(b1) //encoding
-	assert.Nil(t, err)
-	irl.reset()
-	irl.signed = true
-	err = irl.readValues(b1) // decoding
-	assert.Nil(t, err)
-	assert.Equal(t, 10, int(irl.numLiterals))
-	assert.Equal(t, int64(-1), irl.literals[0])
-	assert.Equal(t, int64(-1), irl.literals[9])
-
-	// direct
-	irl.reset()
-	r := []uint64{23713, 43806, 57005, 48879}
-	b2 := bytes.NewBuffer([]byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef})
-	err = irl.readValues(b2)
-	assert.Nil(t, err)
-	assert.Equal(t, 4, irl.numLiterals)
-	assert.EqualValues(t, r, irl.uliterals[0:4])
-
-	// delta
-	irl.reset()
-	r = []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29} // unsigned
-	bs = []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}
-	irl.uliterals = r
-	irl.numLiterals = 10
 	bw := bytes.NewBuffer(make([]byte, 100))
 	bw.Reset()
-	err = irl.writeValues(bw)
+	/*irl.signed=false
+	r := []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29} // unsigned
+	bs := []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}
+	irl.uliterals = r
+	irl.numLiterals = 10
+	err := irl.writeValues(bw)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, bw.Bytes())
 	br := bytes.NewBuffer(bs)
@@ -172,7 +135,81 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, Encoding_DELTA, irl.sub)
 	assert.Equal(t, 11, irl.numLiterals)
-	assert.Equal(t, irl.literals, vs)
+	assert.Equal(t, irl.literals, vs)*/
+
+	// type delta over 512 numbers
+	data:= make([]uint64, 1000)
+	for i:=0; i< 1000; i++ {
+		data[i]= uint64(i)
+	}
+	irl.reset()
+	irl.signed= false
+	irl.numLiterals= 1000
+	irl.uliterals= data
+	bw.Reset()
+	err= irl.writeValues(bw)
+	assert.Nil(t, err)
+	if err!=nil {
+		fmt.Printf("%+v", err)
+	}
+	irl.reset()
+	irl.signed= false
+	err= irl.readValues(bw)
+	assert.Nil(t, err)
+	if err!=nil {
+		fmt.Printf("%+v", err)
+	}
+	assert.Equal(t, 1000, irl.numLiterals)
+	assert.Equal(t, uint64(0), irl.uliterals[0])
+	assert.Equal(t, uint64(999), irl.uliterals[999])
+}
+
+func TestIntRunLengthV2(t *testing.T) {
+	irl := &intRleV2{}
+	//short repeat
+	bs := []byte{0x0a, 0x27, 0x10}
+	b1 := bytes.NewBuffer(bs)
+	irl.signed = false
+	err := irl.readValues(b1)
+	assert.Nil(t, err)
+	assert.Equal(t, Encoding_SHORT_REPEAT, irl.sub)
+	assert.Equal(t, 5, irl.numLiterals)
+	assert.Equal(t, 10000, int(irl.uliterals[0]))
+	assert.Equal(t, 10000, int(irl.uliterals[4]))
+	b1.Reset()
+	err = irl.writeValues(b1)
+	assert.Nil(t, err)
+	assert.Equal(t, bs, b1.Bytes())
+
+	irl.reset()
+	irl.signed = true
+	irl.numLiterals = 10
+	v := make([]int64, 10)
+	for i := 0; i < 10; i++ {
+		v[i] = -1
+	}
+	irl.literals = v
+	b1.Reset()
+	err = irl.writeValues(b1) //encoding
+	assert.Nil(t, err)
+	irl.reset()
+	irl.signed = true
+	err = irl.readValues(b1) // decoding
+	assert.Nil(t, err)
+	assert.Equal(t, 10, int(irl.numLiterals))
+	assert.Equal(t, int64(-1), irl.literals[0])
+	assert.Equal(t, int64(-1), irl.literals[9])
+
+	// direct
+	irl.reset()
+	r := []uint64{23713, 43806, 57005, 48879}
+	b2 := bytes.NewBuffer([]byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef})
+	err = irl.readValues(b2)
+	assert.Nil(t, err)
+	assert.Equal(t, 4, irl.numLiterals)
+	assert.EqualValues(t, r, irl.uliterals[0:4])
+
+
 }
 
 func TestZigzag(t *testing.T) {

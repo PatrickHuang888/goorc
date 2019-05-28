@@ -11,10 +11,6 @@ import (
 	"os"
 )
 
-func init() {
-
-}
-
 const (
 	MIN_ROW_INDEX_STRIDE         = 1000
 	STRIPE_LIMIT                 = 256 * 1024 * 1024
@@ -105,8 +101,7 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 		return nil, errors.WithStack(err)
 	}
 
-	stp := newStripeWriter(opts)
-	w := &writer{opts: opts, path: path, f: f, stripe: stp}
+	w := &writer{opts: opts, path: path, f: f}
 	n, err := w.writeHeader()
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -115,71 +110,51 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 	return w, nil
 }
 
-func newStripeWriter(opts *WriterOptions) *stripeWriter {
+func newStripeWriter(offset uint64, opts *WriterOptions) *stripeWriter {
 	idxBuf := bytes.NewBuffer(make([]byte, DEFAULT_INDEX_SIZE))
 	idxBuf.Reset()
 	ss := make(map[uint32][3]*streamWriter)
-	si := &pb.StripeInformation{Offset: new(uint64), IndexLength: new(uint64), DataLength: new(uint64),
-		FooterLength: new(uint64), NumberOfRows: new(uint64)}
+	si := &pb.StripeInformation{}
+	var r uint64
+	si.NumberOfRows = &r
+	o := offset
+	si.Offset = &o
 	stp := &stripeWriter{opts: opts, idxBuf: idxBuf, streams: ss, info: si}
 	return stp
 }
 
 func (w *writer) Write(cv ColumnVector) error {
 	// todo: verify cv type and column type
-
-	stp := w.stripe
-	if err := stp.write(cv); err != nil {
+	if w.stripe == nil {
+		w.stripe = newStripeWriter(w.offset, w.opts)
+	}
+	if err := w.stripe.write(cv); err != nil {
 		return errors.WithStack(err)
 	}
-	// refactor: update stripe info in 1 place?
-	*stp.info.NumberOfRows += uint64(cv.Rows())
 
-	if stp.shouldFlush() {
-		if err := w.flushStripe(); err != nil {
-			return errors.WithStack(err)
-		}
+	if err := w.flushStripe(false); err != nil {
+		return errors.WithStack(err)
 	}
-
 	return nil
 }
 
-func (w *writer) flushStripe() error {
-	log.Debugln("flush stripe")
+func (w *writer) flushStripe(force bool) error {
 	// fixme: assuming 1 stripe all in memory
 	// a stripe should contains whole row
 	stp := w.stripe
-	if err := stp.flushStripe(w.f); err != nil {
-		return errors.WithStack(err)
+	if stp.shouldFlush() || force {
+		if err := stp.flush(w.f); err != nil {
+			return errors.WithStack(err)
+		}
+		// todo: update column stats
+		// reset current stripe
+		w.offset += stp.info.GetOffset() + stp.info.GetIndexLength() + stp.info.GetDataLength()
+		w.stripeInfos = append(w.stripeInfos, stp.info)
+		log.Debugf("flushed stripe %v", stp.info)
+		stp = newStripeWriter(w.offset, w.opts)
+		w.stripe = stp
 	}
-	// todo: update column stats
-	// reset current stripe
-	w.offset += stp.info.GetOffset() + stp.info.GetIndexLength() + stp.info.GetDataLength()
-	w.stripeInfos = append(w.stripeInfos, stp.info)
-	stp = newStripeWriter(w.opts)
-	w.stripe = stp
-	*stp.info.Offset = w.offset
 	return nil
-}
-
-func (stp *stripeWriter) reset() {
-	stp.idxBuf.Reset()
-	//stp.dataBuf.Reset()
-
-	*stp.info.Offset = 0
-	*stp.info.FooterLength = 0
-	*stp.info.DataLength = 0
-	*stp.info.NumberOfRows = 0
-
-	for _, v := range stp.streams {
-		if v[0] != nil {
-			v[0].reset()
-		}
-		v[1].reset()
-		if v[2] != nil {
-			v[2].reset()
-		}
-	}
 }
 
 func (stp *stripeWriter) shouldFlush() bool {
@@ -233,7 +208,8 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 		if err != nil {
 			return errors.Wrap(err, "compressing data stream error")
 		}
-		//*stm.info.Length += uint64(n)
+
+		*stp.info.NumberOfRows += uint64(cv.Rows())
 
 	default:
 		return errors.New("no impl")
@@ -242,8 +218,9 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 }
 
 // 1 stripe should be self-contained
-func (stp *stripeWriter) flushStripe(f *os.File) error {
+func (stp *stripeWriter) flush(f *os.File) error {
 	// row number updated at write
+	// write index
 	idxL := uint64(stp.idxBuf.Len())
 	// buf will be reset after writeTo
 	_, err := stp.idxBuf.WriteTo(f)
@@ -252,7 +229,7 @@ func (stp *stripeWriter) flushStripe(f *os.File) error {
 	}
 	log.Debugf("flush index with %d", idxL)
 
-	// write data area
+	// write data streams
 	var dataL uint64
 	for _, td := range stp.opts.schemas {
 		for _, s := range stp.streams[td.Id] {
@@ -282,20 +259,20 @@ func (stp *stripeWriter) flushStripe(f *os.File) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	b, err := compressByteSlice(stp.opts.cmpKind, stp.opts.chunkSize, sfm)
+	sfCmpBuf, err := compressByteSlice(stp.opts.cmpKind, stp.opts.chunkSize, sfm)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	ftLength := uint64(len(b))
-	if _, err := f.Write(b); err != nil {
+	ftLength := uint64(len(sfCmpBuf))
+	if _, err := f.Write(sfCmpBuf); err != nil {
 		return errors.WithStack(err)
 	}
 	log.Debugf("write stripe footer, length: %d", ftLength)
 
 	// refactor: stripe info field value setting scattering everywhere
-	*stp.info.IndexLength = idxL
-	*stp.info.DataLength = dataL
-	*stp.info.FooterLength = ftLength
+	stp.info.IndexLength = &idxL
+	stp.info.DataLength = &dataL
+	stp.info.FooterLength = &ftLength
 
 	return nil
 }
@@ -324,7 +301,7 @@ func (w *writer) GetSchema() *TypeDescription {
 }
 
 func (w *writer) Close() error {
-	if err := w.flushStripe(); err != nil {
+	if err := w.flushStripe(true); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := w.writeFileTail(); err != nil {
@@ -348,12 +325,13 @@ func (w *writer) writeHeader() (uint64, error) {
 }
 
 func (w *writer) writeFileTail() error {
+	// write footer
 	// todo: rowsinstrde
 	ft := &pb.Footer{HeaderLength: new(uint64), ContentLength: new(uint64), NumberOfRows: new(uint64)}
 	*ft.HeaderLength = 3 // always 3
-	for _, v := range w.stripeInfos {
-		*ft.ContentLength += v.GetIndexLength() + v.GetDataLength() + v.GetFooterLength()
-		*ft.NumberOfRows += v.GetNumberOfRows()
+	for _, si := range w.stripeInfos {
+		*ft.ContentLength += si.GetIndexLength() + si.GetDataLength() + si.GetFooterLength()
+		*ft.NumberOfRows += si.GetNumberOfRows()
 	}
 	ft.Stripes = w.stripeInfos
 	ft.Types = schemasToTypes(w.opts.schemas)
@@ -366,19 +344,18 @@ func (w *writer) writeFileTail() error {
 	if err != nil {
 		return errors.Wrap(err, "marshall footer error")
 	}
-	b, err := compressByteSlice(w.opts.cmpKind, w.opts.chunkSize, ftb)
+	ftCmpBuf, err := compressByteSlice(w.opts.cmpKind, w.opts.chunkSize, ftb)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	ftl := uint64(len(b))
-	if _, err := w.f.Write(b); err != nil {
+	ftl := uint64(len(ftCmpBuf))
+	if _, err := w.f.Write(ftCmpBuf); err != nil {
 		return errors.WithStack(err)
 	}
 	log.Debugf("write footer with length: %d", ftl)
 
 	// write postscript
-	ps := &pb.PostScript{FooterLength: new(uint64), Compression: new(pb.CompressionKind),
-		CompressionBlockSize: new(uint64), Magic: new(string)}
+	ps := &pb.PostScript{}
 	ps.FooterLength = &ftl
 	ps.Compression = &w.opts.cmpKind
 	ps.CompressionBlockSize = &w.opts.chunkSize
@@ -487,4 +464,3 @@ func compressByteSlice(kind pb.CompressionKind, chunkSize uint64, b []byte) (com
 	}
 	return
 }
-

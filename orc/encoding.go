@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"io"
 )
 
@@ -263,6 +264,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 					n = binary.PutUvarint(b, rle.uliterals[i])
 				}
 				i += int(dv.length)
+				log.Tracef("encoding %d using deltas, index is %d", dv.length, i)
 				if err := rle.writeDelta(b[:n], dv.base, dv.length, dv.deltas, out); err != nil {
 					return errors.WithStack(err)
 				}
@@ -345,7 +347,7 @@ func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
 		}
 		dv.length = 3
 
-		for i := idx + 3; i < rle.numLiterals; i++ {
+		for i := idx + 3; i < rle.numLiterals && dv.length < 512; i++ {
 			if rle.signed {
 				if dv.base > 0 {
 					if rle.literals[i] >= rle.literals[i-1] {
@@ -435,7 +437,7 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 				return errors.WithStack(err)
 			}
 		case 2:
-			for j := byte(4); j > 0 && c<len(deltas); j-- {
+			for j := byte(4); j > 0 && c < len(deltas); j-- {
 				v |= byte(deltas[c]&0x03) << j * 2
 				c++
 			}
@@ -445,7 +447,7 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 		case 4:
 			v |= byte(deltas[c]&0x0f) << 4
 			c++
-			if c<len(deltas) {
+			if c < len(deltas) {
 				v |= byte(deltas[c] & 0x0f)
 				c++
 			}
@@ -795,6 +797,8 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 
 			mark := rle.numLiterals
 			rle.numLiterals += length
+			log.Tracef("decoding length %d of width %d delta values, with rle numLiterals %d",
+				length, deltaWidth,rle.numLiterals)
 
 			// rethink: oom?
 			// fixme: allocate every time ?

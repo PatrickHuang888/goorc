@@ -38,7 +38,6 @@ func main() {
 		v[i]= int64(i)
 	}
 	batch.(*orc.LongColumnVector).SetVector(v)
-	// fixme: write directly or cached in buffer ?
 	if err:= writer.Write(batch); err!=nil {
 		fmt.Printf("write error %+v", err)
 		os.Exit(1)
