@@ -89,12 +89,13 @@ func TestIntRunLengthV2_Delta(t *testing.T)  {
 	irl := &intRleV2{}
 	bw := bytes.NewBuffer(make([]byte, 100))
 	bw.Reset()
-	/*irl.signed=false
+
+	irl.signed=false
 	r := []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29} // unsigned
 	bs := []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}
 	irl.uliterals = r
 	irl.numLiterals = 10
-	err := irl.writeValues(bw)
+	err = irl.writeValues(bw)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, bw.Bytes())
 	br := bytes.NewBuffer(bs)
@@ -135,9 +136,9 @@ func TestIntRunLengthV2_Delta(t *testing.T)  {
 	assert.Nil(t, err)
 	assert.Equal(t, Encoding_DELTA, irl.sub)
 	assert.Equal(t, 11, irl.numLiterals)
-	assert.Equal(t, irl.literals, vs)*/
+	assert.Equal(t, irl.literals, vs)
 
-	// type delta over 512 numbers
+	// over 512 numbers with uint
 	data:= make([]uint64, 1000)
 	for i:=0; i< 1000; i++ {
 		data[i]= uint64(i)
@@ -162,6 +163,32 @@ func TestIntRunLengthV2_Delta(t *testing.T)  {
 	assert.Equal(t, 1000, irl.numLiterals)
 	assert.Equal(t, uint64(0), irl.uliterals[0])
 	assert.Equal(t, uint64(999), irl.uliterals[999])
+
+	// number over 512 with int
+	idata:= make([]int64, 1500)
+	for i:=0; i<1500; i++ {
+		idata[i]= int64(1000-i)
+	}
+	irl.reset()
+	irl.signed= true
+	irl.numLiterals= 1500
+	irl.literals= idata
+	bw.Reset()
+	err= irl.writeValues(bw)
+	assert.Nil(t, err)
+	if err!=nil {
+		fmt.Printf("%+v", err)
+	}
+	irl.reset()
+	irl.signed= true
+	err= irl.readValues(bw)
+	assert.Nil(t, err)
+	if err!=nil {
+		fmt.Printf("%+v", err)
+	}
+	assert.Equal(t, 1500, irl.numLiterals)
+	assert.Equal(t, int64(1000), irl.literals[0])
+	assert.Equal(t, int64(-499), irl.literals[1499])
 }
 
 func TestIntRunLengthV2(t *testing.T) {
