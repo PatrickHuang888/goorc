@@ -234,6 +234,7 @@ func (stp *stripeWriter) flush(f *os.File) error {
 	for _, td := range stp.opts.schemas {
 		for _, s := range stp.streams[td.Id] {
 			if s != nil {
+				*s.info.Length = uint64(s.cmpBuf.Len())
 				n, err := s.cmpBuf.WriteTo(f)
 				if err != nil {
 					return errors.WithStack(err)
@@ -269,7 +270,6 @@ func (stp *stripeWriter) flush(f *os.File) error {
 	}
 	log.Debugf("write stripe footer, length: %d", ftLength)
 
-	// refactor: stripe info field value setting scattering everywhere
 	stp.info.IndexLength = &idxL
 	stp.info.DataLength = &dataL
 	stp.info.FooterLength = &ftLength
@@ -419,7 +419,7 @@ func compressTo(kind pb.CompressionKind, chunkSize uint64, src *bytes.Buffer, ds
 			}
 
 		} else {
-			// todo:
+			// todo: several chunk
 			return 0, errors.New("no impl")
 		}
 
