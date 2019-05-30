@@ -14,6 +14,7 @@ import (
 
 const (
 	MAGIC                = "ORC"
+	MAGIC_LENGTH         = uint64(3)
 	DIRECTORY_SIZE_GUESS = 16 * 1024
 )
 
@@ -192,6 +193,7 @@ func (cr *columnReader) Print() {
 	for _, s := range cr.streams {
 		fmt.Printf("%s ", s.String())
 	}
+	fmt.Println()
 	fmt.Println()
 }
 
@@ -753,7 +755,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 		return nil, errors.WithStack(err)
 	}
 
-	// read the PostScript
+	// read postScript
 	psLen := int64(buf[readSize-1])
 	psOffset := readSize - 1 - psLen
 	ps, err := extractPostScript(buf[psOffset : psOffset+psLen])
@@ -777,49 +779,20 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 		// refactor: array allocated
 		buf = append(buf, ebuf...)
 	}
+
+	// read file footer
 	footerStart := psOffset - footerSize
-	bufferSize := int64(ps.GetCompressionBlockSize())
-	decompressed := make([]byte, bufferSize, bufferSize)
-	decompressedPos := 0
-	compress := ps.GetCompression()
-	//data := buf[footerStart : footerStart+footerSize]
-	offset := int64(0)
-	footerBuf := buf[footerStart : footerStart+footerSize]
-	for r := int64(0); r < footerSize; {
-		// header
-		original := (footerBuf[offset] & 0x01) == 1
-		chunkLength := int64((footerBuf[offset+2] << 15) | (footerBuf[offset+1] << 7) | (footerBuf[offset] >> 1))
-		//fixme:
-		if chunkLength > bufferSize {
-			return nil, errors.New("chunk length larger than compression block size")
-		}
-		offset += 3
-		r = offset + chunkLength
+	cmpBufSize := ps.GetCompressionBlockSize()
+	footerBuf := bytes.NewBuffer(make([]byte, cmpBufSize))
+	footerBuf.Reset()
+	cmpFooterBuf := bytes.NewBuffer(buf[footerStart : footerStart+footerSize])
 
-		if original {
-			// todo:
-			return nil, errors.New("chunk original not implemented!")
-		} else {
-			switch compress {
-			case pb.CompressionKind_ZLIB:
-				b := bytes.NewBuffer(footerBuf[offset : offset+chunkLength])
-				r := flate.NewReader(b)
-				decompressedPos, err = r.Read(decompressed)
-				r.Close()
-				if err != nil && err != io.EOF {
-					return nil, errors.Wrapf(err, "decompress chunk data error when read footer")
-				}
-				if decompressedPos == 0 {
-					return nil, errors.New("decompress 0 footer")
-				}
-			}
-
-		}
-		offset += chunkLength
+	if err := decompressedTo(footerBuf, cmpFooterBuf, ps.GetCompression()); err != nil {
+		return nil, errors.WithStack(err)
 	}
 
 	footer := &pb.Footer{}
-	if err = proto.Unmarshal(decompressed[:decompressedPos], footer); err != nil {
+	if err = proto.Unmarshal(footerBuf.Bytes(), footer); err != nil {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 	fmt.Printf("Footer: %s\n", footer.String())
@@ -873,6 +846,13 @@ func ensureOrcFooter(f *os.File, psLen int, buf []byte) error {
 	return nil
 }
 
+func MinUint64(x, y uint64) uint64 {
+	if x < y {
+		return x
+	}
+	return y
+}
+
 func Min(x, y int64) int64 {
 	if x < y {
 		return x
@@ -885,4 +865,40 @@ func Max(x, y int64) int64 {
 		return x
 	}
 	return y
+}
+
+// decompress buffer src into dst
+func decompressedTo(dst *bytes.Buffer, src *bytes.Buffer, kind pb.CompressionKind) (err error) {
+	switch kind {
+	case pb.CompressionKind_ZLIB:
+		for src.Len() > 0 {
+			header := make([]byte, 3)
+			if _, err = src.Read(header); err != nil {
+				return errors.WithStack(err)
+			}
+			original := header[0]&0x01 == 1
+			chunkLength := int64(header[2])<<15 | int64(header[1])<<7 | int64(header[0])>>1
+			if original {
+				if _, err = io.CopyN(dst, src, chunkLength); err != nil {
+					return errors.WithStack(err)
+				}
+			} else {
+				buf := bytes.NewBuffer(make([]byte, chunkLength))
+				buf.Reset()
+				if _, err = io.CopyN(buf, src, chunkLength); err != nil {
+					return errors.WithStack(err)
+				}
+				r := flate.NewReader(buf)
+				if _, err = io.Copy(dst, r); err != nil {
+					return errors.WithStack(err)
+				}
+				if err= r.Close(); err!=nil {
+					return errors.WithStack(err)
+				}
+			}
+		}
+	default:
+		return errors.New("decompression other than zlib not impl")
+	}
+	return
 }

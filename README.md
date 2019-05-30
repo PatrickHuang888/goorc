@@ -1,2 +1,2 @@
 # goorc
-read/write Apache ORC file with go
+read/write Apache ORC file in go

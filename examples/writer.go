@@ -13,7 +13,19 @@ func main() {
 	//y := &orc.TypeDescription{Kind:pb.Type_STRING}
 	//schema.ChildrenNames= []string{"x", "y"}
 	//schema.Children=[]*orc.TypeDescription{x, y}
-	writer := orc.NewWriter("my-file.orc", x)
+	/*schema, err:= orc.CreateSchema(x)
+	if err!=nil {
+		fmt.Printf("create schema error %v+", err)
+		os.Exit(1)
+	}*/
+
+	opts:= orc.NewWriterOptions(x)
+
+	writer, err := orc.NewWriter("my-file-w.orc", opts)
+	if err != nil {
+		fmt.Printf("create writer error %+v", err)
+		os.Exit(1)
+	}
 
 	batch, err := x.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
 	if err != nil {
@@ -21,19 +33,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	for r := 0; r < 10000; r++ {
-
-		batch.(*orc.LongColumnVector).Vector[row] = int64(r)
-		//vy.Vector[row] = "Last-" + string(r*3)
-
-		if batch.Len() == cap() {
-			writer.AddRowBatch(batch)
-			batch.reset()
-		}
+	v:=make([]int64, 3000)
+	for i := 0; i < 3000; i++ {
+		v[i]= int64(i)
 	}
-
-	if batch.size != 0 {
-		writer.AddRowBatch(batch)
+	batch.(*orc.LongColumnVector).SetVector(v)
+	if err:= writer.Write(batch); err!=nil {
+		fmt.Printf("write error %+v", err)
+		os.Exit(1)
 	}
-	writer.Close()
+	//writer.WriteBatch()
+	//batch.(*orc.LongColumnVector).SetVector(v[:1000])
+	//writer.AddRowBatch(batch)
+	//writer.Flush()
+	if err:= writer.Close(); err!=nil {
+		fmt.Printf("close error %+v", err)
+	}
 }

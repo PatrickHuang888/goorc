@@ -10,6 +10,7 @@ const (
 type ColumnVector interface {
 	T() pb.Type_Kind
 	ColumnId() uint32
+	Rows() int
 }
 
 type columnVector struct {
@@ -21,7 +22,8 @@ func (cv *columnVector) ColumnId() uint32 {
 	return cv.id
 }
 
-func (cv *columnVector) Len() int {
+func (cv *columnVector) Rows() int {
+	// fixme: compound vector
 	return cv.rows
 }
 
