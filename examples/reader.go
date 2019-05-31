@@ -9,7 +9,7 @@ import (
 
 func main() {
 	//reader, err := orc.CreateReader("/u01/apache/orc/java/examples/my-file.orc")
-	reader, err := orc.CreateReader("/opt/GoPath/my-file-w.orc")
+	reader, err := orc.CreateReader("my-file-w.orc")
 	if err != nil {
 		fmt.Printf("create reader error: %+v", err)
 		os.Exit(1)
@@ -33,7 +33,7 @@ func main() {
 	for it.NextStripe() {
 		for it.NextBatch(batch) {
 			//data := batch.(*orc.StructColumnVector).GetFields()
-			x:= batch.(*orc.LongColumnVector)
+			x:= batch.(*orc.StringColumnVector)
 			//x:= data[0].(*orc.LongColumnVector)
 			for _, v := range x.GetVector(){
 				fmt.Println(v)

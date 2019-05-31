@@ -20,12 +20,12 @@ const (
 )
 
 type Decoder interface {
-	readValues(buffer *bytes.Buffer) error
+	readValues(in *bytes.Buffer) error
 	reset()
 }
 
 type Encoder interface {
-	writeValues(buf *bytes.Buffer) error
+	writeValues(out *bytes.Buffer) error
 }
 
 type byteRunLength struct {
@@ -171,31 +171,51 @@ func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 	return nil
 }
 
-type stringContentDecoder struct {
+// direct v2 for string/char/varchar
+type bytesDirectV2 struct {
 	num          int
 	consumeIndex int
-	content      [][]byte
+	content      [][]byte // utf-8 bytes
 	length       []uint64
-	lengthMark   uint64
+	pos          int
 }
 
-func (d *stringContentDecoder) reset() {
-	d.num = 0
-	d.consumeIndex = 0
+func (bd *bytesDirectV2) reset() {
+	bd.num = 0
+	bd.content= bd.content[:0]
+	bd.length= nil
+	bd.pos= 0
+	bd.consumeIndex= 0
 }
 
-func (d *stringContentDecoder) readValues(in *bytes.Buffer) error {
+// decode bytes, but should have extracted length stream first by rle v2
+// as length field
+func (bd *bytesDirectV2) readValues(in *bytes.Buffer) error {
+	if bd.length == nil {
+		return errors.New("length stream should extracted first")
+	}
 	for in.Len() > 0 {
-		length := d.length[d.lengthMark]
+		if bd.pos == len(bd.length) {
+			return errors.New("beyond length data")
+		}
+		length := bd.length[bd.pos]
 		b := make([]byte, length)
 		if _, err := io.ReadFull(in, b); err != nil {
-			panic(err)
 			return errors.WithStack(err)
 		}
-		// append?
-		d.content = append(d.content, b)
-		d.num++
-		d.lengthMark++
+		bd.content = append(bd.content, b)
+		bd.num++
+		bd.pos++
+	}
+	return nil
+}
+
+// write out content do not base length field, just base on len of content
+func (bd *bytesDirectV2) writeValues(out *bytes.Buffer) error {
+	for i := 0; i < bd.num; i++ {
+		if _, err := out.Write(bd.content[i]); err != nil {
+			return errors.WithStack(err)
+		}
 	}
 	return nil
 }
@@ -469,7 +489,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 						return errors.WithStack(err)
 					}
 					for j := 0; j < 4; j++ {
-						delta := uint64(b>> byte((3-j)*2) & 0x03)
+						delta := uint64(b >> byte((3-j)*2) & 0x03)
 						if i+j < length {
 							rle.setValue(mark+i+j, deltaBase > 0, delta)
 						}

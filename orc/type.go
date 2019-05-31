@@ -64,7 +64,7 @@ func walkSchema(node *TypeDescription) (schema []*TypeDescription, err error) {
 func schemasToTypes(schemas []*TypeDescription) []*Type {
 	t := make([]*Type, len(schemas))
 	for i, v := range schemas {
-		t[i] = &Type{ Subtypes: make([]uint32, len(v.Children)),
+		t[i] = &Type{Subtypes: make([]uint32, len(v.Children)),
 			FieldNames: make([]string, len(v.ChildrenNames))}
 		t[i].Kind = &v.Kind
 		copy(t[i].FieldNames, v.ChildrenNames)
@@ -134,14 +134,14 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 	case Type_DECIMAL:
 	// todo:
 	case Type_STRING:
-		fallthrough
+		cv = &StringColumnVector{columnVector: columnVector{id: td.Id},
+			vector: make([]string, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_BINARY:
-		fallthrough
+		return nil, errors.New("not impl")
 	case Type_CHAR:
-		fallthrough
+		return nil, errors.New("not impl")
 	case Type_VARCHAR:
-		cv = &BytesColumnVector{columnVector: columnVector{id: td.Id},
-			vector: make([][]byte, DEFAULT_ROW_SIZE, maxSize)}
+		return nil, errors.New("not impl")
 	case Type_STRUCT:
 		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {
