@@ -3,7 +3,6 @@ package orc
 import (
 	"bytes"
 	"compress/flate"
-	"flag"
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
@@ -28,21 +27,14 @@ type WriterOptions struct {
 	chunkSize  uint64
 	cmpKind    pb.CompressionKind
 	stripeSize int
-	logLevel   log.Level
 }
 
 func NewWriterOptions(schema *TypeDescription) *WriterOptions {
-	debug := flag.Bool("debug", false, "-debug")
-	flag.Parse()
-	o := &WriterOptions{logLevel: log.InfoLevel}
+	o := &WriterOptions{}
 	o.cmpKind = pb.CompressionKind_ZLIB
 	o.stripeSize = STRIPE_LIMIT
 	o.chunkSize = DEFAULT_CHUNK_SIZE
 	o.schemas = schema.normalize()
-	if *debug {
-		o.logLevel = log.DebugLevel
-		log.SetLevel(o.logLevel)
-	}
 	return o
 }
 
@@ -77,7 +69,7 @@ type stripeWriter struct {
 	opts *WriterOptions
 
 	// streams <id, stream{present, data, length}>
-	streams map[uint32][3]*streamWriter
+	streams map[uint32][]*streamWriter
 
 	idxBuf *bytes.Buffer // index area buffer
 	//dataBuf *bytes.Buffer // data area buffer
@@ -113,7 +105,7 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 func newStripeWriter(offset uint64, opts *WriterOptions) *stripeWriter {
 	idxBuf := bytes.NewBuffer(make([]byte, DEFAULT_INDEX_SIZE))
 	idxBuf.Reset()
-	ss := make(map[uint32][3]*streamWriter)
+	ss := make(map[uint32][]*streamWriter)
 	si := &pb.StripeInformation{}
 	var r uint64
 	si.NumberOfRows = &r
@@ -174,46 +166,112 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 	case pb.Type_STRUCT:
 		return errors.New("struct not impl")
 	case pb.Type_INT:
-		if _, ok := stp.streams[cv.ColumnId()]; !ok {
-			var ss [3]*streamWriter
-			stp.streams[cv.ColumnId()] = ss
+		lcv, ok := cv.(*LongColumnVector)
+		if !ok {
+			return errors.New("column type int should be vector long")
 		}
-		ss := stp.streams[cv.ColumnId()]
-		// data stream
-		if ss[1] == nil {
+		if _, ok := stp.streams[cv.ColumnId()]; !ok {
+			stp.streams[cv.ColumnId()] = make([]*streamWriter, 2)
+		}
+
+		// todo: present stream
+
+		// write data stream
+		dtStm := stp.streams[cv.ColumnId()][1]
+		if dtStm == nil {
 			info := &pb.Stream{Kind: new(pb.Stream_Kind), Column: new(uint32), Length: new(uint64)}
 			*info.Kind = pb.Stream_DATA
-			*info.Column = uint32(cv.ColumnId())
+			*info.Column = cv.ColumnId()
 			buf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
 			buf.Reset()
-			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize)) // fixme: initial size
+			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
 			cmpBuf.Reset()
 			enc := &intRleV2{signed: true}
 			dv2 := pb.ColumnEncoding_DIRECT_V2
 			encoding := &pb.ColumnEncoding{Kind: &dv2}
-			sw := &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
-			ss[1] = sw
-			stp.streams[cv.ColumnId()] = ss
+			dtStm = &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
+			stp.streams[cv.ColumnId()][1] = dtStm
 		}
-		v, ok := cv.(*LongColumnVector)
-		if !ok {
-			return errors.New("column type int should be vector long")
-		}
-		stm := ss[1]
-		// write data stream
-		if err := stm.writeIrlV2(v); err != nil {
+		if err := dtStm.writeInts(lcv.GetVector()); err != nil {
 			return errors.WithStack(err)
 		}
-		_, err := compressTo(stp.opts.cmpKind, stp.opts.chunkSize, stm.buf, stm.cmpBuf)
+		_, err := compressTo(stp.opts.cmpKind, stp.opts.chunkSize, dtStm.buf, dtStm.cmpBuf)
 		if err != nil {
 			return errors.Wrap(err, "compressing data stream error")
 		}
 
-		*stp.info.NumberOfRows += uint64(cv.Rows())
+	case pb.Type_STRING:
+		scv, ok := cv.(*StringColumnVector)
+		if !ok {
+			return errors.New("column type stream should vector string")
+		}
+
+		var lghV []uint64 // length vector
+		var cntV [][]byte  // content vector
+		for _, s := range scv.GetVector() {
+			lghV = append(lghV, uint64(len(s))) // len return bytes
+			cntV = append(cntV, []byte(s))        // convert into bytes encoding utf-8
+		}
+
+		if _, ok := stp.streams[cv.ColumnId()]; !ok {
+			stp.streams[cv.ColumnId()] = make([]*streamWriter, 3)
+		}
+
+		// todo: present stream
+
+		// write data stream
+		dtStm := stp.streams[cv.ColumnId()][1]
+		if dtStm == nil {
+			info := &pb.Stream{Kind: new(pb.Stream_Kind), Column: new(uint32), Length: new(uint64)}
+			*info.Kind = pb.Stream_DATA
+			*info.Column = cv.ColumnId()
+			buf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
+			buf.Reset()
+			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
+			cmpBuf.Reset()
+			enc := &bytesDirectV2{}
+			dv2 := pb.ColumnEncoding_DIRECT_V2
+			encoding := &pb.ColumnEncoding{Kind: &dv2}
+			dtStm = &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
+			stp.streams[cv.ColumnId()][1] = dtStm
+		}
+
+		if err := dtStm.writeBytesDirectV2(cntV); err != nil {
+			return errors.WithStack(err)
+		}
+		_, err := compressTo(stp.opts.cmpKind, stp.opts.chunkSize, dtStm.buf, dtStm.cmpBuf)
+		if err != nil {
+			return errors.Wrap(err, "compressing data stream error")
+		}
+
+		// write length stream
+		lghStm := stp.streams[cv.ColumnId()][2]
+		if lghStm == nil {
+			info := &pb.Stream{Kind: new(pb.Stream_Kind), Column: new(uint32), Length: new(uint64)}
+			*info.Kind = pb.Stream_LENGTH
+			*info.Column = cv.ColumnId()
+			buf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
+			buf.Reset()
+			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
+			cmpBuf.Reset()
+			enc := &intRleV2{}
+			dv2 := pb.ColumnEncoding_DIRECT_V2
+			encoding := &pb.ColumnEncoding{Kind: &dv2}
+			lghStm = &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
+			stp.streams[cv.ColumnId()][2] = lghStm
+		}
+		if err := lghStm.writeUints(lghV); err != nil {
+			return errors.WithStack(err)
+		}
+		if _, err := compressTo(stp.opts.cmpKind, stp.opts.chunkSize, lghStm.buf, lghStm.cmpBuf); err != nil {
+			return errors.Wrap(err, "compressing data stream error")
+		}
 
 	default:
 		return errors.New("no impl")
 	}
+
+	*stp.info.NumberOfRows += uint64(cv.Rows())
 	return nil
 }
 
@@ -235,6 +293,8 @@ func (stp *stripeWriter) flush(f *os.File) error {
 		for _, s := range stp.streams[td.Id] {
 			if s != nil {
 				*s.info.Length = uint64(s.cmpBuf.Len())
+				log.Tracef("write stream %s of column %d length %d", s.info.GetKind().String(),
+					s.info.GetColumn(), *s.info.Length)
 				n, err := s.cmpBuf.WriteTo(f)
 				if err != nil {
 					return errors.WithStack(err)
@@ -277,15 +337,38 @@ func (stp *stripeWriter) flush(f *os.File) error {
 	return nil
 }
 
-func (stm *streamWriter) writeIrlV2(lcv *LongColumnVector) error {
-	vector := lcv.GetVector()
+func (stm *streamWriter) writeUints(v []uint64) error {
+	irl := stm.enc.(*intRleV2)
+	irl.reset()
+	irl.signed = false
+	irl.uliterals = v
+	irl.numLiterals = len(v)
+	stm.buf.Reset()
+	if err := irl.writeValues(stm.buf); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+func (stm *streamWriter) writeInts(v []int64) error {
 	irl := stm.enc.(*intRleV2)
 	irl.reset()
 	irl.signed = true
-	irl.literals = vector
-	irl.numLiterals = len(vector)
+	irl.literals = v
+	irl.numLiterals = len(v)
 	stm.buf.Reset()
 	if err := irl.writeValues(stm.buf); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func (stm *streamWriter) writeBytesDirectV2(bs [][]byte) error {
+	// refactor: will not doing copy, just append to buffer ?
+	enc := stm.enc.(*bytesDirectV2)
+	enc.reset()
+	enc.content= bs
+	stm.buf.Reset()
+	if err:= enc.writeValues(stm.buf); err!=nil {
 		return errors.WithStack(err)
 	}
 	return nil
@@ -309,10 +392,6 @@ func (w *writer) Close() error {
 	}
 
 	w.f.Close()
-	return nil
-}
-
-func (w *writer) createRowIndexEntry() error {
 	return nil
 }
 

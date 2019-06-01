@@ -4,7 +4,6 @@ import "github.com/PatrickHuang888/goorc/pb/pb"
 
 const (
 	DEFAULT_ROW_SIZE     = 1024
-	DEFAULT_MAX_ROW_SIZE = 10 * DEFAULT_ROW_SIZE
 )
 
 type ColumnVector interface {
@@ -65,17 +64,22 @@ func (*DoubleColumnVector) T() pb.Type_Kind {
 	return pb.Type_DOUBLE
 }
 
-type BytesColumnVector struct {
+type StringColumnVector struct {
 	columnVector
-	vector [][]byte
+	vector []string
 }
 
-func (cv *BytesColumnVector) GetVector() [][]byte {
+func (cv *StringColumnVector) GetVector() []string {
 	return cv.vector[:cv.rows]
 }
 
-func (*BytesColumnVector) T() pb.Type_Kind {
-	return pb.Type_VARCHAR
+func (cv *StringColumnVector) SetVector(v []string) {
+	cv.rows= len(v)
+	cv.vector = v
+}
+
+func (*StringColumnVector) T() pb.Type_Kind {
+	return pb.Type_STRING
 }
 
 type StructColumnVector struct {

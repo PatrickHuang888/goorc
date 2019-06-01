@@ -4,13 +4,19 @@ import (
 	"fmt"
 	"github.com/PatrickHuang888/goorc/orc"
 	"github.com/PatrickHuang888/goorc/pb/pb"
+	"github.com/sirupsen/logrus"
 	"os"
+	"strconv"
 )
+
+func init() {
+	logrus.SetLevel(logrus.TraceLevel)
+}
 
 func main() {
 	//schema := &orc.TypeDescription{Kind:pb.Type_STRUCT}
-	x := &orc.TypeDescription{Kind:pb.Type_INT}
-	//y := &orc.TypeDescription{Kind:pb.Type_STRING}
+	//x := &orc.TypeDescription{Kind:pb.Type_INT}
+	x := &orc.TypeDescription{Kind: pb.Type_STRING}
 	//schema.ChildrenNames= []string{"x", "y"}
 	//schema.Children=[]*orc.TypeDescription{x, y}
 	/*schema, err:= orc.CreateSchema(x)
@@ -19,7 +25,7 @@ func main() {
 		os.Exit(1)
 	}*/
 
-	opts:= orc.NewWriterOptions(x)
+	opts := orc.NewWriterOptions(x)
 
 	writer, err := orc.NewWriter("my-file-w.orc", opts)
 	if err != nil {
@@ -33,12 +39,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	v:=make([]int64, 3000)
+	v := make([]string, 3000)
 	for i := 0; i < 3000; i++ {
-		v[i]= int64(i)
+		v[i] = fmt.Sprintf("string-%s", strconv.Itoa(i))
 	}
-	batch.(*orc.LongColumnVector).SetVector(v)
-	if err:= writer.Write(batch); err!=nil {
+	//batch.(*orc.LongColumnVector).SetVector(v)
+	batch.(*orc.StringColumnVector).SetVector(v)
+	if err := writer.Write(batch); err != nil {
 		fmt.Printf("write error %+v", err)
 		os.Exit(1)
 	}
@@ -46,7 +53,7 @@ func main() {
 	//batch.(*orc.LongColumnVector).SetVector(v[:1000])
 	//writer.AddRowBatch(batch)
 	//writer.Flush()
-	if err:= writer.Close(); err!=nil {
+	if err := writer.Close(); err != nil {
 		fmt.Printf("close error %+v", err)
 	}
 }

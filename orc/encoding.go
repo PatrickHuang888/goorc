@@ -20,12 +20,12 @@ const (
 )
 
 type Decoder interface {
-	readValues(buffer *bytes.Buffer) error
+	readValues(in *bytes.Buffer) error
 	reset()
 }
 
 type Encoder interface {
-	writeValues(buf *bytes.Buffer) error
+	writeValues(out *bytes.Buffer) error
 }
 
 type byteRunLength struct {
@@ -171,31 +171,48 @@ func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 	return nil
 }
 
-type stringContentDecoder struct {
-	num          int
+// direct v2 for string/char/varchar
+type bytesDirectV2 struct {
 	consumeIndex int
-	content      [][]byte
+	content      [][]byte // utf-8 bytes
 	length       []uint64
-	lengthMark   uint64
+	pos          int
 }
 
-func (d *stringContentDecoder) reset() {
-	d.num = 0
-	d.consumeIndex = 0
+func (bd *bytesDirectV2) reset() {
+	bd.content = bd.content[:0]
+	bd.length = nil
+	bd.pos = 0
+	bd.consumeIndex = 0
 }
 
-func (d *stringContentDecoder) readValues(in *bytes.Buffer) error {
+// decode bytes, but should have extracted length stream first by rle v2
+// as length field
+func (bd *bytesDirectV2) readValues(in *bytes.Buffer) error {
+	if bd.length == nil {
+		return errors.New("length stream should extracted first")
+	}
 	for in.Len() > 0 {
-		length := d.length[d.lengthMark]
+		if bd.pos == len(bd.length) {
+			return errors.New("beyond length data")
+		}
+		length := bd.length[bd.pos]
 		b := make([]byte, length)
 		if _, err := io.ReadFull(in, b); err != nil {
-			panic(err)
 			return errors.WithStack(err)
 		}
-		// append?
-		d.content = append(d.content, b)
-		d.num++
-		d.lengthMark++
+		bd.content = append(bd.content, b)
+		bd.pos++
+	}
+	return nil
+}
+
+// write out content do not base length field, just base on len of content
+func (bd *bytesDirectV2) writeValues(out *bytes.Buffer) error {
+	for _, c := range bd.content {
+		if _, err := out.Write(c); err != nil {
+			return errors.WithStack(err)
+		}
 	}
 	return nil
 }
@@ -444,7 +461,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.WithStack(err)
 			}
 
-			if deltaBase > 0 {
+			if deltaBase >= 0 {
 				rle.setValue(mark+1, true, uint64(deltaBase))
 			} else {
 				rle.setValue(mark+1, false, uint64(-deltaBase))
@@ -456,7 +473,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				switch deltaWidth {
 				case 0:
 					// fix delta based on delta base
-					if deltaBase > 0 {
+					if deltaBase >= 0 {
 						rle.setValue(mark+i, true, uint64(deltaBase))
 					} else {
 						rle.setValue(mark+i, false, uint64(-deltaBase))
@@ -469,7 +486,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 						return errors.WithStack(err)
 					}
 					for j := 0; j < 4; j++ {
-						delta := uint64(b>> byte((3-j)*2) & 0x03)
+						delta := uint64(b >> byte((3-j)*2) & 0x03)
 						if i+j < length {
 							rle.setValue(mark+i+j, deltaBase > 0, delta)
 						}
@@ -622,6 +639,13 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 					n = binary.PutVarint(b, rle.literals[i])
 				} else {
 					n = binary.PutUvarint(b, rle.uliterals[i])
+				}
+				if rle.signed {
+					log.Tracef("encoding: irl v2 write fixed delta 0 first value %d at index %d, length %d ",
+						rle.literals[i], i, c)
+				} else {
+					log.Tracef("encoding: irl v2 write fixed delta 0 first value %d at index %d, length %d ",
+						rle.uliterals[i], i, c)
 				}
 				i += int(c)
 				if err := rle.writeDelta(b[:n], 0, c, []uint64{}, out); err != nil {
@@ -934,10 +958,7 @@ func getWidth(x uint64, delta bool) byte {
 // max return is 512 for fixed delta
 func (rle *intRleV2) getRepeat(i int) (count uint16) {
 	count = 1
-	for j := 1; j <= 512; j++ {
-		if i+j >= int(rle.numLiterals) {
-			break
-		}
+	for j := 1; j < 512 && i+j < int(rle.numLiterals); j++ {
 		if rle.signed {
 			if rle.literals[i] == rle.literals[i+j] {
 				count = uint16(j + 1)
