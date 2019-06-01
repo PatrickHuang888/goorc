@@ -3,7 +3,6 @@ package orc
 import (
 	"bytes"
 	"compress/flate"
-	"flag"
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
@@ -28,21 +27,14 @@ type WriterOptions struct {
 	chunkSize  uint64
 	cmpKind    pb.CompressionKind
 	stripeSize int
-	logLevel   log.Level
 }
 
 func NewWriterOptions(schema *TypeDescription) *WriterOptions {
-	debug := flag.Bool("debug", false, "-debug")
-	flag.Parse()
-	o := &WriterOptions{logLevel: log.InfoLevel}
+	o := &WriterOptions{}
 	o.cmpKind = pb.CompressionKind_ZLIB
 	o.stripeSize = STRIPE_LIMIT
 	o.chunkSize = DEFAULT_CHUNK_SIZE
 	o.schemas = schema.normalize()
-	if *debug {
-		o.logLevel = log.DebugLevel
-		log.SetLevel(o.logLevel)
-	}
 	return o
 }
 
@@ -256,13 +248,13 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 		lghStm := stp.streams[cv.ColumnId()][2]
 		if lghStm == nil {
 			info := &pb.Stream{Kind: new(pb.Stream_Kind), Column: new(uint32), Length: new(uint64)}
-			*info.Kind = pb.Stream_DATA
+			*info.Kind = pb.Stream_LENGTH
 			*info.Column = cv.ColumnId()
 			buf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
 			buf.Reset()
 			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
 			cmpBuf.Reset()
-			enc := &intRleV2{signed: false}
+			enc := &intRleV2{}
 			dv2 := pb.ColumnEncoding_DIRECT_V2
 			encoding := &pb.ColumnEncoding{Kind: &dv2}
 			lghStm = &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
@@ -301,6 +293,8 @@ func (stp *stripeWriter) flush(f *os.File) error {
 		for _, s := range stp.streams[td.Id] {
 			if s != nil {
 				*s.info.Length = uint64(s.cmpBuf.Len())
+				log.Tracef("write stream %s of column %d length %d", s.info.GetKind().String(),
+					s.info.GetColumn(), *s.info.Length)
 				n, err := s.cmpBuf.WriteTo(f)
 				if err != nil {
 					return errors.WithStack(err)

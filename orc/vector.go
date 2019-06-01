@@ -4,7 +4,6 @@ import "github.com/PatrickHuang888/goorc/pb/pb"
 
 const (
 	DEFAULT_ROW_SIZE     = 1024
-	DEFAULT_MAX_ROW_SIZE = 10 * DEFAULT_ROW_SIZE
 )
 
 type ColumnVector interface {

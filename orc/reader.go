@@ -377,7 +377,7 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumnVector) (next bo
 
 	// has leftover
 	if dec.consumeIndex != 0 {
-		for ; dec.consumeIndex < dec.num; dec.consumeIndex++ {
+		for ; dec.consumeIndex < len(dec.content); dec.consumeIndex++ {
 			if v.rows < len(v.vector) {
 				v.vector[v.rows] = string(dec.content[dec.consumeIndex]) // encoding with utf-8
 			} else {
@@ -487,7 +487,7 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumnVector) (next bo
 				return false, errors.WithStack(err)
 			}
 
-			for ; dec.consumeIndex < dec.num; dec.consumeIndex++ {
+			for ; dec.consumeIndex < len(dec.content); dec.consumeIndex++ {
 				if v.rows < len(v.vector) {
 					// slice reference
 					v.vector[v.rows] = string(dec.content[dec.consumeIndex])

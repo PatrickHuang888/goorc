@@ -4,8 +4,14 @@ import (
 	"fmt"
 	"github.com/PatrickHuang888/goorc/orc"
 	"github.com/PatrickHuang888/goorc/pb/pb"
+	"github.com/sirupsen/logrus"
 	"os"
+	"strconv"
 )
+
+func init() {
+	logrus.SetLevel(logrus.TraceLevel)
+}
 
 func main() {
 	//schema := &orc.TypeDescription{Kind:pb.Type_STRUCT}
@@ -35,7 +41,7 @@ func main() {
 
 	v := make([]string, 3000)
 	for i := 0; i < 3000; i++ {
-		v[i] = fmt.Sprintf("string-%s", string(i))
+		v[i] = fmt.Sprintf("string-%s", strconv.Itoa(i))
 	}
 	//batch.(*orc.LongColumnVector).SetVector(v)
 	batch.(*orc.StringColumnVector).SetVector(v)
