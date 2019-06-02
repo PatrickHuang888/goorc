@@ -217,11 +217,11 @@ func (bd *bytesDirectV2) writeValues(out *bytes.Buffer) error {
 	return nil
 }
 
-// int run length encoding v2
+// int run length v2
 type intRleV2 struct {
 	sub          byte // sub encoding
 	signed       bool
-	literals     []int64 // fixme: allocate
+	literals     []int64
 	uliterals    []uint64
 	numLiterals  int
 	consumeIndex int
@@ -229,9 +229,9 @@ type intRleV2 struct {
 
 func (rle *intRleV2) reset() {
 	if rle.signed {
-		rle.literals = nil
+		rle.literals = rle.literals[:0]
 	} else {
-		rle.uliterals = nil
+		rle.uliterals = rle.uliterals[:0]
 	}
 	rle.signed = false
 	rle.sub = Encoding_UNSET
@@ -239,10 +239,9 @@ func (rle *intRleV2) reset() {
 	rle.numLiterals = 0
 }
 
-// read buffer all to literals
+// decoding buffer all to u/literals
 func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 	for in.Len() > 0 {
-
 		// header from MSB to LSB
 		firstByte, err := in.ReadByte()
 		if err != nil {
@@ -252,19 +251,11 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 		switch rle.sub {
 		case Encoding_SHORT_REPEAT:
 			header := firstByte
-			width := 1 + (header>>3)&0x07 // 3bit([3,)6) width
+			width := 1 + (header>>3)&0x07 // width 3bit at position 3
 			repeatCount := int(3 + (header & 0x07))
-			mark := rle.numLiterals
 			rle.numLiterals += repeatCount
-			if rle.signed {
-				ls := make([]int64, rle.numLiterals)
-				copy(ls, rle.literals)
-				rle.literals = ls
-			} else {
-				ls := make([]uint64, rle.numLiterals)
-				copy(ls, rle.uliterals)
-				rle.uliterals = ls
-			}
+			log.Tracef("decoding: irl v2 reading short-repeat of count %d, and numliteral now is %d",
+				repeatCount, rle.numLiterals)
 
 			var x uint64
 			for i := width; i > 0; { // big endian
@@ -278,11 +269,11 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 
 			if rle.signed { // zigzag
 				for i := 0; i < repeatCount; i++ {
-					rle.literals[mark+i] = DecodeZigzag(x)
+					rle.literals = append(rle.literals, DecodeZigzag(x))
 				}
 			} else {
 				for i := 0; i < repeatCount; i++ {
-					rle.uliterals[mark+i] = x
+					rle.uliterals = append(rle.uliterals, x)
 				}
 			}
 
@@ -292,7 +283,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.WithStack(err)
 			}
 			header := uint16(firstByte)<<8 | uint16(b1) // 2 byte header
-			w := (header >> 9) & 0x1F                   // 5bit([3,8)) width
+			w := (header >> 9) & 0x1F                   // width 5bits, bit 3 to 8
 			width, err := widthDecoding(byte(w), false)
 			if err != nil {
 				return errors.WithStack(err)
@@ -300,6 +291,8 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			length := header&0x1FF + 1
 			mark := rle.numLiterals
 			rle.numLiterals += int(length)
+			log.Tracef("decoding: irl v2 direct get width %d of L %d now have numliterals %d",
+				width, length, rle.numLiterals)
 			if rle.signed {
 				ls := make([]int64, rle.numLiterals)
 				copy(ls, rle.literals)
@@ -428,7 +421,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 
 			mark := rle.numLiterals
 			rle.numLiterals += length
-			log.Tracef("decoding length %d of width %d delta values, with rle numLiterals %d",
+			log.Tracef("decoding: irl v2 delta length %d of width %d delta values, now have numLiterals %d",
 				length, deltaWidth, rle.numLiterals)
 
 			// rethink: oom?
@@ -623,8 +616,12 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 				rle.sub = Encoding_SHORT_REPEAT
 				var x uint64
 				if rle.signed {
+					log.Tracef("encoding: irl v2 write short repeat count %d of %d at index %d",
+						c, rle.literals[i], i)
 					x = EncodeZigzag(rle.literals[i])
 				} else {
+					log.Tracef("encoding: irl v2 write short repeat count %d of %d at index %d",
+						c, rle.uliterals[i], i)
 					x = rle.uliterals[i]
 				}
 				i += int(c)
@@ -640,13 +637,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 				} else {
 					n = binary.PutUvarint(b, rle.uliterals[i])
 				}
-				if rle.signed {
-					log.Tracef("encoding: irl v2 write fixed delta 0 first value %d at index %d, length %d ",
-						rle.literals[i], i, c)
-				} else {
-					log.Tracef("encoding: irl v2 write fixed delta 0 first value %d at index %d, length %d ",
-						rle.uliterals[i], i, c)
-				}
+				log.Tracef("encoding: irl v2 writing fixed delta 0 count %d at index %d", c, i)
 				i += int(c)
 				if err := rle.writeDelta(b[:n], 0, c, []uint64{}, out); err != nil {
 					return errors.WithStack(err)
@@ -663,7 +654,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 					n = binary.PutUvarint(b, rle.uliterals[i])
 				}
 				i += int(dv.length)
-				log.Tracef("encoding %d using deltas, index is %d", dv.length, i)
+				log.Tracef("encoding: irl v2 writing delta count %d, index is %d", dv.length, i)
 				if err := rle.writeDelta(b[:n], dv.base, dv.length, dv.deltas, out); err != nil {
 					return errors.WithStack(err)
 				}
