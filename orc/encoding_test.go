@@ -12,25 +12,6 @@ func init() {
 	logrus.SetLevel(logrus.TraceLevel)
 }
 
-type bstream struct {
-	value []byte
-	pos   int
-}
-
-func (bs *bstream) ReadByte() (byte, error) {
-	v := bs.value[bs.pos]
-	bs.pos++
-	return v, nil
-}
-func (bs *bstream) Read(p []byte) (n int, err error) {
-	/*if len(p) != len(bs.value)-bs.pos {
-		return 0, errors.New("read copy slice length error")
-	}*/
-	n = copy(p, bs.value[bs.pos:])
-	bs.pos += n
-	return
-}
-
 func TestByteRunLength(t *testing.T) {
 	t1 := bytes.NewBuffer([]byte{0x61, 0x00})
 
