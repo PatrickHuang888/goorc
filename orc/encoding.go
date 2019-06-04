@@ -459,23 +459,54 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 			header[0] = firstByte
 			// 5 bit width
-			/*width, err := getWidth(header[0]>>1&0x1f, false)
+			w := header[0] >> 1 & 0x1f
+			width, err := widthDecoding(w, false) // 5 bits W
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			length := uint32(header[0])&0x01<<8 | uint32(header[1]) + 1
-			// 3 bit base value width
-			bw := uint16(header[2])>>5&0x07 + 1
-			// 5 bit patch width
-			pw, err := getWidth(header[2] & 0x1f, false)
+			length := uint16(header[0])&0x01<<8 | uint16(header[1]) + 1 // 9 bits length, value 1 to 512
+			bw := uint16(header[2])>>5&0x07 + 1                         // 3 bits base value width(BW), value 1 to 8
+			pw, err := widthDecoding(header[2]&0x1f, false)             // 5 bits patch width(PW), value on table
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			// 3 bit patch gap width
-			pgw := uint16(header[3])>>5&0x07 + 1
-			// 5 bit patch list length
-			pll := header[3] & 0x1f*/
-			// todo:
+			pgw := uint16(header[3])>>5&0x07 + 1 // 3 bits patch gap width(PGW), value 1 to 8
+			pll := header[3] & 0x1f              // 5bits patch list length, value 0 to 31
+
+			bwbs := make([]byte, bw)
+			if _, err = io.ReadFull(in, bwbs); err != nil {
+				return errors.WithStack(err)
+			}
+			// base value big endian with msb of negative mark
+			negative := bwbs[0]>>7&0x01 == 0x01
+			var base int64
+			var t uint64
+			for i := 0; i < len(bwbs); i++ {
+				if i == 0 {
+					t |= uint64(bwbs[i]&0x7f) << byte(len(bwbs)-1) * 8
+				} else {
+					t |= uint64(bwbs[i]) << byte(len(bwbs)-i) * 8
+				}
+			}
+			if negative {
+				// fixme: is it possible t go out of int64?
+				base = - int64(t)
+			} else {
+				base = int64(t)
+			}
+			// base is the smallest one, so data values all positive
+			switch width {
+			case 1:
+				b, err:= in.ReadByte()
+				if err!=nil {
+					return errors.WithStack(err)
+				}
+
+			case 2:
+			default:
+				return errors.Errorf("decoding: int rl v2 PATCH width %d not supported", width)
+			}
+
 			return errors.New("int rle patched base not impl")
 
 		case Encoding_DELTA:
@@ -818,14 +849,6 @@ func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
 
 // direct encoding when constant bit width, length 1 to 512
 func (rle *intRleV2) tryDirectEncoding(idx int) bool {
-	count:= 1
-	for i:=0; i<512; i++ {
-		if rle.signed {
-			getWidth(rle.literals[idx+i])
-		}else {
-
-		}
-	}
 	return false
 }
 
