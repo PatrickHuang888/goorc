@@ -6,6 +6,7 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
+	"math"
 )
 
 const (
@@ -452,6 +453,12 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 
 		case Encoding_PATCHED_BASE:
+			// fixme: according to base value is a signed smallest value, patch should always signed?
+			if !rle.signed {
+				return errors.New("decoding: int rl v2 patch signed setting should not false")
+			}
+
+			mark := len(rle.literals)
 			header := make([]byte, 4) // 4 byte header
 			_, err = io.ReadFull(in, header[1:4])
 			if err != nil {
@@ -465,12 +472,12 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.WithStack(err)
 			}
 			length := uint16(header[0])&0x01<<8 | uint16(header[1]) + 1 // 9 bits length, value 1 to 512
-			bw := uint16(header[2])>>5&0x07 + 1                         // 3 bits base value width(BW), value 1 to 8
+			bw := uint16(header[2])>>5&0x07 + 1                         // 3 bits base value width(BW), value 1 to 8 bytes
 			pw, err := widthDecoding(header[2]&0x1f, false)             // 5 bits patch width(PW), value on table
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			pgw := uint16(header[3])>>5&0x07 + 1 // 3 bits patch gap width(PGW), value 1 to 8
+			pgw := uint16(header[3])>>5&0x07 + 1 // 3 bits patch gap width(PGW), value 1 to 8 bits
 			pll := header[3] & 0x1f              // 5bits patch list length, value 0 to 31
 
 			bwbs := make([]byte, bw)
@@ -478,33 +485,201 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.WithStack(err)
 			}
 			// base value big endian with msb of negative mark
-			negative := bwbs[0]>>7&0x01 == 0x01
 			var base int64
-			var t uint64
 			for i := 0; i < len(bwbs); i++ {
-				if i == 0 {
-					t |= uint64(bwbs[i]&0x7f) << byte(len(bwbs)-1) * 8
-				} else {
-					t |= uint64(bwbs[i]) << byte(len(bwbs)-i) * 8
+				base |= int64(bwbs[i]) << byte(len(bwbs)-1) * 8
+			}
+			// data values
+			// base is the smallest one, so data values all positive
+			for i := 0; i < int(length); {
+				switch width {
+				case 1:
+					b, err := in.ReadByte()
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					j := 0
+					for ; j < 8 && i+j < int(length); j++ {
+						x := base + int64(b>>byte(j)&0x01)
+						rle.literals = append(rle.literals, x)
+					}
+					i += j
+				case 2:
+					b, err := in.ReadByte()
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					j := 0
+					for ; j < 4 && i+j < int(length); j++ {
+						x := base + int64(b>>byte(j*2)&0x03)
+						rle.literals = append(rle.literals, x)
+					}
+					i += j
+				case 3:
+					return errors.New("decoding: int rl v2 patch W 3 not impl")
+				case 4:
+					b, err := in.ReadByte()
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + int64(b>>4)
+					rle.literals = append(rle.literals, x)
+					i++
+					if i < int(length) {
+						x = base + int64(x&0x0f)
+						rle.literals = append(rle.literals, x)
+					}
+					i++
+				case 5:
+					return errors.New("decoding: int rl v2 patch W 5 not impl")
+				case 6:
+					return errors.New("decoding: int rl v2 patch W 6 not impl")
+				case 7:
+					return errors.New("decoding: int rl v2 patch W 7 not impl")
+				case 8:
+					b, err := in.ReadByte()
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + int64(b)
+					rle.literals = append(rle.literals, x)
+					i++
+				case 9:
+					fallthrough
+				case 10:
+					fallthrough
+				case 11:
+					return errors.Errorf("decoding: int rl v2 patch W %d not impl", width)
+				case 12:
+					b0, err := in.ReadByte()
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					b1, err := in.ReadByte()
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + (int64(b1&0x0f) | int64(b0)<<4)
+					rle.literals = append(rle.literals, x)
+					i++
+					if i < int(length) {
+						b2, err := in.ReadByte()
+						if err != nil {
+							return errors.WithStack(err)
+						}
+						x = base + (int64(b1>>4)<<8 | int64(b2))
+						rle.literals = append(rle.literals, x)
+					}
+				case 13:
+					fallthrough
+				case 14:
+					fallthrough
+				case 15:
+					return errors.Errorf("decoding: int rl v2 patch W %d not impl", width)
+				case 16:
+					bs := make([]byte, 2)
+					if _, err := io.ReadFull(in, bs); err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + (int64(bs[0])<<8 | int64(bs[1])) // big endian?
+					rle.literals = append(rle.literals, x)
+					i++
+				case 17:
+					fallthrough
+				case 18:
+					fallthrough
+				case 19:
+					fallthrough
+				case 20:
+					fallthrough
+				case 21:
+					return errors.Errorf("decoding: int rl v2 patch W %d not impl", width)
+				case 24:
+					bs := make([]byte, 3)
+					if _, err := io.ReadFull(in, bs); err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + (int64(bs[0])<<16 | int64(bs[1])<<8 | int64(bs[2]))
+					rle.literals = append(rle.literals, x)
+					i++
+				case 26:
+					fallthrough
+				case 28:
+					fallthrough
+				case 30:
+					return errors.Errorf("decoding: int rl v2 patch W %d not impl", width)
+				case 32:
+					bs := make([]byte, 4)
+					if _, err := io.ReadFull(in, bs); err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + (int64(bs[0])<<24 | int64(bs[1])<<16 | int64(bs[2])<<8 | int64(bs[3]))
+					rle.literals = append(rle.literals, x)
+					i++
+				case 40:
+					bs := make([]byte, 5)
+					if _, err := io.ReadFull(in, bs); err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + (int64(bs[0])<<30 | int64(bs[1])<<24 | int64(bs[2])<<16 | int64(bs[3])<<8 | int64(bs[4]))
+					rle.literals = append(rle.literals, x)
+					i++
+				case 48:
+					bs := make([]byte, 6)
+					if _, err := io.ReadFull(in, bs); err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + (int64(bs[0])<<40 | int64(bs[1])<<32 | int64(bs[2])<<24 | int64(bs[3])<<16 |
+						int64(bs[4])<<8 | int64(bs[5]))
+					rle.literals = append(rle.literals, x)
+					i++
+				case 56:
+					bs := make([]byte, 7)
+					if _, err := io.ReadFull(in, bs); err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + (int64(bs[0])<<48 | int64(bs[1])<<40 | int64(bs[2])<<32 | int64(bs[3])<<24 |
+						int64(bs[4])<<16 | int64(bs[5])<<8 | int64(bs[6]))
+					rle.literals = append(rle.literals, x)
+					i++
+				case 64:
+					bs := make([]byte, 8)
+					if _, err := io.ReadFull(in, bs); err != nil {
+						return errors.WithStack(err)
+					}
+					x := base + (int64(bs[0])<<56 | int64(bs[1])<<48 | int64(bs[2])<<40 | int64(bs[3])<<32 |
+						int64(bs[4])<<24 | int64(bs[5])<<16 | int64(bs[6])<<8 | int64(bs[7]))
+					rle.literals = append(rle.literals, x)
+					i++
+
+				default:
+					return errors.Errorf("decoding: int rl v2 PATCH width %d not supported", width)
 				}
 			}
-			if negative {
-				// fixme: is it possible t go out of int64?
-				base = - int64(t)
-			} else {
-				base = int64(t)
-			}
-			// base is the smallest one, so data values all positive
-			switch width {
-			case 1:
-				b, err:= in.ReadByte()
-				if err!=nil {
+			// patched values, PGW+PW must <= 64
+			for i := 0; i < int(pll); i++ {
+				var pv uint64 // patch value
+				b, err := in.ReadByte()
+				if err != nil {
 					return errors.WithStack(err)
 				}
-
-			case 2:
-			default:
-				return errors.Errorf("decoding: int rl v2 PATCH width %d not supported", width)
+				// pgw 1 to 8 bits
+				pg := b >> (8 - pgw)
+				// pw 1 to 64 bits according to encoding table
+				pbn := int(math.Ceil((float64(pgw) + float64(pw)) / float64(8))) // patch bytes number
+				pbs := make([]byte, pbn)
+				pbs[0] = b
+				if pbn > 1 { // need more bytes
+					if _, err := io.ReadFull(in, pbs[1:]); err != nil {
+						return errors.WithStack(err)
+					}
+				}
+				pv = uint64(pbs[0]<<pgw) >> pgw // remove pgw
+				for j := 1; j < pbn; j++ {
+					pv |= uint64(pbs[j]) << uint(pbn-j) * 8
+				}
+				// pv should be at largest 63 bits?
+				rle.literals[mark+int(pg)] += int64(pv << w)
 			}
 
 			return errors.New("int rle patched base not impl")
@@ -1094,6 +1269,20 @@ func (rle *intRleV2) addValue(positive bool, delta uint64) {
 }
 
 func widthEncoding(width byte) (w byte, err error) {
+	if width == 1 || width == 0 {
+		return 0, nil
+	}
+	if 2 <= width && width <= 21 {
+		w = width - 1
+		if (3 == width) || (5 <= width && width <= 7) || (9 <= width && width <= 15) || (17 <= width && width <= 21) {
+			log.Warnf("width %d is deprecated", width)
+		}
+		return
+	}
+	if 26==width {
+		
+	}
+
 	switch width {
 	case 0:
 		w = 0

@@ -172,6 +172,20 @@ func TestIntRunLengthV2_Delta(t *testing.T)  {
 	assert.Equal(t, int64(-499), irl.literals[1499])
 }
 
+func TestIntRunLengthV2Patch(t *testing.T)  {
+	irl := &intRleV2{}
+	irl.signed= true
+	v:= []int64{2030, 2000, 2020, 1000000, 2040, 2050, 2060, 2070, 2080, 2090, 2100, 2110, 2120, 2130,
+		2140, 2150, 2160, 2170, 2180, 2190}
+	bs := []byte{0x8e, 0x13, 0x2b, 0x21, 0x07, 0xd0, 0x1e, 0x00, 0x14, 0x70, 0x28, 0x32, 0x3c, 0x46, 0x50, 0x5a,
+		0x64, 0x6e, 0x78, 0x82, 0x8c, 0x96, 0xa0, 0xaa, 0xb4, 0xbe, 0xfc, 0xe8}
+	err:= irl.readValues(bytes.NewBuffer(bs))
+	if err!=nil {
+		t.Fatalf("err %+v", err)
+	}
+	assert.Equal(t, v, irl.literals)
+}
+
 func TestIntRunLengthV2(t *testing.T) {
 	irl := &intRleV2{}
 	//short repeat
