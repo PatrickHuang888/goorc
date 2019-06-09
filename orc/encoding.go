@@ -486,9 +486,13 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 			// base value big endian with msb of negative mark
 			var base int64
-			for i := 0; i < len(bwbs); i++ {
-				base |= int64(bwbs[i]) << byte(len(bwbs)-1) * 8
+			for i := uint16(0); i < bw; i++ {
+				 base|=  int64(bwbs[i]) << (byte(bw-i-1) * 8)
 			}
+
+			log.Tracef("decoding: int rl v2 width %d length %d bw %d pw %d pll %d base %d",
+				width, length, bw, pw, pll, base)
+
 			// data values
 			// base is the smallest one, so data values all positive
 			for i := 0; i < int(length); {
@@ -664,7 +668,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 					return errors.WithStack(err)
 				}
 				// pgw 1 to 8 bits
-				pg := b >> (8 - pgw)
+				pg := b >> (8 - pgw)  // patch gap
 				// pw 1 to 64 bits according to encoding table
 				pbn := int(math.Ceil((float64(pgw) + float64(pw)) / float64(8))) // patch bytes number
 				pbs := make([]byte, pbn)
@@ -674,15 +678,16 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 						return errors.WithStack(err)
 					}
 				}
-				pv = uint64(pbs[0]<<pgw) >> pgw // remove pgw
-				for j := 1; j < pbn; j++ {
-					pv |= uint64(pbs[j]) << uint(pbn-j) * 8
+				pbs[0] = (pbs[0]<<pgw) >> pgw // patch value, remove pgw first
+				for j := 0; j < pbn; j++ {
+					y:= uint(pbn-j-1) * 8
+					x:= uint64(pbs[j]) << y
+					pv|=x
 				}
 				// pv should be at largest 63 bits?
-				rle.literals[mark+int(pg)] += int64(pv << w)
+				z:= int64(pv << width)
+				rle.literals[mark+int(pg)] = base+z
 			}
-
-			return errors.New("int rle patched base not impl")
 
 		case Encoding_DELTA:
 			// header: 2 bytes, base value: varint, delta base: signed varint
@@ -1269,9 +1274,6 @@ func (rle *intRleV2) addValue(positive bool, delta uint64) {
 }
 
 func widthEncoding(width byte) (w byte, err error) {
-	if width == 1 || width == 0 {
-		return 0, nil
-	}
 	if 2 <= width && width <= 21 {
 		w = width - 1
 		if (3 == width) || (5 <= width && width <= 7) || (9 <= width && width <= 15) || (17 <= width && width <= 21) {
@@ -1279,8 +1281,17 @@ func widthEncoding(width byte) (w byte, err error) {
 		}
 		return
 	}
-	if 26==width {
-		
+	if 26 == width {
+		log.Warnf("width %d is deprecated", width)
+		return 24, nil
+	}
+	if 28 == width {
+		log.Warnf("width %d is deprecated", width)
+		return 25, nil
+	}
+	if 30 == width {
+		log.Warnf("width %d is deprecated", width)
+		return 26, nil
 	}
 
 	switch width {
@@ -1316,6 +1327,26 @@ func widthEncoding(width byte) (w byte, err error) {
 }
 
 func widthDecoding(w byte, delta bool) (width byte, err error) {
+	if 2 <= w && 2 <= 20 {
+		if 2 == w || (4 <= w && w <= 6) || (8 <= w && w <= 14) || (16 <= w && w <= 20) {
+			log.Warnf("decoding: width code %d is deprecated", w)
+		}
+		width = w + 1
+		return
+	}
+	if 24 == w {
+		log.Warnf("decoding: width code %d is deprecated", w)
+		return 26, nil
+	}
+	if 25 == w {
+		log.Warnf("decoding: width code %d is deprecated", w)
+		return 28, nil
+	}
+	if 26 == w {
+		log.Warnf("decoding: width code %d is deprecated", w)
+		return 30, nil
+	}
+
 	switch w {
 	case 0:
 		if delta {
@@ -1344,7 +1375,8 @@ func widthDecoding(w byte, delta bool) (width byte, err error) {
 	case 31:
 		width = 64
 	default:
-		return 0, errors.Errorf("run length integer v2, direct width(W) %d deprecated", width)
+		// should not reach
+		return 0, errors.Errorf("run length integer v2 width(W) %d error", width)
 	}
 	return
 }
