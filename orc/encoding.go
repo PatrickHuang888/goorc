@@ -478,16 +478,20 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.WithStack(err)
 			}
 			pgw := uint16(header[3])>>5&0x07 + 1 // 3 bits patch gap width(PGW), value 1 to 8 bits
-			pll := header[3] & 0x1f              // 5bits patch list length, value 0 to 31
+			if (int(pw) + int(pgw)) > 64 {
+				return errors.New("decoding: int rl v2, pw+pgw must less or equal to 64")
+			}
+			pll := header[3] & 0x1f // 5bits patch list length, value 0 to 31
 
 			bwbs := make([]byte, bw)
 			if _, err = io.ReadFull(in, bwbs); err != nil {
 				return errors.WithStack(err)
 			}
 			// base value big endian with msb of negative mark
+			// fixme:
 			var base int64
 			for i := uint16(0); i < bw; i++ {
-				 base|=  int64(bwbs[i]) << (byte(bw-i-1) * 8)
+				base |= int64(bwbs[i]) << (byte(bw-i-1) * 8)
 			}
 
 			log.Tracef("decoding: int rl v2 width %d length %d bw %d pw %d pll %d base %d",
@@ -668,7 +672,9 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 					return errors.WithStack(err)
 				}
 				// pgw 1 to 8 bits
-				pg := b >> (8 - pgw)  // patch gap
+				pg := b >> (8 - pgw) // patch gap
+				// todo: pg==0
+				mark += int(pg)
 				// pw 1 to 64 bits according to encoding table
 				pbn := int(math.Ceil((float64(pgw) + float64(pw)) / float64(8))) // patch bytes number
 				pbs := make([]byte, pbn)
@@ -678,15 +684,19 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 						return errors.WithStack(err)
 					}
 				}
-				pbs[0] = (pbs[0]<<pgw) >> pgw // patch value, remove pgw first
+
+				pbs[0] = pbs[0] << pgw >> pgw // patch value, remove pgw first
 				for j := 0; j < pbn; j++ {
-					y:= uint(pbn-j-1) * 8
-					x:= uint64(pbs[j]) << y
-					pv|=x
+					pv |= uint64(pbs[j]) << (uint(pbn-j-1) * 8)
 				}
+				bitsLeft := pbn*8 - int(pgw) - int(pw)
+				pv = pv >> uint(bitsLeft)
 				// pv should be at largest 63 bits?
-				z:= int64(pv << width)
-				rle.literals[mark+int(pg)] = base+z
+				v := rle.literals[mark]
+				v -= base // remove added base first
+				v |= int64(pv << width)
+				v += base // add base back
+				rle.literals[mark] = v
 			}
 
 		case Encoding_DELTA:
