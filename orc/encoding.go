@@ -218,13 +218,12 @@ func (bd *bytesDirectV2) writeValues(out *bytes.Buffer) error {
 	return nil
 }
 
-// int run length v2
+// int run length encoding v2
 type intRleV2 struct {
-	sub          byte // sub encoding
-	signed       bool
-	literals     []int64
-	uliterals    []uint64
-	numLiterals  int
+	sub       byte // sub encoding
+	signed    bool
+	literals  []int64
+	uliterals []uint64
 	consumeIndex int
 }
 
@@ -237,7 +236,14 @@ func (rle *intRleV2) reset() {
 	rle.signed = false
 	rle.sub = Encoding_UNSET
 	rle.consumeIndex = 0
-	rle.numLiterals = 0
+}
+
+func (rle *intRleV2) len() int {
+	if rle.signed {
+		return len(rle.literals)
+	} else {
+		return len(rle.uliterals)
+	}
 }
 
 // decoding buffer all to u/literals
@@ -254,9 +260,8 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			header := firstByte
 			width := 1 + (header>>3)&0x07 // width 3bit at position 3
 			repeatCount := int(3 + (header & 0x07))
-			rle.numLiterals += repeatCount
-			log.Tracef("decoding: irl v2 reading short-repeat of count %d, and numliteral now is %d",
-				repeatCount, rle.numLiterals)
+			log.Tracef("decoding: int rl v2 Short Repeat of count %d, and len now is %d",
+				repeatCount, rle.len)
 
 			var x uint64
 			for i := width; i > 0; { // big endian
@@ -290,9 +295,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.WithStack(err)
 			}
 			length := int(header&0x1FF + 1)
-			rle.numLiterals += length
-			log.Tracef("decoding: irl v2 direct get width %d of L %d now have literals number %d",
-				width, length, rle.numLiterals)
+			log.Tracef("decoding: int rl v2 Direct width %d length %d len now %d", width, length, rle.len)
 
 			for i := 0; i < length; {
 				var x uint64
@@ -448,7 +451,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 					}
 					i++
 				default:
-					return errors.Errorf("int run length encoding direct width %d not supported", width)
+					return errors.Errorf("decoding: int rl v2 Direct width %d not supported", width)
 				}
 			}
 
@@ -707,15 +710,13 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			deltaWidth, err := widthDecoding(header[0]>>1&0x1f, true)
+			width, err := widthDecoding(header[0]>>1&0x1f, true)
 			if err != nil {
 				return errors.WithStack(err)
 			}
 			length := int(header[0])&0x01<<8 | int(header[1]) + 1
-			rle.numLiterals += length
 
-			log.Tracef("decoding: irl v2 delta length %d of width %d delta values, now have numLiterals %d",
-				length, deltaWidth, rle.numLiterals)
+			log.Tracef("decoding: irl v2 Delta length %d, width %d, len now %d", length, width, rle.len)
 
 			if rle.signed {
 				baseValue, err := binary.ReadVarint(in)
@@ -744,7 +745,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			// delta values: W * (L-2)
 			i := 2
 			for i < length {
-				switch deltaWidth {
+				switch width {
 				case 0:
 					// fix delta based on delta base
 					if deltaBase >= 0 {
@@ -861,12 +862,12 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 					i++
 
 				default:
-					return errors.Errorf("int rle v2 encoding delta width %d deprecated", deltaWidth)
+					return errors.Errorf("decoding: int rl v2 Delta width %d not support", width)
 				}
 			}
 
 		default:
-			return errors.Errorf("sub encoding %d for int rle v2 not recognized", rle.sub)
+			return errors.Errorf("decoding: int rl v2 encoding sub %d not recognized", rle.sub)
 		}
 
 	} // finish read buffer
@@ -876,18 +877,18 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 
 // write all literals to buffer
 func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
-	for i := 0; i < rle.numLiterals; {
+	for i := 0; i < rle.len(); {
 		c := rle.getRepeat(i)
 		if c >= 3 {
 			if c <= 10 { // short repeat
 				rle.sub = Encoding_SHORT_REPEAT
 				var x uint64
 				if rle.signed {
-					log.Tracef("encoding: irl v2 write short repeat count %d of %d at index %d",
+					log.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
 						c, rle.literals[i], i)
 					x = EncodeZigzag(rle.literals[i])
 				} else {
-					log.Tracef("encoding: irl v2 write short repeat count %d of %d at index %d",
+					log.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
 						c, rle.uliterals[i], i)
 					x = rle.uliterals[i]
 				}
@@ -904,7 +905,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 				} else {
 					n = binary.PutUvarint(b, rle.uliterals[i])
 				}
-				log.Tracef("encoding: irl v2 writing fixed delta 0 count %d at index %d", c, i)
+				log.Tracef("encoding: irl v2 Fixed Delta 0 count %d at index %d", c, i)
 				i += int(c)
 				if err := rle.writeDelta(b[:n], 0, c, []uint64{}, out); err != nil {
 					return errors.WithStack(err)
@@ -921,7 +922,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 					n = binary.PutUvarint(b, rle.uliterals[i])
 				}
 				i += int(dv.length)
-				log.Tracef("encoding: irl v2 writing delta count %d, index is %d", dv.length, i)
+				log.Tracef("encoding: irl v2 Delta count %d at index %d", dv.length, i)
 				if err := rle.writeDelta(b[:n], dv.base, dv.length, dv.deltas, out); err != nil {
 					return errors.WithStack(err)
 				}
@@ -948,7 +949,7 @@ type deltaValues struct {
 // for monotonically increasing or decreasing sequences
 // run length should be at least 3
 func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
-	if idx+2 < rle.numLiterals {
+	if idx+2 < rle.len() {
 		if rle.signed {
 			if rle.literals[idx] == rle.literals[idx+1] { // can not be same for first 2
 				return false
@@ -996,7 +997,7 @@ func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
 		}
 		dv.length = 3
 
-		for i := idx + 3; i < rle.numLiterals && dv.length < 512; i++ {
+		for i := idx + 3; i < rle.len() && dv.length < 512; i++ {
 			if rle.signed {
 				if dv.base > 0 {
 					if rle.literals[i] >= rle.literals[i-1] {
@@ -1217,7 +1218,7 @@ func getWidth(x uint64, delta bool) byte {
 // max return is 512 for fixed delta
 func (rle *intRleV2) getRepeat(i int) (count uint16) {
 	count = 1
-	for j := 1; j < 512 && i+j < int(rle.numLiterals); j++ {
+	for j := 1; j < 512 && i+j < rle.len(); j++ {
 		if rle.signed {
 			if rle.literals[i] == rle.literals[i+j] {
 				count = uint16(j + 1)
