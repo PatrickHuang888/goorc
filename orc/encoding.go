@@ -20,6 +20,8 @@ const (
 	Encoding_UNSET        = byte(255)
 )
 
+type subEncoding byte
+
 type Decoder interface {
 	readValues(in *bytes.Buffer) error
 	reset()
@@ -220,10 +222,10 @@ func (bd *bytesDirectV2) writeValues(out *bytes.Buffer) error {
 
 // int run length encoding v2
 type intRleV2 struct {
-	sub       byte // sub encoding
-	signed    bool
-	literals  []int64
-	uliterals []uint64
+	sub          byte // sub encoding
+	signed       bool
+	literals     []int64
+	uliterals    []uint64
 	consumeIndex int
 }
 
@@ -877,6 +879,11 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 
 // write all literals to buffer
 func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
+	if rle.len() <= MIN_REPEAT_SIZE {
+		//todo: direct
+		return nil
+	}
+
 	for i := 0; i < rle.len(); {
 		c := rle.getRepeat(i)
 		if c >= 3 {
@@ -1043,6 +1050,51 @@ func (rle *intRleV2) tryDirectEncoding(idx int) bool {
 	return false
 }
 
+func (rle *intRleV2) bitsWidthAnalyze(idx int){
+	var min int64
+	var umin uint64
+	bws := make([]byte, 65) // 65 slots for 0-64 bits widths
+	for i := 0; i < 512 && idx+i < rle.len(); i++ {
+		var x uint64
+		if rle.signed {
+			v := rle.literals[idx+i]
+			if v < min {
+				min = v
+			}
+			x = EncodeZigzag(v)
+		} else {
+			v := rle.uliterals[idx+i]
+			if v < umin {
+				umin = v
+			}
+			x = v
+		}
+		bws[getWidth(x)] += 1
+	}
+	// get max bits width
+	var p100w int
+	for i := len(bws) - 1; i >= 0; i-- {
+		if bws[i] > 0 {
+			p100w = i
+			break
+		}
+	}
+	// get 90% bits width
+	var p90w int
+	p90 := 0.9
+	p90len := int(float64(len(bws)) * p90)
+	for i := len(bws); i >= 0; i-- {
+		p90len -= int(bws[i])
+		if p90len < 0 && bws[i] != 0 {
+			p90w = i
+			break
+		}
+	}
+	if p100w-p90w > 1 {  // can be patched
+
+	}
+}
+
 func (rle *intRleV2) tryPatchedBase(idx int) bool {
 	return false
 }
@@ -1054,7 +1106,7 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 	// delta width
 	var w, width byte
 	for _, v := range deltas {
-		bits := getWidth(v, true)
+		bits := getWidth(v)
 		if bits > width {
 			width = bits
 		}
@@ -1182,16 +1234,15 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 	return nil
 }
 
-func getWidth(x uint64, delta bool) byte {
+// Get bits width of x, align to width encoding table
+func getWidth(x uint64) byte {
 	var n byte
 	for x != 0 {
 		x = x >> 1
 		n++
 	}
 
-	if delta && n == 1 {
-		n = 2
-	} else if n > 2 && n <= 4 {
+	if n > 2 && n <= 4 {
 		n = 4
 	} else if n > 4 && n <= 8 {
 		n = 8
