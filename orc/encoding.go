@@ -3,6 +3,7 @@ package orc
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -481,7 +482,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 			pgw := uint16(header[3])>>5&0x07 + 1 // 3 bits patch gap width(PGW), value 1 to 8 bits
 			if (int(pw) + int(pgw)) > 64 {
-				return errors.New("decoding: int rl v2, pw+pgw must less or equal to 64")
+				return errors.New("decoding: int rl v2, patchWidth+gapWidth must less or equal to 64")
 			}
 			pll := header[3] & 0x1f // 5bits patch list length, value 0 to 31
 
@@ -496,7 +497,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				base |= int64(bwbs[i]) << (byte(bw-i-1) * 8)
 			}
 
-			log.Tracef("decoding: int rl v2 width %d length %d bw %d pw %d pll %d base %d",
+			log.Tracef("decoding: int rl v2 width %d length %d bw %d patchWidth %d pll %d base %d",
 				width, length, bw, pw, pll, base)
 
 			// data values
@@ -673,11 +674,11 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				if err != nil {
 					return errors.WithStack(err)
 				}
-				// pgw 1 to 8 bits
+				// gapWidth 1 to 8 bits
 				pg := b >> (8 - pgw) // patch gap
 				// todo: pg==0
 				mark += int(pg)
-				// pw 1 to 64 bits according to encoding table
+				// patchWidth 1 to 64 bits according to encoding table
 				pbn := int(math.Ceil((float64(pgw) + float64(pw)) / float64(8))) // patch bytes number
 				pbs := make([]byte, pbn)
 				pbs[0] = b
@@ -687,7 +688,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 					}
 				}
 
-				pbs[0] = pbs[0] << pgw >> pgw // patch value, remove pgw first
+				pbs[0] = pbs[0] << pgw >> pgw // patch value, remove gapWidth first
 				for j := 0; j < pbn; j++ {
 					pv |= uint64(pbs[j]) << (uint(pbn-j-1) * 8)
 				}
@@ -1063,16 +1064,19 @@ func (rle *intRleV2) tryDirectEncoding(idx int) bool {
 }
 
 type patchedValues struct {
-	values []uint64
-	width  byte
-	base   int64
-	pw     byte // patch width
-	pgw    byte // patch gap width
-	pll    byte // patch list length
+	values     []uint64
+	width      byte // value bits width
+	base       int64
+	//pll        byte     // patch list length
+	gapWidth   byte     // patch gap bits width, 1 to 8
+	gaps       []byte   // patch gap values
+	patchWidth byte     // patch bits width according to table, 1 to 64
+	patches    []uint64 // patch values
 }
 
 func (pvs *patchedValues) toString() string {
-
+	return fmt.Sprintf("patch values: base %d, value width %d, pll %d, gapWidth %d, patchWidth %d",
+		pvs.base, pvs.width, len(pvs.patches), pvs.gapWidth, pvs.patchWidth)
 }
 
 func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
@@ -1084,19 +1088,22 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 		return errors.WithStack(err)
 	}
 	header[0] |= w << 3
-	length:= len(pvs.values)
+	length := len(pvs.values)
 	header[0] |= byte(length >> 8 & 0x01)
 	header[1] = byte(length & 0xff)
-	var bw byte // base width, 1 to 8 bytes
+	var bw byte // base byte width, 1 to 8 bytes
 	base := uint64(pvs.base)
 	if pvs.base < 0 {
 		base = uint64(-pvs.base)
 	}
-	bw = byte(math.Ceil(float64(getRealWidth(base)+1) / 8)) // 1 bit for negative mark
+	bw = byte(math.Ceil(float64(getBitsWidth(base)+1) / 8)) // 1 bit for negative mark
 	header[2] = bw & 0x07 << 5
-	header[2] |= pvs.pw & 0x1f
-	header[3] = pvs.pgw & 0x07 << 5
-	header[3] |= pvs.pll & 0x1f
+	header[2] |= pvs.patchWidth & 0x1f
+	header[3] = pvs.gapWidth & 0x07 << 5
+
+	pll:=byte(len(pvs.patches))-1  // patch list length, 0 to 31
+
+	header[3] |= pll & 0x1f
 	if _, err := out.Write(header); err != nil {
 		return errors.WithStack(err)
 	}
@@ -1106,27 +1113,41 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 		base |= 0x01 << ((bw-1)*8 + 7) // msb set to 1
 	}
 	for i := bw - 1; i >= 0; i-- {
-		out.WriteByte(byte((base >> (i * 8)) & 0xff))  // big endian
+		out.WriteByte(byte((base >> (i * 8)) & 0xff)) // big endian
 	}
 
 	// write W*L positive values
-	if err:=writeUints(w, pvs.values, out); err!=nil {
+	if err := writeUints(out, w, pvs.values); err != nil {
 		return errors.WithStack(err)
 	}
 
-	// write patch list
-	pvs.
+	// write patch list, (PLL*(PGW+PW) bytes
+	patchBytes := int(math.Ceil(float64(pvs.patchWidth) / float64(8)))
+	for i := 0; i < int(pll); i++ {
+		x := pvs.gaps[i] << (8 - pvs.gapWidth)
+		x |= byte(pvs.patches[i] >> uint((patchBytes-1)*8))
+		if err := out.WriteByte(x); err != nil {
+			return errors.WithStack(err)
+		}
+		for j := patchBytes - 2; j >= 0; j-- {
+			v := byte(pvs.patches[i] >> uint(j*8))
+			if err := out.WriteByte(v); err != nil {
+				return errors.WithStack(err)
+			}
+		}
+	}
 	return nil
 }
 
 // code based on apache orc Java version
+// todo: patch 0
 func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, err error) {
 	signed := rle.signed
 	var min int64
 	var umin uint64
 	var count int
-	bws := make([]byte, 65) // 65 slots for 0-64 bits widths
-	// toMakeSure: until 512?
+	bws := make([]byte, 64) // slots for 1 to 64 bits widths
+	// fixme: patch only apply until to 512?
 	for i := 0; i < 512 && idx+i < rle.len(); i++ {
 		var x uint64
 		if signed {
@@ -1134,7 +1155,7 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 			if v < min {
 				min = v
 			}
-			// toMakeSure: zigzag to decide bits width
+			// toAssure: zigzag to decide bits width
 			x = zigzag(v)
 		} else {
 			v := rle.uliterals[idx+i]
@@ -1143,25 +1164,23 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 			}
 			x = v
 		}
-		bws[getWidth(x)] += 1
+		bws[getAlignedWidth(x)-1] += 1
 		count = i
 	}
-	// get bits width cover all
-	var p100w int
-	for i := len(bws) - 1; i >= 0; i-- {
+	// get bits width cover 100% and 90%
+	var p100w, p90w byte
+	for i := 63 - 1; i >= 0; i-- {
 		if bws[i] != 0 {
-			p100w = i
+			p100w = byte(i+1)
 			break
 		}
 	}
-	// get bits width cover 90%
-	var p90w int
 	p90 := 0.9
 	p90len := int(float64(len(bws)) * p90)
-	for i := len(bws) - 1; i >= 0; i-- {
+	for i := 63; i >= 0; i-- {
 		p90len -= int(bws[i])
 		if p90len < 0 && bws[i] != 0 {
-			p90w = i
+			p90w = byte(i+1)
 			break
 		}
 	}
@@ -1174,39 +1193,48 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 				values[i] = rle.uliterals[idx+i] - umin
 			}
 		}
-		basebws := make([]byte, 65) // base value bits widths
+		valuesbws := make([]byte, 64) // values bits width 1 to 64
 		for i := 0; i < count; i++ {
-			basebws[getWidth(values[i])] += 1
+			valuesbws[getAlignedWidth(values[i])-1] += 1
 		}
-		var basep100w, basep95w int // base value width cover 100%
+		var vp100w, vp95w byte // values width cover 100% and 95%
 		for i := count - 1; i >= 0; i-- {
-			if basebws[i] != 0 {
-				basep100w = int(basebws[i])
+			if valuesbws[i] != 0 {
+				vp100w = valuesbws[i]+1
 				break
 			}
 		}
-		// below is based on apache orc java code
 		p95 := 0.95
-		basep95len := int(float64(count) * p95)
+		v95len := int(float64(count) * p95)
 		for i := count - 1; i >= 0; i-- {
-			basep95len -= int(basebws[i])
-			if basep95len < 0 && basebws[i] != 0 {
-				basep95w = i
+			v95len -= int(valuesbws[i])
+			if v95len < 0 && valuesbws[i] != 0 {
+				vp95w = byte(i+1)
 				break
 			}
 		}
-		if basep100w-basep95w != 0 {
+		if vp100w-vp95w != 0 {
+			sub = Encoding_PATCHED_BASE
 			pvs.values = values
+			pvs.width= vp95w
 			if rle.signed {
 				pvs.base = min
 			} else {
-				if getRealWidth(umin) == 64 {
+				if getBitsWidth(umin) == 64 {
 					// toClarify: because base is a signed int, so base can not be a 64 bit uint?
-					return Encoding_UNSET, errors.New("encoding: 64 bits base of uint?")
+				 	return Encoding_UNSET, errors.New("encoding: 64 bits base of uint?")
 				}
 				pvs.base = int64(umin)
 			}
-			sub = Encoding_PATCHED_BASE
+			// get patches
+			for i:=0; i<count; i++ {
+				if valuesbws[i]> vp95w {  // patched value
+					pvs.gaps = append(pvs.gaps, byte(i)<<5)
+					p:= values[i]>>vp95w
+
+				}
+			}
+
 			return
 		}
 	}
@@ -1214,13 +1242,17 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 	return
 }
 
-func (out *bytes.Buffer) writeUints(width byte, values []uint64) error  {
-
-}
-
-// return real x bits width
-func getRealWidth(x uint64) (n byte) {
-
+func writeUints(out *bytes.Buffer, width byte, values []uint64) error {
+	bytes := int(math.Ceil(float64(width) / float64(8)))
+	for i := 0; i < len(values); i++ {
+		for j := bytes - 1; j >= 0; j-- {
+			x := byte(values[i] >> uint(j*8))
+			if err := out.WriteByte(x); err != nil {
+				return errors.WithStack(err)
+			}
+		}
+	}
+	return nil
 }
 
 // first is int64 or uint64 based on signed, length is 9 bit for run length 1 to 512
@@ -1230,7 +1262,7 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 	// delta width
 	var w, width byte
 	for _, v := range deltas {
-		bits := getWidth(v)
+		bits := getAlignedWidth(v)
 		if bits > width {
 			width = bits
 		}
@@ -1358,8 +1390,17 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 	return nil
 }
 
+// return a uint64 bits width
+func getBitsWidth(x uint64) (n byte) {
+	for x != 0 {
+		x = x >> 1
+		n++
+	}
+	return
+}
+
 // Get bits width of x, align to width encoding table
-func getWidth(x uint64) byte {
+func getAlignedWidth(x uint64) byte {
 	var n byte
 	for x != 0 {
 		x = x >> 1
