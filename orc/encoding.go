@@ -1215,8 +1215,6 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 		}
 		if vp100w-vp95w != 0 {
 			sub = Encoding_PATCHED_BASE
-			pvs.values = values
-			pvs.width= vp95w
 			if rle.signed {
 				pvs.base = min
 			} else {
@@ -1226,15 +1224,27 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 				}
 				pvs.base = int64(umin)
 			}
+			pvs.values = values
+			pvs.width= vp95w
 			// get patches
 			for i:=0; i<count; i++ {
 				if valuesbws[i]> vp95w {  // patched value
-					pvs.gaps = append(pvs.gaps, byte(i)<<5)
-					p:= values[i]>>vp95w
-
+					pvs.gaps = append(pvs.gaps, byte(i))
+					pvs.patches= append(pvs.patches, values[i]>>vp95w)
 				}
 			}
-
+			for i:=0; i<len(pvs.gaps); i++ {
+				w:= getBitsWidth(uint64(pvs.gaps[i]))
+				if pvs.gapWidth< w{
+					pvs.gapWidth= w
+				}
+			}
+			for i:=0; i<len(pvs.patches); i++ {
+				w:= getAlignedWidth(pvs.patches[i])
+				if pvs.patchWidth< w {
+					pvs.patchWidth= w
+				}
+			}
 			return
 		}
 	}

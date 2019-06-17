@@ -179,6 +179,18 @@ func TestIntRunLengthV2Patch(t *testing.T)  {
 		t.Fatalf("err %+v", err)
 	}
 	assert.Equal(t, v, irl.literals)
+
+	irl.reset()
+	irl.signed=true
+	irl.literals=  v
+	out:=&bytes.Buffer{}
+	out.Reset()
+	if err:=irl.writeValues(out);err!=nil {
+		t.Fatalf("fail %+v", err)
+	}
+	assert.Equal(t, bs, out.Bytes())
+
+
 }
 
 func TestIntRunLengthV2(t *testing.T) {
@@ -229,16 +241,16 @@ func TestIntRunLengthV2(t *testing.T) {
 }
 
 func TestZigzag(t *testing.T) {
-	assert.Equal(t, uint64(1), EncodeZigzag(-1))
-	assert.Equal(t, int64(-1), DecodeZigzag(1))
+	assert.Equal(t, uint64(1), zigzag(-1))
+	assert.Equal(t, int64(-1), unZigzag(1))
 
 	var x int64 = 2147483647
-	assert.Equal(t, uint64(4294967294), EncodeZigzag(x))
-	assert.Equal(t, x, DecodeZigzag(EncodeZigzag(x)))
+	assert.Equal(t, uint64(4294967294), zigzag(x))
+	assert.Equal(t, x, unZigzag(zigzag(x)))
 
 	var y int64 = -2147483648
-	assert.Equal(t, uint64(4294967295), EncodeZigzag(y))
-	assert.Equal(t, y, DecodeZigzag(EncodeZigzag(y)))
+	assert.Equal(t, uint64(4294967295), zigzag(y))
+	assert.Equal(t, y, unZigzag(zigzag(y)))
 }
 
 func TestChunkHeader(t *testing.T) {
