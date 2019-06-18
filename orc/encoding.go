@@ -18,6 +18,8 @@ const (
 	Encoding_PATCHED_BASE = byte(2)
 	Encoding_DELTA        = byte(3)
 	Encoding_UNSET        = byte(255)
+
+	BITS_SLOTS = 65
 )
 
 type Decoder interface {
@@ -1064,9 +1066,9 @@ func (rle *intRleV2) tryDirectEncoding(idx int) bool {
 }
 
 type patchedValues struct {
-	values     []uint64
-	width      byte // value bits width
-	base       int64
+	values []uint64
+	width  byte // value bits width
+	base   int64
 	//pll        byte     // patch list length
 	gapWidth   byte     // patch gap bits width, 1 to 8
 	gaps       []byte   // patch gap values
@@ -1091,18 +1093,16 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 	length := len(pvs.values)
 	header[0] |= byte(length >> 8 & 0x01)
 	header[1] = byte(length & 0xff)
-	var bw byte // base byte width, 1 to 8 bytes
 	base := uint64(pvs.base)
 	if pvs.base < 0 {
 		base = uint64(-pvs.base)
 	}
-	bw = byte(math.Ceil(float64(getBitsWidth(base)+1) / 8)) // 1 bit for negative mark
-	header[2] = bw & 0x07 << 5
+	// base bytes 1 to 8, add 1 bit for negative mark
+	baseBytes := byte(math.Ceil(float64(getBitsWidth(base)+1) / 8))
+	header[2] = baseBytes & 0x07 << 5
 	header[2] |= pvs.patchWidth & 0x1f
 	header[3] = pvs.gapWidth & 0x07 << 5
-
-	pll:=byte(len(pvs.patches))-1  // patch list length, 0 to 31
-
+	pll := byte(len(pvs.patches)) // patch list length, 0 to 31
 	header[3] |= pll & 0x1f
 	if _, err := out.Write(header); err != nil {
 		return errors.WithStack(err)
@@ -1110,10 +1110,10 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 
 	// write base
 	if pvs.base < 0 {
-		base |= 0x01 << ((bw-1)*8 + 7) // msb set to 1
+		base |= 0x01 << ((baseBytes-1)*8 + 7) // msb set to 1
 	}
-	for i := bw - 1; i >= 0; i-- {
-		out.WriteByte(byte((base >> (i * 8)) & 0xff)) // big endian
+	for i := int(baseBytes) - 1; i >= 0; i-- {  // hxm: watch out loop index
+		out.WriteByte(byte((base >> (byte(i) * 8)) & 0xff)) // big endian
 	}
 
 	// write W*L positive values
@@ -1145,8 +1145,13 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 	signed := rle.signed
 	var min int64
 	var umin uint64
+	if signed {
+		min = rle.literals[idx]
+	} else {
+		umin = rle.uliterals[idx]
+	}
 	var count int
-	bws := make([]byte, 64) // slots for 1 to 64 bits widths
+	baseWidthHist := make([]byte, BITS_SLOTS) // slots for 0 to 64 bits widths
 	// fixme: patch only apply until to 512?
 	for i := 0; i < 512 && idx+i < rle.len(); i++ {
 		var x uint64
@@ -1164,52 +1169,56 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 			}
 			x = v
 		}
-		bws[getAlignedWidth(x)-1] += 1
-		count = i
+		baseWidthHist[getAlignedWidth(x)] += 1
+		count = i + 1
 	}
+
 	// get bits width cover 100% and 90%
 	var p100w, p90w byte
-	for i := 63 - 1; i >= 0; i-- {
-		if bws[i] != 0 {
-			p100w = byte(i+1)
+	for i := BITS_SLOTS - 1; i >= 0; i-- {
+		if baseWidthHist[i] != 0 {
+			p100w = byte(i)
 			break
 		}
 	}
 	p90 := 0.9
-	p90len := int(float64(len(bws)) * p90)
-	for i := 63; i >= 0; i-- {
-		p90len -= int(bws[i])
-		if p90len < 0 && bws[i] != 0 {
-			p90w = byte(i+1)
+	p90len := int(float64(count) * p90)
+	for i := BITS_SLOTS - 1; i >= 0; i-- {
+		p90len -= int(baseWidthHist[i])
+		if p90len <= 0 && baseWidthHist[i] != 0 {
+			p90w = byte(i)
 			break
 		}
 	}
 	if p100w-p90w > 1 { // can be patched
 		values := make([]uint64, count)
+		valuesWidths := make([]byte, count)
 		for i := 0; i < count; i++ {
 			if signed {
 				values[i] = uint64(rle.literals[idx+i] - min)
 			} else {
 				values[i] = rle.uliterals[idx+i] - umin
 			}
+			valuesWidths[i] = getAlignedWidth(values[i])
 		}
-		valuesbws := make([]byte, 64) // values bits width 1 to 64
+		valuesWidthHist := make([]byte, BITS_SLOTS) // values bits width 0 to 64
 		for i := 0; i < count; i++ {
-			valuesbws[getAlignedWidth(values[i])-1] += 1
+			valuesWidthHist[valuesWidths[i]] += 1
 		}
+
 		var vp100w, vp95w byte // values width cover 100% and 95%
-		for i := count - 1; i >= 0; i-- {
-			if valuesbws[i] != 0 {
-				vp100w = valuesbws[i]+1
+		for i := BITS_SLOTS - 1; i >= 0; i-- {
+			if valuesWidthHist[i] != 0 {
+				vp100w = byte(i)
 				break
 			}
 		}
 		p95 := 0.95
 		v95len := int(float64(count) * p95)
-		for i := count - 1; i >= 0; i-- {
-			v95len -= int(valuesbws[i])
-			if v95len < 0 && valuesbws[i] != 0 {
-				vp95w = byte(i+1)
+		for i := BITS_SLOTS - 1; i >= 0; i-- {
+			v95len -= int(valuesWidthHist[i])
+			if v95len <= 0 && valuesWidthHist[i] != 0 {
+				vp95w = byte(i)
 				break
 			}
 		}
@@ -1220,30 +1229,33 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 			} else {
 				if getBitsWidth(umin) == 64 {
 					// toClarify: because base is a signed int, so base can not be a 64 bit uint?
-				 	return Encoding_UNSET, errors.New("encoding: 64 bits base of uint?")
+					return Encoding_UNSET, errors.New("encoding: 64 bits base of uint?")
 				}
 				pvs.base = int64(umin)
 			}
 			pvs.values = values
-			pvs.width= vp95w
+			pvs.width = vp95w
 			// get patches
-			for i:=0; i<count; i++ {
-				if valuesbws[i]> vp95w {  // patched value
+			for i := 0; i < count; i++ {
+				if valuesWidths[i] > pvs.width { // patched value
 					pvs.gaps = append(pvs.gaps, byte(i))
-					pvs.patches= append(pvs.patches, values[i]>>vp95w)
+					pvs.patches = append(pvs.patches, values[i]>>pvs.width)
 				}
 			}
-			for i:=0; i<len(pvs.gaps); i++ {
-				w:= getBitsWidth(uint64(pvs.gaps[i]))
-				if pvs.gapWidth< w{
-					pvs.gapWidth= w
+			for i := 0; i < len(pvs.gaps); i++ {
+				w := getBitsWidth(uint64(pvs.gaps[i]))
+				if pvs.gapWidth < w {
+					pvs.gapWidth = w
 				}
 			}
-			for i:=0; i<len(pvs.patches); i++ {
-				w:= getAlignedWidth(pvs.patches[i])
-				if pvs.patchWidth< w {
-					pvs.patchWidth= w
+			for i := 0; i < len(pvs.patches); i++ {
+				w := getAlignedWidth(pvs.patches[i])
+				if pvs.patchWidth < w {
+					pvs.patchWidth = w
 				}
+			}
+			if pvs.gapWidth+pvs.patchWidth > 64 {
+				return Encoding_UNSET, errors.New("encoding: int rl v2 Patch PGW+PW > 64")
 			}
 			return
 		}
@@ -1422,6 +1434,9 @@ func getAlignedWidth(x uint64) byte {
 	} else if n > 4 && n <= 8 {
 		n = 8
 	} else if n > 8 && n <= 16 {
+		if n == 12 { // just for patch testing
+			return n
+		}
 		n = 16
 	} else if n > 16 && n <= 24 {
 		n = 24
