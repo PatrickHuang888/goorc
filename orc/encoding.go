@@ -1073,7 +1073,7 @@ type patchedValues struct {
 	gapWidth   byte     // patch gap bits width, 1 to 8
 	gaps       []byte   // patch gap values
 	patchWidth byte     // patch bits width according to table, 1 to 64
-	patches    []uint64 // patch values
+	patches    []uint64 // patch values, already shifted valuebits
 }
 
 func (pvs *patchedValues) toString() string {
@@ -1089,8 +1089,8 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	header[0] |= w << 3
-	length := len(pvs.values)
+	header[0] |= w << 1
+	length := len(pvs.values) - 1 // 1 to 512
 	header[0] |= byte(length >> 8 & 0x01)
 	header[1] = byte(length & 0xff)
 	base := uint64(pvs.base)
@@ -1099,10 +1099,14 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 	}
 	// base bytes 1 to 8, add 1 bit for negative mark
 	baseBytes := byte(math.Ceil(float64(getBitsWidth(base)+1) / 8))
-	header[2] = baseBytes & 0x07 << 5
-	header[2] |= pvs.patchWidth & 0x1f
-	header[3] = pvs.gapWidth & 0x07 << 5
-	pll := byte(len(pvs.patches)) // patch list length, 0 to 31
+	header[2] = (baseBytes - 1) & 0x07 << 5 // 3bits for 1 to 8
+	pw, err := widthEncoding(pvs.patchWidth)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	header[2] |= pw & 0x1f                     // 1f, 5 bits
+	header[3] = (pvs.gapWidth - 1) & 0x07 << 5 // 07, 3bits for 1 to 8 bits
+	pll := byte(len(pvs.patches))              // patch list length, 0 to 31
 	header[3] |= pll & 0x1f
 	if _, err := out.Write(header); err != nil {
 		return errors.WithStack(err)
@@ -1112,7 +1116,7 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 	if pvs.base < 0 {
 		base |= 0x01 << ((baseBytes-1)*8 + 7) // msb set to 1
 	}
-	for i := int(baseBytes) - 1; i >= 0; i-- {  // hxm: watch out loop index
+	for i := int(baseBytes) - 1; i >= 0; i-- { // hxm: watch out loop index
 		out.WriteByte(byte((base >> (byte(i) * 8)) & 0xff)) // big endian
 	}
 
@@ -1124,13 +1128,24 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 	// write patch list, (PLL*(PGW+PW) bytes
 	patchBytes := int(math.Ceil(float64(pvs.patchWidth) / float64(8)))
 	for i := 0; i < int(pll); i++ {
-		x := pvs.gaps[i] << (8 - pvs.gapWidth)
-		x |= byte(pvs.patches[i] >> uint((patchBytes-1)*8))
-		if err := out.WriteByte(x); err != nil {
+		v := pvs.gaps[i] << (8 - pvs.gapWidth)
+		p := pvs.patches[i]
+		shiftW := getBitsWidth(p) - (8 - pvs.gapWidth)
+		bhigh := byte(p >> shiftW)
+		v |= bhigh
+		if err := out.WriteByte(v); err != nil {
 			return errors.WithStack(err)
 		}
 		for j := patchBytes - 2; j >= 0; j-- {
-			v := byte(pvs.patches[i] >> uint(j*8))
+			if shiftW > 8 {
+				shiftW-=8
+				v = byte(p >> shiftW)
+			}else {
+				if j!=0 {
+					log.Errorf("patch shift value should less than 8 should be the lowest byte")
+				}
+				v = byte(p)<<(8-shiftW)
+			}
 			if err := out.WriteByte(v); err != nil {
 				return errors.WithStack(err)
 			}
