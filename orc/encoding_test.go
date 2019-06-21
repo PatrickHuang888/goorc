@@ -168,29 +168,49 @@ func TestIntRunLengthV2_Delta(t *testing.T)  {
 }
 
 func TestIntRunLengthV2Patch(t *testing.T)  {
-	irl := &intRleV2{}
-	irl.signed= true
+	rle := &intRleV2{}
+	rle.signed= true
 	v:= []int64{2030, 2000, 2020, 1000000, 2040, 2050, 2060, 2070, 2080, 2090, 2100, 2110, 2120, 2130,
 		2140, 2150, 2160, 2170, 2180, 2190}
 	bs := []byte{0x8e, 0x13, 0x2b, 0x21, 0x07, 0xd0, 0x1e, 0x00, 0x14, 0x70, 0x28, 0x32, 0x3c, 0x46, 0x50, 0x5a,
 		0x64, 0x6e, 0x78, 0x82, 0x8c, 0x96, 0xa0, 0xaa, 0xb4, 0xbe, 0xfc, 0xe8}
-	err:= irl.readValues(bytes.NewBuffer(bs))
+	err:= rle.readValues(bytes.NewBuffer(bs))
 	if err!=nil {
 		t.Fatalf("err %+v", err)
 	}
-	assert.Equal(t, v, irl.literals)
+	assert.Equal(t, v, rle.literals)
 
-	irl.reset()
-	irl.signed=true
-	irl.literals=  v
-	out:=&bytes.Buffer{}
-	out.Reset()
-	if err:=irl.writeValues(out);err!=nil {
+	rle.reset()
+	rle.signed=true
+	rle.literals=  v
+	buf :=&bytes.Buffer{}
+	buf.Reset()
+	if err:= rle.writeValues(buf);err!=nil {
 		t.Fatalf("fail %+v", err)
 	}
-	assert.Equal(t, bs, out.Bytes())
+	assert.Equal(t, bs, buf.Bytes())
+	rle.reset()
+	rle.signed=true
+	if err:= rle.readValues(buf);err!=nil {
+		t.Fatalf("decode error %+v", err)
+	}
+	assert.Equal(t, v, rle.literals)
 
-
+	v= []int64{-2030, -2000, -2020, -1000000, -2040, -2050, -2060, -2070, -2080, -2090, -2100, -2110, -2120, -2130,
+		-2140, -2150, -2160, -2170, -2180, -2190}
+	rle.reset()
+	rle.signed= true
+	rle.literals= v
+	buf.Reset()
+	if err:= rle.writeValues(buf);err!=nil {
+		t.Fatalf("encoding error %+v", err)
+	}
+	/*rle.reset()
+	rle.signed= false
+	if err:=rle.readValues(buf);err!=nil {
+		t.Fatalf("decoding error %+v", err)
+	}
+	assert.Equal(t, uv, rle.uliterals)*/
 }
 
 func TestIntRunLengthV2(t *testing.T) {

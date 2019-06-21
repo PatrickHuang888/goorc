@@ -954,6 +954,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 			return nil
 		}
 		if sub == Encoding_DIRECT {
+			log.Tracef("encoding int rl v2 Direct ...")
 			return nil
 		}
 
@@ -1138,13 +1139,13 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 		}
 		for j := patchBytes - 2; j >= 0; j-- {
 			if shiftW > 8 {
-				shiftW-=8
+				shiftW -= 8
 				v = byte(p >> shiftW)
-			}else {
-				if j!=0 {
+			} else {
+				if j != 0 {
 					log.Errorf("patch shift value should less than 8 should be the lowest byte")
 				}
-				v = byte(p)<<(8-shiftW)
+				v = byte(p) << (8 - shiftW)
 			}
 			if err := out.WriteByte(v); err != nil {
 				return errors.WithStack(err)
@@ -1157,33 +1158,29 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 // code based on apache orc Java version
 // todo: patch 0
 func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, err error) {
-	signed := rle.signed
-	var min int64
-	var umin uint64
-	if signed {
-		min = rle.literals[idx]
-	} else {
-		umin = rle.uliterals[idx]
+	// fixme: according to base value is a signed smallest value, patch should always signed?
+	if !rle.signed {
+		return Encoding_DIRECT, nil
 	}
+
+	min := rle.literals[idx]
 	var count int
 	baseWidthHist := make([]byte, BITS_SLOTS) // slots for 0 to 64 bits widths
 	// fixme: patch only apply until to 512?
 	for i := 0; i < 512 && idx+i < rle.len(); i++ {
 		var x uint64
-		if signed {
-			v := rle.literals[idx+i]
-			if v < min {
-				min = v
-			}
-			// toAssure: zigzag to decide bits width
-			x = zigzag(v)
-		} else {
-			v := rle.uliterals[idx+i]
-			if v < umin {
-				umin = v
-			}
-			x = v
+
+		v := rle.literals[idx+i]
+		if v < min {
+			min = v
 		}
+		// toAssure: zigzag to decide bits width
+		x = zigzag(v)
+		/*if v>=0 {
+			x= uint64(v)
+		}else {
+			x= uint64(-v)
+		}*/
 		baseWidthHist[getAlignedWidth(x)] += 1
 		count = i + 1
 	}
@@ -1209,11 +1206,7 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 		values := make([]uint64, count)
 		valuesWidths := make([]byte, count)
 		for i := 0; i < count; i++ {
-			if signed {
-				values[i] = uint64(rle.literals[idx+i] - min)
-			} else {
-				values[i] = rle.uliterals[idx+i] - umin
-			}
+			values[i] = uint64(rle.literals[idx+i] - min)
 			valuesWidths[i] = getAlignedWidth(values[i])
 		}
 		valuesWidthHist := make([]byte, BITS_SLOTS) // values bits width 0 to 64
@@ -1239,15 +1232,14 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 		}
 		if vp100w-vp95w != 0 {
 			sub = Encoding_PATCHED_BASE
-			if rle.signed {
-				pvs.base = min
-			} else {
+			pvs.base = min
+			/*} else {
 				if getBitsWidth(umin) == 64 {
 					// toClarify: because base is a signed int, so base can not be a 64 bit uint?
 					return Encoding_UNSET, errors.New("encoding: 64 bits base of uint?")
 				}
 				pvs.base = int64(umin)
-			}
+			}*/
 			pvs.values = values
 			pvs.width = vp95w
 			// get patches
