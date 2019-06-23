@@ -488,18 +488,27 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 			pll := header[3] & 0x1f // 5bits patch list length, value 0 to 31
 
-			bwbs := make([]byte, bw)
-			if _, err = io.ReadFull(in, bwbs); err != nil {
+			baseBytes := make([]byte, bw)
+			if _, err = io.ReadFull(in, baseBytes); err != nil {
 				return errors.WithStack(err)
 			}
 			// base value big endian with msb of negative mark
-			// fixme:
 			var base int64
+			if bw == 0 {
+				return errors.New("decoding: int rl v2 Patch baseWidth 0 not impl")
+			}
+			neg := (baseBytes[0] >> 7) == 0x01
+			baseBytes[0]= baseBytes[0]&0x7f  // remove msb
+			var ubase uint64
 			for i := uint16(0); i < bw; i++ {
-				base |= int64(bwbs[i]) << (byte(bw-i-1) * 8)
+				ubase |= uint64(baseBytes[i]) << (byte(bw-i-1) * 8)
+			}
+			base = int64(ubase)
+			if neg {
+				base = -base
 			}
 
-			log.Tracef("decoding: int rl v2 width %d length %d bw %d patchWidth %d pll %d base %d",
+			log.Tracef("decoding: int rl v2 Patch width %d length %d bw %d patchWidth %d pll %d base %d",
 				width, length, bw, pw, pll, base)
 
 			// data values
@@ -1158,7 +1167,7 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 // code based on apache orc Java version
 // todo: patch 0
 func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, err error) {
-	// fixme: according to base value is a signed smallest value, patch should always signed?
+	// toAssure: according to base value is a signed smallest value, patch should always signed?
 	if !rle.signed {
 		return Encoding_DIRECT, nil
 	}
@@ -1174,13 +1183,8 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 		if v < min {
 			min = v
 		}
-		// toAssure: zigzag to decide bits width
+		// toAssure: using zigzag to decide bits width
 		x = zigzag(v)
-		/*if v>=0 {
-			x= uint64(v)
-		}else {
-			x= uint64(-v)
-		}*/
 		baseWidthHist[getAlignedWidth(x)] += 1
 		count = i + 1
 	}
@@ -1195,9 +1199,10 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 	}
 	p90 := 0.9
 	p90len := int(float64(count) * p90)
-	for i := BITS_SLOTS - 1; i >= 0; i-- {
-		p90len -= int(baseWidthHist[i])
-		if p90len <= 0 && baseWidthHist[i] != 0 {
+	s := 0
+	for i := 0; i < BITS_SLOTS; i++ {
+		s += int(baseWidthHist[i])
+		if s >= p90len && baseWidthHist[i] != 0 {
 			p90w = byte(i)
 			break
 		}
@@ -1223,9 +1228,10 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 		}
 		p95 := 0.95
 		v95len := int(float64(count) * p95)
-		for i := BITS_SLOTS - 1; i >= 0; i-- {
-			v95len -= int(valuesWidthHist[i])
-			if v95len <= 0 && valuesWidthHist[i] != 0 {
+		s = 0
+		for i := 0; i < BITS_SLOTS; i++ {
+			s += int(valuesWidthHist[i])
+			if s >= v95len && valuesWidthHist[i] != 0 {
 				vp95w = byte(i)
 				break
 			}
@@ -1233,13 +1239,6 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 		if vp100w-vp95w != 0 {
 			sub = Encoding_PATCHED_BASE
 			pvs.base = min
-			/*} else {
-				if getBitsWidth(umin) == 64 {
-					// toClarify: because base is a signed int, so base can not be a 64 bit uint?
-					return Encoding_UNSET, errors.New("encoding: 64 bits base of uint?")
-				}
-				pvs.base = int64(umin)
-			}*/
 			pvs.values = values
 			pvs.width = vp95w
 			// get patches
