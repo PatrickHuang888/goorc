@@ -20,6 +20,7 @@ const (
 	Encoding_UNSET        = byte(255)
 
 	BITS_SLOTS = 65
+	MAX_SCOPE  = 512
 )
 
 type Decoder interface {
@@ -297,7 +298,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.WithStack(err)
 			}
 			length := int(header&0x1FF + 1)
-			log.Tracef("decoding: int rl v2 Direct width %d length %d len now %d", width, length, rle.len)
+			log.Tracef("decoding: int rl v2 Direct width %d length %d len now %d", width, length, rle.len())
 
 			for i := 0; i < length; {
 				var x uint64
@@ -498,7 +499,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 				return errors.New("decoding: int rl v2 Patch baseWidth 0 not impl")
 			}
 			neg := (baseBytes[0] >> 7) == 0x01
-			baseBytes[0]= baseBytes[0]&0x7f  // remove msb
+			baseBytes[0] = baseBytes[0] & 0x7f // remove msb
 			var ubase uint64
 			for i := uint16(0); i < bw; i++ {
 				ubase |= uint64(baseBytes[i]) << (byte(bw-i-1) * 8)
@@ -888,13 +889,14 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 
 // write all literals to buffer
 func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
-	if rle.len() <= MIN_REPEAT_SIZE {
-		//todo: direct
-		return nil
-	}
 
-	for i := 0; i < rle.len(); {
-		c := rle.getRepeat(i)
+	for idx := 0; idx < rle.len(); {
+		if (rle.len() - idx) <= MIN_REPEAT_SIZE {
+			rle.sub = Encoding_DIRECT
+			return rle.writeDirect(out, idx, rle.len()-idx)
+		}
+		// try repeat first
+		c := rle.getRepeat(idx)
 		if c >= 3 {
 			// short repeat
 			if c <= 10 {
@@ -902,72 +904,144 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 				var x uint64
 				if rle.signed {
 					log.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
-						c, rle.literals[i], i)
-					x = zigzag(rle.literals[i])
+						c, rle.literals[idx], idx)
+					x = zigzag(rle.literals[idx])
 				} else {
 					log.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
-						c, rle.uliterals[i], i)
-					x = rle.uliterals[i]
+						c, rle.uliterals[idx], idx)
+					x = rle.uliterals[idx]
 				}
-				i += int(c)
+				idx += int(c)
 				if err := rle.writeShortRepeat(c-3, x, out); err != nil {
 					return errors.WithStack(err)
 				}
-				return nil
+				continue
 			}
+
 			// fixed delta 0
 			rle.sub = Encoding_DELTA
 			b := make([]byte, 8)
 			var n int
 			if rle.signed {
-				n = binary.PutVarint(b, rle.literals[i])
+				n = binary.PutVarint(b, rle.literals[idx])
 			} else {
-				n = binary.PutUvarint(b, rle.uliterals[i])
+				n = binary.PutUvarint(b, rle.uliterals[idx])
 			}
-			log.Tracef("encoding: irl v2 Fixed Delta 0 count %d at index %d", c, i)
-			i += int(c)
+			log.Tracef("encoding: irl v2 Fixed Delta 0 count %d at index %d", c, idx)
+			idx += int(c)
 			if err := rle.writeDelta(b[:n], 0, c, []uint64{}, out); err != nil {
 				return errors.WithStack(err)
 			}
-			return nil
+			continue
 		}
 
-		// delta
+		// delta, need width should be stable?
 		var dv deltaValues
-		if rle.tryDeltaEncoding(i, &dv) {
+		if rle.tryDeltaEncoding(idx, &dv) {
 			b := make([]byte, 8)
 			var n int
 			if rle.signed {
-				n = binary.PutVarint(b, rle.literals[i])
+				n = binary.PutVarint(b, rle.literals[idx])
 			} else {
-				n = binary.PutUvarint(b, rle.uliterals[i])
+				n = binary.PutUvarint(b, rle.uliterals[idx])
 			}
-			i += int(dv.length)
-			log.Tracef("encoding: irl v2 Delta count %d at index %d", dv.length, i)
+			idx += int(dv.length)
+			log.Tracef("encoding: irl v2 Delta count %d at index %d", dv.length, idx)
 			if err := rle.writeDelta(b[:n], dv.base, dv.length, dv.deltas, out); err != nil {
 				return errors.WithStack(err)
 			}
-			return nil
+			continue
 		}
 
+		// try patch
 		var pvs patchedValues
-		sub, err := rle.bitsWidthAnalyze(i, &pvs)
+		sub, err := rle.bitsWidthAnalyze(idx, &pvs)
 		if err != nil {
 			return errors.WithStack(err)
 		}
+
+		// toAssure: encoding until MAX_SCOPE?
+		var scope int
+		l := rle.len() - idx
+		if l >= MAX_SCOPE {
+			scope = MAX_SCOPE
+		} else {
+			scope = l
+		}
+
 		if sub == Encoding_PATCHED_BASE {
+			rle.sub= Encoding_PATCHED_BASE
 			log.Tracef("encoding: int rl v2 Patch %s", pvs.toString())
 			if err := writePatch(&pvs, out); err != nil {
 				return errors.WithStack(err)
 			}
-			return nil
+			idx += scope
+			continue
 		}
+
 		if sub == Encoding_DIRECT {
-			log.Tracef("encoding int rl v2 Direct ...")
-			return nil
+			rle.sub= Encoding_DIRECT
+			if err := rle.writeDirect(out, idx, scope); err != nil {
+				return errors.WithStack(err)
+			}
+			idx += scope
+			continue
 		}
 
 		return errors.New("encoding: no sub decided!")
+	}
+
+	return nil
+}
+
+func (rle *intRleV2) writeDirect(out *bytes.Buffer, idx int, length int) error {
+	if rle.sub!=Encoding_DIRECT {
+		return errors.New("encoding: int rl v2 sub error ")
+	}
+	header := make([]byte, 2)
+	header[0] = Encoding_DIRECT << 6
+	values := make([]uint64, length)
+	var width byte
+	for i := 0; i < length; i++ {
+		var x uint64
+		if rle.signed {
+			x = zigzag(rle.literals[idx+i])
+		} else {
+			x = rle.uliterals[idx+i]
+		}
+		v := getAlignedWidth(x)
+		if v > width {
+			width = v
+		}
+		values[i] = x
+	}
+	w, err := widthEncoding(width)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	header[0] |= (w&0x1f) << 1 // 5 bit W
+	l := uint16(length-1)
+	header[0] |= byte(l>>8) & 0x01
+	header[1] = byte(l)
+	log.Tracef("encoding: int rl v2 Direct width %d length %d ", width, length)
+	if _, err := out.Write(header); err != nil {
+		return errors.WithStack(err)
+	}
+	for i := 0; i < len(values); i++ {
+		j := int(width - 8)
+		for ; j >= 0; j -= 8 {
+			v := byte(values[i] >> uint(j))
+			if err := out.WriteByte(v); err != nil {
+				return errors.WithStack(err)
+			}
+		}
+		j+=8
+		if j != 0 { // padding
+			v := byte(values[i]) << byte(8-j)
+			if err := out.WriteByte(v); err != nil {
+				return errors.WithStack(err)
+			}
+		}
 	}
 	return nil
 }
@@ -980,6 +1054,7 @@ type deltaValues struct {
 
 // for monotonically increasing or decreasing sequences
 // run length should be at least 3
+// todo: fixed delta
 func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
 	if idx+2 < rle.len() {
 		if rle.signed {
@@ -1164,7 +1239,7 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 	return nil
 }
 
-// code based on apache orc Java version
+// analyze bit widths, if return encoding Patch then fill the patchValues, else return encoding Direct
 // todo: patch 0
 func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, err error) {
 	// toAssure: according to base value is a signed smallest value, patch should always signed?
@@ -1271,9 +1346,9 @@ func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, er
 }
 
 func writeUints(out *bytes.Buffer, width byte, values []uint64) error {
-	bytes := int(math.Ceil(float64(width) / float64(8)))
+	bs := int(math.Ceil(float64(width) / float64(8)))
 	for i := 0; i < len(values); i++ {
-		for j := bytes - 1; j >= 0; j-- {
+		for j := bs - 1; j >= 0; j-- {
 			x := byte(values[i] >> uint(j*8))
 			if err := out.WriteByte(x); err != nil {
 				return errors.WithStack(err)

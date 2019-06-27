@@ -167,6 +167,27 @@ func TestIntRunLengthV2_Delta(t *testing.T)  {
 	assert.Equal(t, int64(-499), rle.literals[1499])
 }
 
+func TestIntRunLengthV2Direct(t *testing.T)  {
+	v:= []uint64{23713, 57005, 43806, 48879}
+	encoded:= []byte{0x5e, 0x03, 0x5c, 0xa1, 0xde, 0xad, 0xab, 0x1e, 0xbe, 0xef}
+	rle:= &intRleV2{}
+	rle.signed= false
+	buf:= &bytes.Buffer{}
+	buf.Reset()
+	rle.uliterals= v
+	if err:= rle.writeValues(buf);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, encoded, buf.Bytes())
+	rle.reset()
+	rle.signed= false
+	if err:=rle.readValues(buf);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, v, rle.uliterals)
+}
+
+
 func TestIntRunLengthV2Patch(t *testing.T)  {
 	rle := &intRleV2{}
 	rle.signed= true
