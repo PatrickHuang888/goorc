@@ -447,7 +447,7 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumnVector) (next bo
 			}
 			// set decoded length data
 			// refactor: use ref or append ?
-			cr.length = append(cr.length, lengthDecoder.uliterals[:lengthDecoder.numLiterals]...)
+			cr.length = append(cr.length, lengthDecoder.uliterals[:lengthDecoder.len()]...)
 			dec.length = cr.length
 		}
 	}
@@ -520,7 +520,7 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 
 	//has decoded leftover
 	if rle.consumeIndex != 0 {
-		for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
+		for ; rle.consumeIndex < rle.len(); rle.consumeIndex++ {
 			if v.rows < len(v.vector) {
 				v.vector[v.rows] = rle.literals[rle.consumeIndex]
 			} else {
@@ -583,7 +583,7 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 			return false, errors.WithStack(err)
 		}
 
-		for ; rle.consumeIndex < int(rle.numLiterals); rle.consumeIndex++ {
+		for ; rle.consumeIndex < rle.len(); rle.consumeIndex++ {
 			if v.rows < len(v.vector) {
 				v.vector[v.rows] = rle.literals[rle.consumeIndex]
 			} else {

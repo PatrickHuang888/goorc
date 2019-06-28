@@ -342,7 +342,6 @@ func (stm *streamWriter) writeUints(v []uint64) error {
 	irl.reset()
 	irl.signed = false
 	irl.uliterals = v
-	irl.numLiterals = len(v)
 	stm.buf.Reset()
 	if err := irl.writeValues(stm.buf); err != nil {
 		return errors.WithStack(err)
@@ -354,7 +353,6 @@ func (stm *streamWriter) writeInts(v []int64) error {
 	irl.reset()
 	irl.signed = true
 	irl.literals = v
-	irl.numLiterals = len(v)
 	stm.buf.Reset()
 	if err := irl.writeValues(stm.buf); err != nil {
 		return errors.WithStack(err)

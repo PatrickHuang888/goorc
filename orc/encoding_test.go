@@ -12,25 +12,6 @@ func init() {
 	logrus.SetLevel(logrus.TraceLevel)
 }
 
-type bstream struct {
-	value []byte
-	pos   int
-}
-
-func (bs *bstream) ReadByte() (byte, error) {
-	v := bs.value[bs.pos]
-	bs.pos++
-	return v, nil
-}
-func (bs *bstream) Read(p []byte) (n int, err error) {
-	/*if len(p) != len(bs.value)-bs.pos {
-		return 0, errors.New("read copy slice length error")
-	}*/
-	n = copy(p, bs.value[bs.pos:])
-	bs.pos += n
-	return
-}
-
 func TestByteRunLength(t *testing.T) {
 	t1 := bytes.NewBuffer([]byte{0x61, 0x00})
 
@@ -86,170 +67,232 @@ func TestIntRunLengthV1(t *testing.T) {
 
 func TestIntRunLengthV2_Delta(t *testing.T)  {
 	var err error
-	irl := &intRleV2{}
+	rle := &intRleV2{}
 	bw := bytes.NewBuffer(make([]byte, 100))
 	bw.Reset()
 
-	irl.signed=false
+	rle.signed=false
 	r := []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29} // unsigned
 	bs := []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}
-	irl.uliterals = r
-	irl.numLiterals = 10
-	err = irl.writeValues(bw)
+	rle.uliterals = r
+	err = rle.writeValues(bw)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, bw.Bytes())
 	br := bytes.NewBuffer(bs)
-	irl.reset()
-	err = irl.readValues(br) // decoding
+	rle.reset()
+	err = rle.readValues(br) // decoding
 	assert.Nil(t, err)
-	assert.Equal(t, 10, irl.numLiterals)
-	assert.EqualValues(t, r, irl.uliterals[0:10])
+	assert.Equal(t, 10, rle.len())
+	assert.EqualValues(t, r, rle.uliterals[0:10])
 
 	vs := []int64{-2, -3, -5, -7, -11, -13, -17, -19, -23, -29} // signed
-	irl.reset()
-	irl.signed = true
-	irl.numLiterals = 10
-	irl.literals = vs
+	rle.reset()
+	rle.signed = true
+	rle.literals = vs
 	bw.Reset()
-	err = irl.writeValues(bw)
+	err = rle.writeValues(bw)
 	assert.Nil(t, err)
-	irl.reset()
-	irl.signed = true
-	err = irl.readValues(bw)
+	rle.reset()
+	rle.signed = true
+	err = rle.readValues(bw)
 	assert.Nil(t, err)
-	assert.Equal(t, Encoding_DELTA, irl.sub)
-	assert.Equal(t, 10, irl.numLiterals)
-	assert.Equal(t, irl.literals, vs)
+	assert.Equal(t, Encoding_DELTA, rle.sub)
+	assert.Equal(t, 10, rle.len())
+	assert.Equal(t, rle.literals, vs)
 
 	// fixed delta 0
 	vs = []int64{-2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2}
-	irl.reset()
-	irl.signed = true
-	irl.literals = vs
-	irl.numLiterals = 11
+	rle.reset()
+	rle.signed = true
+	rle.literals = vs
 	bw.Reset()
-	err = irl.writeValues(bw)
+	err = rle.writeValues(bw)
 	assert.Nil(t, err)
-	irl.reset()
-	irl.signed = true
-	err = irl.readValues(bw)
+	rle.reset()
+	rle.signed = true
+	err = rle.readValues(bw)
 	assert.Nil(t, err)
-	assert.Equal(t, Encoding_DELTA, irl.sub)
-	assert.Equal(t, 11, irl.numLiterals)
-	assert.Equal(t, irl.literals, vs)
+	assert.Equal(t, Encoding_DELTA, rle.sub)
+	assert.Equal(t, 11, rle.len())
+	assert.Equal(t, rle.literals, vs)
 
 	// over 512 numbers with uint
 	data:= make([]uint64, 1000)
 	for i:=0; i< 1000; i++ {
 		data[i]= uint64(i)
 	}
-	irl.reset()
-	irl.signed= false
-	irl.numLiterals= 1000
-	irl.uliterals= data
+	rle.reset()
+	rle.signed= false
+	rle.uliterals= data
 	bw.Reset()
-	err= irl.writeValues(bw)
+	err= rle.writeValues(bw)
 	assert.Nil(t, err)
 	if err!=nil {
 		fmt.Printf("%+v", err)
 	}
-	irl.reset()
-	irl.signed= false
-	err= irl.readValues(bw)
+	rle.reset()
+	rle.signed= false
+	err= rle.readValues(bw)
 	assert.Nil(t, err)
 	if err!=nil {
 		fmt.Printf("%+v", err)
 	}
-	assert.Equal(t, 1000, irl.numLiterals)
-	assert.Equal(t, uint64(0), irl.uliterals[0])
-	assert.Equal(t, uint64(999), irl.uliterals[999])
+	assert.Equal(t, 1000, rle.len())
+	assert.Equal(t, uint64(0), rle.uliterals[0])
+	assert.Equal(t, uint64(999), rle.uliterals[999])
 
 	// number over 512 with int
 	idata:= make([]int64, 1500)
 	for i:=0; i<1500; i++ {
 		idata[i]= int64(1000-i)
 	}
-	irl.reset()
-	irl.signed= true
-	irl.numLiterals= 1500
-	irl.literals= idata
+	rle.reset()
+	rle.signed= true
+	rle.literals= idata
 	bw.Reset()
-	err= irl.writeValues(bw)
+	err= rle.writeValues(bw)
 	assert.Nil(t, err)
 	if err!=nil {
 		fmt.Printf("%+v", err)
 	}
-	irl.reset()
-	irl.signed= true
-	err= irl.readValues(bw)
+	rle.reset()
+	rle.signed= true
+	err= rle.readValues(bw)
 	assert.Nil(t, err)
 	if err!=nil {
 		fmt.Printf("%+v", err)
 	}
-	assert.Equal(t, 1500, irl.numLiterals)
-	assert.Equal(t, int64(1000), irl.literals[0])
-	assert.Equal(t, int64(-499), irl.literals[1499])
+	assert.Equal(t, 1500, rle.len())
+	assert.Equal(t, int64(1000), rle.literals[0])
+	assert.Equal(t, int64(-499), rle.literals[1499])
+}
+
+func TestIntRunLengthV2Direct(t *testing.T)  {
+	v:= []uint64{23713, 57005, 43806, 48879}
+	encoded:= []byte{0x5e, 0x03, 0x5c, 0xa1, 0xde, 0xad, 0xab, 0x1e, 0xbe, 0xef}
+	rle:= &intRleV2{}
+	rle.signed= false
+	buf:= &bytes.Buffer{}
+	buf.Reset()
+	rle.uliterals= v
+	if err:= rle.writeValues(buf);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, encoded, buf.Bytes())
+	rle.reset()
+	rle.signed= false
+	if err:=rle.readValues(buf);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, v, rle.uliterals)
+}
+
+
+func TestIntRunLengthV2Patch(t *testing.T)  {
+	rle := &intRleV2{}
+	rle.signed= true
+	buf :=&bytes.Buffer{}
+
+	v:= []int64{2030, 2000, 2020, 1000000, 2040, 2050, 2060, 2070, 2080, 2090, 2100, 2110, 2120, 2130,
+		2140, 2150, 2160, 2170, 2180, 2190}
+	bs := []byte{0x8e, 0x13, 0x2b, 0x21, 0x07, 0xd0, 0x1e, 0x00, 0x14, 0x70, 0x28, 0x32, 0x3c, 0x46, 0x50, 0x5a,
+		0x64, 0x6e, 0x78, 0x82, 0x8c, 0x96, 0xa0, 0xaa, 0xb4, 0xbe, 0xfc, 0xe8}
+	err:= rle.readValues(bytes.NewBuffer(bs))
+	if err!=nil {
+		t.Fatalf("err %+v", err)
+	}
+	assert.Equal(t, v, rle.literals)
+
+	rle.reset()
+	rle.signed=true
+	rle.literals=  v
+	buf.Reset()
+	if err:= rle.writeValues(buf);err!=nil {
+		t.Fatalf("fail %+v", err)
+	}
+	assert.Equal(t, bs, buf.Bytes())
+	rle.reset()
+	rle.signed=true
+	if err:= rle.readValues(buf);err!=nil {
+		t.Fatalf("decode error %+v", err)
+	}
+	assert.Equal(t, v, rle.literals)
+
+	v= []int64{-2030, -2000, -2020, 1000000, 2040, -2050, -2060, -2070, -2080, -2090, -2100, -2110, -2120, -2130,
+		-2140, -2150, -2160, -2170, -2180, -2190}
+	rle.reset()
+	rle.signed= true
+	rle.literals= v
+	buf.Reset()
+	if err:= rle.writeValues(buf);err!=nil {
+		t.Fatalf("encoding error %+v", err)
+	}
+	rle.reset()
+	rle.signed= true
+	if err:=rle.readValues(buf);err!=nil {
+		t.Fatalf("decoding error %+v", err)
+	}
+	assert.Equal(t, v, rle.literals)
 }
 
 func TestIntRunLengthV2(t *testing.T) {
-	irl := &intRleV2{}
+	rle := &intRleV2{}
 	//short repeat
 	bs := []byte{0x0a, 0x27, 0x10}
 	b1 := bytes.NewBuffer(bs)
-	irl.signed = false
-	err := irl.readValues(b1)
+	rle.signed = false
+	err := rle.readValues(b1)
 	assert.Nil(t, err)
-	assert.Equal(t, Encoding_SHORT_REPEAT, irl.sub)
-	assert.Equal(t, 5, irl.numLiterals)
-	assert.Equal(t, 10000, int(irl.uliterals[0]))
-	assert.Equal(t, 10000, int(irl.uliterals[4]))
+	assert.Equal(t, Encoding_SHORT_REPEAT, rle.sub)
+	assert.Equal(t, 5, rle.len())
+	assert.Equal(t, 10000, int(rle.uliterals[0]))
+	assert.Equal(t, 10000, int(rle.uliterals[4]))
 	b1.Reset()
-	err = irl.writeValues(b1)
+	err = rle.writeValues(b1)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, b1.Bytes())
 
-	irl.reset()
-	irl.signed = true
-	irl.numLiterals = 10
+	rle.reset()
+	rle.signed = true
 	v := make([]int64, 10)
 	for i := 0; i < 10; i++ {
 		v[i] = -1
 	}
-	irl.literals = v
+	rle.literals = v
 	b1.Reset()
-	err = irl.writeValues(b1) //encoding
+	err = rle.writeValues(b1) //encoding
 	assert.Nil(t, err)
-	irl.reset()
-	irl.signed = true
-	err = irl.readValues(b1) // decoding
+	rle.reset()
+	rle.signed = true
+	err = rle.readValues(b1) // decoding
 	assert.Nil(t, err)
-	assert.Equal(t, 10, int(irl.numLiterals))
-	assert.Equal(t, int64(-1), irl.literals[0])
-	assert.Equal(t, int64(-1), irl.literals[9])
+	assert.Equal(t, 10, rle.len())
+	assert.Equal(t, int64(-1), rle.literals[0])
+	assert.Equal(t, int64(-1), rle.literals[9])
 
 	// direct
-	irl.reset()
+	rle.reset()
 	r := []uint64{23713, 43806, 57005, 48879}
 	b2 := bytes.NewBuffer([]byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef})
-	err = irl.readValues(b2)
+	err = rle.readValues(b2)
 	assert.Nil(t, err)
-	assert.Equal(t, 4, irl.numLiterals)
-	assert.EqualValues(t, r, irl.uliterals[0:4])
+	assert.Equal(t, 4, rle.len())
+	assert.EqualValues(t, r, rle.uliterals[0:4])
 
 
 }
 
 func TestZigzag(t *testing.T) {
-	assert.Equal(t, uint64(1), EncodeZigzag(-1))
-	assert.Equal(t, int64(-1), DecodeZigzag(1))
+	assert.Equal(t, uint64(1), zigzag(-1))
+	assert.Equal(t, int64(-1), unZigzag(1))
 
 	var x int64 = 2147483647
-	assert.Equal(t, uint64(4294967294), EncodeZigzag(x))
-	assert.Equal(t, x, DecodeZigzag(EncodeZigzag(x)))
+	assert.Equal(t, uint64(4294967294), zigzag(x))
+	assert.Equal(t, x, unZigzag(zigzag(x)))
 
 	var y int64 = -2147483648
-	assert.Equal(t, uint64(4294967295), EncodeZigzag(y))
-	assert.Equal(t, y, DecodeZigzag(EncodeZigzag(y)))
+	assert.Equal(t, uint64(4294967295), zigzag(y))
+	assert.Equal(t, y, unZigzag(zigzag(y)))
 }
 
 func TestChunkHeader(t *testing.T) {
