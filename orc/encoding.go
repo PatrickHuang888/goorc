@@ -728,7 +728,7 @@ func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 			}
 			length := int(header[0])&0x01<<8 | int(header[1]) + 1
 
-			log.Tracef("decoding: irl v2 Delta length %d, width %d, len now %d", length, width, rle.len)
+			log.Tracef("decoding: irl v2 Delta length %d, width %d, len now %d", length, width, rle.len())
 
 			if rle.signed {
 				baseValue, err := binary.ReadVarint(in)
@@ -946,7 +946,6 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 				n = binary.PutUvarint(b, rle.uliterals[idx])
 			}
 			idx += int(dv.length)
-			log.Tracef("encoding: irl v2 Delta count %d at index %d", dv.length, idx)
 			if err := rle.writeDelta(b[:n], dv.base, dv.length, dv.deltas, out); err != nil {
 				return errors.WithStack(err)
 			}
@@ -970,7 +969,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 		}
 
 		if sub == Encoding_PATCHED_BASE {
-			rle.sub= Encoding_PATCHED_BASE
+			rle.sub = Encoding_PATCHED_BASE
 			log.Tracef("encoding: int rl v2 Patch %s", pvs.toString())
 			if err := writePatch(&pvs, out); err != nil {
 				return errors.WithStack(err)
@@ -980,7 +979,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 		}
 
 		if sub == Encoding_DIRECT {
-			rle.sub= Encoding_DIRECT
+			rle.sub = Encoding_DIRECT
 			if err := rle.writeDirect(out, idx, scope); err != nil {
 				return errors.WithStack(err)
 			}
@@ -995,7 +994,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 }
 
 func (rle *intRleV2) writeDirect(out *bytes.Buffer, idx int, length int) error {
-	if rle.sub!=Encoding_DIRECT {
+	if rle.sub != Encoding_DIRECT {
 		return errors.New("encoding: int rl v2 sub error ")
 	}
 	header := make([]byte, 2)
@@ -1019,8 +1018,8 @@ func (rle *intRleV2) writeDirect(out *bytes.Buffer, idx int, length int) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	header[0] |= (w&0x1f) << 1 // 5 bit W
-	l := uint16(length-1)
+	header[0] |= (w & 0x1f) << 1 // 5 bit W
+	l := uint16(length - 1)
 	header[0] |= byte(l>>8) & 0x01
 	header[1] = byte(l)
 	log.Tracef("encoding: int rl v2 Direct width %d length %d ", width, length)
@@ -1035,7 +1034,7 @@ func (rle *intRleV2) writeDirect(out *bytes.Buffer, idx int, length int) error {
 				return errors.WithStack(err)
 			}
 		}
-		j+=8
+		j += 8
 		if j != 0 { // padding
 			v := byte(values[i]) << byte(8-j)
 			if err := out.WriteByte(v); err != nil {
@@ -1370,6 +1369,10 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 			width = bits
 		}
 	}
+	if width == 1 { // delta width no 1?
+		width = 2
+	}
+	log.Tracef("encoding: irl v2 Delta length %d, width %d", length, width)
 	w, err := widthEncoding(width)
 	if err != nil {
 		return errors.WithStack(err)
@@ -1398,14 +1401,6 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 	for c := 0; c < len(deltas); {
 		var v byte
 		switch width {
-		/*case 1:
-		for j := byte(7); j > 0 && c < len(deltas); j-- {
-			v |= byte(deltas[c]&0x01) << j
-			c++
-		}
-		if err := out.WriteByte(v); err != nil {
-			return errors.WithStack(err)
-		}*/
 		case 2:
 			for j := 3; j >= 0 && c < len(deltas); j-- {
 				v |= byte(deltas[c]&0x03) << byte(j*2)
