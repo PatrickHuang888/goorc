@@ -33,8 +33,7 @@ type Encoder interface {
 }
 
 type byteRunLength struct {
-	literals    []byte
-	numLiterals int
+	literals []byte
 }
 
 func (brl *byteRunLength) readValues(in *bytes.Buffer) error {
@@ -44,35 +43,58 @@ func (brl *byteRunLength) readValues(in *bytes.Buffer) error {
 			return errors.WithStack(err)
 		}
 		if control < 0x80 { // run
-			mark := brl.numLiterals
-			brl.numLiterals += int(control) + MIN_REPEAT_SIZE
-			ls := make([]byte, brl.numLiterals)
-			copy(ls, brl.literals)
-			brl.literals = ls
-			val, err := in.ReadByte()
+			l := int(control) + MIN_REPEAT_SIZE
+			v, err := in.ReadByte()
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			for i := 0; i < int(control); i++ {
-				brl.literals[mark+i] = val
+			for i := 0; i < l; i++ {
+				brl.literals = append(brl.literals, v)
 			}
 		} else { // literals
-			mark := brl.numLiterals
-			//brl.numLiterals += 0x100 - int(control)
-			brl.numLiterals += int(-int8(control))
-			ls := make([]byte, brl.numLiterals)
-			copy(ls, brl.literals)
-			brl.literals = ls
-			if _, err = io.ReadFull(in, brl.literals[mark:brl.numLiterals]); err != nil {
-				return errors.WithStack(err)
+			l := int(-int8(control))
+			for i := 0; i < l; i++ {
+				v, err := in.ReadByte()
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				brl.literals = append(brl.literals, v)
 			}
 		}
 	}
 	return nil
 }
 
+func (brl *byteRunLength) writeValues(out *bytes.Buffer) error {
+	mark:= 0
+	for i := 0; i < len(brl.literals); {
+		b := brl.literals[i]
+		length := 1
+
+		// run
+		if (i+2 < len(brl.literals)) && (brl.literals[i+1] == b && brl.literals[i+2] == b) {
+			if mark!=i { // write out literals before run
+				l:= i-mark
+			}
+			length = 3
+			for j := i + 3; j < len(brl.literals) && brl.literals[j] == b; j++ {
+				length++
+			}
+			mark= i+length
+			if err := out.WriteByte(byte(length - 3)); err != nil {
+				return errors.WithStack(err)
+			}
+			if err := out.WriteByte(b); err != nil {
+				return errors.WithStack(err)
+			}
+		}
+		i += length
+	}
+	return nil
+}
+
 func (brl *byteRunLength) reset() {
-	brl.numLiterals = 0
+	brl.literals = brl.literals[:0]
 }
 
 type intRunLengthV1 struct {
