@@ -66,29 +66,45 @@ func (brl *byteRunLength) readValues(in *bytes.Buffer) error {
 }
 
 func (brl *byteRunLength) writeValues(out *bytes.Buffer) error {
-	mark:= 0
+	// toAssure: in case run==0
+	mark := 0
 	for i := 0; i < len(brl.literals); {
 		b := brl.literals[i]
 		length := 1
 
 		// run
 		if (i+2 < len(brl.literals)) && (brl.literals[i+1] == b && brl.literals[i+2] == b) {
-			if mark!=i { // write out literals before run
-				l:= i-mark
+			if mark != i { // write out length before run
+				l := i - mark
+				if err := out.WriteByte(byte(-int8(l))); err != nil {
+					return errors.WithStack(err)
+				}
+				if _, err := out.Write(brl.literals[mark:i]); err != nil {
+					return errors.WithStack(err)
+				}
 			}
 			length = 3
-			for j := i + 3; j < len(brl.literals) && brl.literals[j] == b; j++ {
-				length++
+			for ; i+length < len(brl.literals) && length < 130 && brl.literals[i+length] == b; length++ {
 			}
-			mark= i+length
 			if err := out.WriteByte(byte(length - 3)); err != nil {
 				return errors.WithStack(err)
 			}
 			if err := out.WriteByte(b); err != nil {
 				return errors.WithStack(err)
 			}
+			mark = i + length
 		}
 		i += length
+	}
+
+	if mark < len(brl.literals) { // write left length
+		l := len(brl.literals) - mark
+		if err := out.WriteByte(byte(-int8(l))); err != nil {
+			return errors.WithStack(err)
+		}
+		if _, err := out.Write(brl.literals[mark:len(brl.literals)]); err != nil {
+			return errors.WithStack(err)
+		}
 	}
 	return nil
 }

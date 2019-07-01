@@ -13,13 +13,14 @@ func init() {
 }
 
 func TestByteRunLength(t *testing.T) {
-	t1 := bytes.NewBuffer([]byte{0x61, 0x00})
-
+	buf := bytes.NewBuffer([]byte{0x61, 0x00})
 	brl := &byteRunLength{}
-	if err := brl.readValues(t1); err != nil {
+	v:=[]byte{0x01,0x02,0x03,0x4,0x05,0x05,0x05,0x05, 0x06,0x07, 0x08,0x08,0x08, 0x09,0x10}
+
+	if err := brl.readValues(buf); err != nil {
 		t.Error(err)
 	}
-	if brl.numLiterals != 100 {
+	if len(brl.literals) != 100 {
 		t.Fatal("literal number should be 100")
 	}
 	if brl.literals[0] != 0 || brl.literals[99] != 0 {
@@ -31,12 +32,43 @@ func TestByteRunLength(t *testing.T) {
 	if err := brl.readValues(t2); err != nil {
 		t.Error(err)
 	}
-	if brl.numLiterals != 2 {
+	if len(brl.literals) != 2 {
 		t.Fatal("literal number error")
 	}
 	if brl.literals[0] != 0x44 || brl.literals[1] != 0x45 {
 		t.Fatal("literal content error")
 	}
+
+	brl.reset()
+
+	brl.literals= v
+	buf.Reset()
+	if err:=brl.writeValues(buf);err!=nil {
+		t.Fatalf("fail %+v", err)
+	}
+	brl.reset()
+	if err:=brl.readValues(buf);err!=nil {
+		t.Fatalf("fail %+v", err)
+	}
+	assert.Equal(t, v, brl.literals)
+
+	v= v[:0]
+	for i:=0; i<=130; i++ { // run 131
+		v= append(v, 0x01)
+	}
+	v= append(v, 0x02, 0x03)
+
+	brl.literals= v
+	buf.Reset()
+	if err:=brl.writeValues(buf);err!=nil {
+		t.Fatalf("fail %+v", err)
+	}
+	brl.reset()
+	if err:=brl.readValues(buf);err!=nil {
+		t.Fatalf("fail %+v", err)
+	}
+	assert.Equal(t, v, brl.literals)
+
 }
 
 func TestIntRunLengthV1(t *testing.T) {
