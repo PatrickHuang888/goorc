@@ -23,18 +23,16 @@ const (
 )
 
 type WriterOptions struct {
-	schemas    []*TypeDescription
 	chunkSize  uint64
 	cmpKind    pb.CompressionKind
 	stripeSize int
 }
 
-func NewWriterOptions(schema *TypeDescription) *WriterOptions {
+func DefaultWriterOptions() *WriterOptions {
 	o := &WriterOptions{}
 	o.cmpKind = pb.CompressionKind_ZLIB
 	o.stripeSize = STRIPE_LIMIT
 	o.chunkSize = DEFAULT_CHUNK_SIZE
-	o.schemas = schema.normalize()
 	return o
 }
 
@@ -63,9 +61,12 @@ type writer struct {
 	columnStats []*pb.ColumnStatistics
 
 	opts *WriterOptions
+
+	schemas []*TypeDescription
 }
 
 type stripeWriter struct {
+	schemas    []*TypeDescription
 	opts *WriterOptions
 
 	// streams <id, stream{present, data, length}>
@@ -85,7 +86,7 @@ type streamWriter struct {
 	cmpBuf   *bytes.Buffer // accumulated compressed buffer
 }
 
-func NewWriter(path string, opts *WriterOptions) (Writer, error) {
+func NewWriter(path string, schema *TypeDescription, opts *WriterOptions) (Writer, error) {
 	// fixme: create new one, error when exist
 	log.Infof("open %s", path)
 	f, err := os.Create(path)
@@ -93,7 +94,7 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 		return nil, errors.WithStack(err)
 	}
 
-	w := &writer{opts: opts, path: path, f: f}
+	w := &writer{opts: opts, path: path, f: f, schemas:schema.normalize()}
 	n, err := w.writeHeader()
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -102,7 +103,7 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 	return w, nil
 }
 
-func newStripeWriter(offset uint64, opts *WriterOptions) *stripeWriter {
+func newStripeWriter(offset uint64, schemas []*TypeDescription, opts *WriterOptions) *stripeWriter {
 	idxBuf := bytes.NewBuffer(make([]byte, DEFAULT_INDEX_SIZE))
 	idxBuf.Reset()
 	ss := make(map[uint32][]*streamWriter)
@@ -111,14 +112,14 @@ func newStripeWriter(offset uint64, opts *WriterOptions) *stripeWriter {
 	si.NumberOfRows = &r
 	o := offset
 	si.Offset = &o
-	stp := &stripeWriter{opts: opts, idxBuf: idxBuf, streams: ss, info: si}
+	stp := &stripeWriter{opts: opts, idxBuf: idxBuf, streams: ss, info: si, schemas:schemas}
 	return stp
 }
 
 func (w *writer) Write(cv ColumnVector) error {
 	// todo: verify cv type and column type
 	if w.stripe == nil {
-		w.stripe = newStripeWriter(w.offset, w.opts)
+		w.stripe = newStripeWriter(w.offset, w.schemas, w.opts)
 	}
 	if err := w.stripe.write(cv); err != nil {
 		return errors.WithStack(err)
@@ -143,7 +144,7 @@ func (w *writer) flushStripe(force bool) error {
 		w.offset += stp.info.GetOffset() + stp.info.GetIndexLength() + stp.info.GetDataLength()
 		w.stripeInfos = append(w.stripeInfos, stp.info)
 		log.Debugf("flushed stripe %v", stp.info)
-		stp = newStripeWriter(w.offset, w.opts)
+		stp = newStripeWriter(w.offset, w.schemas, w.opts)
 		w.stripe = stp
 	}
 	return nil
@@ -151,7 +152,7 @@ func (w *writer) flushStripe(force bool) error {
 
 func (stp *stripeWriter) shouldFlush() bool {
 	var l uint64
-	for _, td := range stp.opts.schemas {
+	for _, td := range stp.schemas {
 		for _, s := range stp.streams[td.Id] {
 			if s != nil {
 				l += uint64(s.cmpBuf.Len())
@@ -162,7 +163,7 @@ func (stp *stripeWriter) shouldFlush() bool {
 }
 
 func (stp *stripeWriter) write(cv ColumnVector) error {
-	switch stp.opts.schemas[cv.ColumnId()].Kind {
+	switch stp.schemas[cv.ColumnId()].Kind {
 	case pb.Type_STRUCT:
 		return errors.New("struct not impl")
 	case pb.Type_INT:
@@ -289,7 +290,7 @@ func (stp *stripeWriter) flush(f *os.File) error {
 
 	// write data streams
 	var dataL uint64
-	for _, td := range stp.opts.schemas {
+	for _, td := range stp.schemas {
 		for _, s := range stp.streams[td.Id] {
 			if s != nil {
 				*s.info.Length = uint64(s.cmpBuf.Len())
@@ -307,7 +308,7 @@ func (stp *stripeWriter) flush(f *os.File) error {
 
 	// write stripe footer
 	sf := &pb.StripeFooter{}
-	for i := 0; i < len(stp.opts.schemas); i++ {
+	for i := 0; i < len(stp.schemas); i++ {
 		ss := stp.streams[uint32(i)]
 		for _, s := range ss {
 			if s != nil {
@@ -378,7 +379,7 @@ func (stm *streamWriter) reset() {
 }
 
 func (w *writer) GetSchema() *TypeDescription {
-	return w.opts.schemas[0]
+	return w.schemas[0]
 }
 
 func (w *writer) Close() error {
@@ -411,7 +412,7 @@ func (w *writer) writeFileTail() error {
 		*ft.NumberOfRows += si.GetNumberOfRows()
 	}
 	ft.Stripes = w.stripeInfos
-	ft.Types = schemasToTypes(w.opts.schemas)
+	ft.Types = schemasToTypes(w.schemas)
 
 	// metadata
 

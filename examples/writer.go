@@ -25,9 +25,8 @@ func main() {
 		os.Exit(1)
 	}*/
 
-	opts := orc.NewWriterOptions(x)
-
-	writer, err := orc.NewWriter("my-file-w.orc", opts)
+	opts := orc.DefaultWriterOptions()
+	writer, err := orc.NewWriter("my-file-w.orc", x, opts)
 	if err != nil {
 		fmt.Printf("create writer error %+v", err)
 		os.Exit(1)
