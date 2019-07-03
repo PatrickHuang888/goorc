@@ -113,7 +113,50 @@ func (brl *byteRunLength) reset() {
 	brl.literals = brl.literals[:0]
 }
 
-type intRunLengthV1 struct {
+type boolRunLength struct {
+	bools []bool
+	byteRunLength
+}
+
+func (brl *boolRunLength) reset()  {
+	brl.bools= brl.bools[:0]
+	brl.byteRunLength.reset()
+}
+
+// bool run length use byte run length encoding, but how to know the length of bools?
+func (brl *boolRunLength) readValues(in *bytes.Buffer) error {
+	if err:=brl.byteRunLength.readValues(in);err!=nil {
+		return errors.WithStack(err)
+	}
+	bs:= brl.byteRunLength.literals
+	for i:=0; i<len(bs); i++ {
+		for j:=0; j<=7; j++ {
+			v:= bs[i]>>byte(7-j)==0x01
+			brl.bools= append(brl.bools, v)
+		}
+	}
+	return nil
+}
+
+func (brl *boolRunLength) writeValues(out *bytes.Buffer) error {
+	brl.byteRunLength.reset()
+	bs := brl.byteRunLength.literals
+	for i := 0; i < len(brl.bools); {
+		j := 0
+		var b byte
+		for ; j <= 7 && (i+j) < len(brl.bools); j++ {
+			if brl.bools[i+j] {
+				b |= 0x01 << byte(7-j)
+			}
+		}
+		bs = append(bs, b)
+		i += j
+	}
+	brl.byteRunLength.literals= bs
+	return brl.byteRunLength.writeValues(out)
+}
+
+/*type intRunLengthV1 struct {
 	signed      bool
 	numLiterals int
 	literals    []int64
@@ -211,7 +254,7 @@ func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 
 	}
 	return nil
-}
+}*/
 
 // direct v2 for string/char/varchar
 type bytesDirectV2 struct {
