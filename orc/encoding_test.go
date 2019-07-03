@@ -71,7 +71,28 @@ func TestByteRunLength(t *testing.T) {
 
 }
 
-func TestIntRunLengthV1(t *testing.T) {
+func TestBoolRunLength(t *testing.T)  {
+	vs:=[]bool{true, false, false, false, false, false, false, false}
+	bs:= []byte{0xff, 0x80}
+
+	brl:=&boolRunLength{}
+	brl.bools= vs
+	buf:= &bytes.Buffer{}
+	buf.Reset()
+
+	if err:=brl.writeValues(buf);err!=nil {
+		t.Fatalf("fail %+v", err)
+	}
+	assert.Equal(t, bs, buf.Bytes())
+
+	brl.reset()
+	if err:= brl.readValues(buf); err!=nil {
+		t.Fatalf("fail %+v", err)
+	}
+	assert.Equal(t, vs, brl.bools)
+}
+
+/*func TestIntRunLengthV1(t *testing.T) {
 	t1 := bytes.NewBuffer([]byte{0x61, 0x00, 0x07})
 	irl := &intRunLengthV1{signed: false}
 	if err := irl.readValues(t1); err != nil {
@@ -95,7 +116,7 @@ func TestIntRunLengthV1(t *testing.T) {
 	if irl.uliterals[4] != 11 {
 		t.Fatal("uliteral error")
 	}
-}
+}*/
 
 func TestIntRunLengthV2_Delta(t *testing.T)  {
 	var err error
