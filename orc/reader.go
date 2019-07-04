@@ -308,15 +308,13 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 	case pb.Type_INT:
 		switch enc {
 		case pb.ColumnEncoding_DIRECT_V2: // Signed Integer RLE v2
-			v, ok := batch.(*LongColumnVector)
+			v, ok := batch.(*LongColumn)
 			if !ok {
 				sr.err = errors.New("batch is not LongColumnVector")
 				return false
 			}
 
-			// reset vector
-			v.rows = 0
-
+			v.reset()
 			result, err := cr.fillIntVector(v)
 			if err != nil {
 				sr.err = err
@@ -331,14 +329,12 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 	case pb.Type_STRING:
 		switch enc {
 		case pb.ColumnEncoding_DIRECT_V2:
-			v, ok := batch.(*StringColumnVector)
+			v, ok := batch.(*StringColumn)
 			if !ok {
 				sr.err = errors.New("batch is not BytesColumnVector")
 			}
 
-			//reset vector
-			v.rows = 0
-
+			v.reset()
 			result, err := cr.fillStringVectorDirectV2(v)
 			if err != nil {
 				sr.err = err
@@ -349,7 +345,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 		}
 
 	case pb.Type_STRUCT:
-		v, ok := batch.(*StructColumnVector)
+		v, ok := batch.(*StructColumn)
 		if !ok {
 			sr.err = errors.New("batch is not StructColumnVector")
 		}
@@ -369,7 +365,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 	return false
 }
 
-func (cr *columnReader) fillStringVectorDirectV2(v *StringColumnVector) (next bool, err error) {
+func (cr *columnReader) fillStringVectorDirectV2(v *StringColumn) (next bool, err error) {
 	if cr.dataDcr == nil {
 		cr.dataDcr = &bytesDirectV2{}
 	}
@@ -378,17 +374,12 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumnVector) (next bo
 	// has leftover
 	if dec.consumeIndex != 0 {
 		for ; dec.consumeIndex < len(dec.content); dec.consumeIndex++ {
-			if v.rows < len(v.vector) {
-				v.vector[v.rows] = string(dec.content[dec.consumeIndex]) // encoding with utf-8
+			if len(v.vector) < cap(v.vector) {
+				v.vector = append(v.vector, string(dec.content[dec.consumeIndex]))
 			} else {
-				if v.rows < cap(v.vector) {
-					v.vector = append(v.vector, string(dec.content[dec.consumeIndex]))
-				} else {
-					// still not finished
-					return true, nil
-				}
+				// still not finished
+				return true, nil
 			}
-			v.rows++
 		}
 		//leftover finished
 		dec.reset()
@@ -453,7 +444,7 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumnVector) (next bo
 	}
 
 	// decoding data stream
-	for v.rows < cap(v.vector) {
+	for len(v.vector) < cap(v.vector) {
 		if cr.dataRead < dataLength {
 			// refactor: seek every time?
 			if _, err = cr.f.Seek(int64(cr.dataStart+cr.dataRead), 0); err != nil {
@@ -488,19 +479,12 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumnVector) (next bo
 			}
 
 			for ; dec.consumeIndex < len(dec.content); dec.consumeIndex++ {
-				if v.rows < len(v.vector) {
-					// slice reference
-					v.vector[v.rows] = string(dec.content[dec.consumeIndex])
-				} else {
-					if v.rows < cap(v.vector) {
-						// refactor: allocate
+					if len(v.vector) < cap(v.vector) {
 						v.vector = append(v.vector, string(dec.content[dec.consumeIndex]))
 					} else {
-						//full
+						// full
 						return true, nil
 					}
-				}
-				v.rows++
 			}
 			dec.reset()
 		} else {
@@ -508,33 +492,27 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumnVector) (next bo
 		}
 	}
 
-	return v.rows != 0, nil
+	return v.Rows() != 0, nil
 }
 
-func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error) {
+func (cr *columnReader) fillIntVector(v *LongColumn) (next bool, err error) {
 	if cr.dataDcr == nil {
 		// refactor: init literals size
 		cr.dataDcr = &intRleV2{signed: true}
 	}
 	rle := cr.dataDcr.(*intRleV2)
 
-	//has decoded leftover
+	// has decoded leftover
 	if rle.consumeIndex != 0 {
 		for ; rle.consumeIndex < rle.len(); rle.consumeIndex++ {
-			if v.rows < len(v.vector) {
-				v.vector[v.rows] = rle.literals[rle.consumeIndex]
-			} else {
-				if v.rows < cap(v.vector) {
-					// refactor:
+				if len(v.vector) < cap(v.vector) {
 					v.vector = append(v.vector, rle.literals[rle.consumeIndex])
 				} else {
 					// still not finished
 					return true, nil
 				}
-			}
-			v.rows++
 		}
-		//leftover finished
+		// leftover finished
 		rle.reset()
 	}
 
@@ -584,24 +562,18 @@ func (cr *columnReader) fillIntVector(v *LongColumnVector) (next bool, err error
 		}
 
 		for ; rle.consumeIndex < rle.len(); rle.consumeIndex++ {
-			if v.rows < len(v.vector) {
-				v.vector[v.rows] = rle.literals[rle.consumeIndex]
-			} else {
-				if v.rows < cap(v.vector) {
-					// refactor:
+				if len(v.vector) < cap(v.vector) {
 					v.vector = append(v.vector, rle.literals[rle.consumeIndex])
 				} else {
 					//full
 					return true, nil
 				}
-			}
-			v.rows++
 		}
 		//all consumed
 		rle.reset()
 	}
 
-	return v.rows != 0, nil
+	return v.Rows() != 0, nil
 }
 
 func decompress(compress pb.CompressionKind, original bool, cmpBuf *bytes.Buffer,

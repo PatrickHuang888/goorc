@@ -33,7 +33,7 @@ func main() {
 	for it.NextStripe() {
 		for it.NextBatch(batch) {
 			//data := batch.(*orc.StructColumnVector).GetFields()
-			x:= batch.(*orc.StringColumnVector)
+			x:= batch.(*orc.StringColumn)
 			//x:= data[0].(*orc.LongColumnVector)
 			for _, v := range x.GetVector(){
 				fmt.Println(v)

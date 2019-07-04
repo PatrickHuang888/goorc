@@ -122,10 +122,9 @@ func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err 
 	case Type_LONG:
 		fallthrough
 	case Type_DATE:
-		cv = &LongColumnVector{columnVector: columnVector{id: td.Id}, vector: make([]int64, DEFAULT_ROW_SIZE, maxSize)}
+		cv = &LongColumn{column: column{id: td.Id}, vector: make([]int64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_TIMESTAMP:
-		cv = &TimestampColumnVector{columnVector: columnVector{id: td.Id},
-			Vector: make([]uint64, DEFAULT_ROW_SIZE, maxSize)}
+		cv = &TimestampColumn{column: column{id: td.Id}, vector: make([]uint64, DEFAULT_ROW_SIZE, maxSize)}
 	case Type_FLOAT:
 		fallthrough
 	case Type_DOUBLE:

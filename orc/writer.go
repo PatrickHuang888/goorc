@@ -167,7 +167,7 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 	case pb.Type_STRUCT:
 		return errors.New("struct not impl")
 	case pb.Type_INT:
-		lcv, ok := cv.(*LongColumnVector)
+		lcv, ok := cv.(*LongColumn)
 		if !ok {
 			return errors.New("column type int should be vector long")
 		}
@@ -202,7 +202,7 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 		}
 
 	case pb.Type_STRING:
-		scv, ok := cv.(*StringColumnVector)
+		scv, ok := cv.(*StringColumn)
 		if !ok {
 			return errors.New("column type stream should vector string")
 		}

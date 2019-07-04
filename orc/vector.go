@@ -10,87 +10,101 @@ type ColumnVector interface {
 	T() pb.Type_Kind
 	ColumnId() uint32
 	Rows() int
+	reset()
 }
 
-type columnVector struct {
+type column struct {
 	id   uint32
-	rows int
 }
 
-func (cv *columnVector) ColumnId() uint32 {
-	return cv.id
-}
-
-func (cv *columnVector) Rows() int {
-	// fixme: compound vector
-	return cv.rows
+func (c column) ColumnId() uint32 {
+	return c.id
 }
 
 // nullable int column vector for all integer types
-type LongColumnVector struct {
-	columnVector
+type LongColumn struct {
+	column
 	vector    []int64
-	repeating bool
 }
 
-func (*LongColumnVector) T() pb.Type_Kind {
+func (*LongColumn) T() pb.Type_Kind {
 	return pb.Type_LONG
 }
 
-func (cv *LongColumnVector) GetVector() []int64 {
-	return cv.vector[:cv.rows]
+func (lc *LongColumn) GetVector() []int64 {
+	return lc.vector
 }
 
-func (cv *LongColumnVector) SetVector(vector []int64) {
-	cv.vector = vector
-	cv.rows = len(vector)
+func (lc *LongColumn) SetVector(vector []int64) {
+	lc.vector = vector
 }
 
-type TimestampColumnVector struct {
-	columnVector
-	Vector []uint64
+func (lc *LongColumn) Rows() int  {
+	return len(lc.vector)
 }
 
-func (*TimestampColumnVector) T() pb.Type_Kind {
+func (lc *LongColumn) reset()  {
+	lc.vector= lc.vector[:0]
+}
+
+type TimestampColumn struct {
+	column
+	vector []uint64
+}
+
+func (*TimestampColumn) T() pb.Type_Kind {
 	return pb.Type_TIMESTAMP
 }
 
-type DoubleColumnVector struct {
-	columnVector
-	Vector []float64
+
+type DoubleColumn struct {
+	column
+	vector []float64
 }
 
-func (*DoubleColumnVector) T() pb.Type_Kind {
+func (*DoubleColumn) T() pb.Type_Kind {
 	return pb.Type_DOUBLE
 }
 
-type StringColumnVector struct {
-	columnVector
+type StringColumn struct {
+	column
 	vector []string
 }
 
-func (cv *StringColumnVector) GetVector() []string {
-	return cv.vector[:cv.rows]
+func (sc *StringColumn) GetVector() []string {
+	return sc.vector
 }
 
-func (cv *StringColumnVector) SetVector(v []string) {
-	cv.rows= len(v)
-	cv.vector = v
+func (sc *StringColumn) SetVector(v []string) {
+	sc.vector = v
 }
 
-func (*StringColumnVector) T() pb.Type_Kind {
+func (sc *StringColumn) Rows() int{
+	return len(sc.vector)
+}
+
+func (*StringColumn) T() pb.Type_Kind {
 	return pb.Type_STRING
 }
 
-type StructColumnVector struct {
-	columnVector
+func (sc *StringColumn) reset()  {
+	sc.vector= sc.vector[:0]
+}
+
+type StructColumn struct {
+	column
 	fields []ColumnVector
 }
 
-func (cv *StructColumnVector) GetFields() []ColumnVector {
-	return cv.fields
+func (sc *StructColumn) GetFields() []ColumnVector {
+	return sc.fields
 }
 
-func (*StructColumnVector) T() pb.Type_Kind {
+func (*StructColumn) T() pb.Type_Kind {
 	return pb.Type_STRUCT
+}
+
+func (sc *StructColumn) Rows() int {
+	// toReAssure: impl with arbitrary column
+	return sc.fields[0].Rows()
 }

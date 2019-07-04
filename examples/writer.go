@@ -43,7 +43,7 @@ func main() {
 		v[i] = fmt.Sprintf("string-%s", strconv.Itoa(i))
 	}
 	//batch.(*orc.LongColumnVector).SetVector(v)
-	batch.(*orc.StringColumnVector).SetVector(v)
+	batch.(*orc.StringColumn).SetVector(v)
 	if err := writer.Write(batch); err != nil {
 		fmt.Printf("write error %+v", err)
 		os.Exit(1)
