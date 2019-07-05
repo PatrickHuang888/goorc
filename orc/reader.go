@@ -90,7 +90,7 @@ func (r *reader) Stripes() (rr StripeReader, err error) {
 		}
 		stripeFooter := &pb.StripeFooter{}
 		if err = proto.Unmarshal(decompressed, stripeFooter); err != nil {
-			return nil, errors.Wrapf(err, "unmarshal stripe footer error")
+			return nil, errors.Wrapf(err, "unmarshal currentStripe footer error")
 		}
 		//fmt.Printf("Stripe %d footer: %s\n", i, stripeFooter.String())
 

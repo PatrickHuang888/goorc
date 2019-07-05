@@ -26,20 +26,17 @@ func (c column) ColumnId() uint32 {
 
 type BoolColumn struct {
 	column
-	vector []bool
+	Vector []bool
 }
 
 func (*BoolColumn) T() pb.Type_Kind {
 	return pb.Type_BOOLEAN
 }
 func (bc *BoolColumn) reset() {
-	bc.vector = bc.vector[:0]
+	bc.Vector = bc.Vector[:0]
 }
-func (bc *BoolColumn) SetVector(vector []bool) {
-	bc.vector = vector
-}
-func (bc *BoolColumn) GetVector() []bool {
-	return bc.vector
+func (bc *BoolColumn) Rows() int {
+	return len(bc.Vector)
 }
 
 type TinyIntColumn struct {
@@ -154,7 +151,7 @@ func (bc *BinaryColumn) GetVector() [][]byte {
 
 type DecimalColumn struct {
 	column
-	vector [][16]byte  // 38 digits, 128 bits
+	vector [][16]byte // 38 digits, 128 bits
 }
 
 type Date uint64
@@ -164,7 +161,7 @@ type DateColumn struct {
 }
 
 type Timestamp struct {
-	Date Date
+	Date  Date
 	Nanos time.Duration
 }
 type TimestampColumn struct {
@@ -248,8 +245,8 @@ type StructColumn struct {
 	fields []ColumnVector
 }
 
-func (sc *StructColumn) AddFields(subColumn ColumnVector)  {
-	sc.fields= append(sc.fields, subColumn)
+func (sc *StructColumn) AddFields(subColumn ColumnVector) {
+	sc.fields = append(sc.fields, subColumn)
 }
 
 func (sc *StructColumn) GetFields() []ColumnVector {
@@ -276,7 +273,7 @@ type ListColumn struct {
 	vector ColumnVector
 }
 
-func (*ListColumn) T()pb.Type_Kind  {
+func (*ListColumn) T() pb.Type_Kind {
 	return pb.Type_LIST
 }
 
@@ -285,16 +282,16 @@ type MapColumn struct {
 	vector map[ColumnVector]ColumnVector
 }
 
-func (*MapColumn)T()pb.Type_Kind  {
+func (*MapColumn) T() pb.Type_Kind {
 	return pb.Type_MAP
 }
 
 type UnionColumn struct {
 	column
-	tags []int
+	tags   []int
 	fields []ColumnVector
 }
 
-func (*UnionColumn) T()pb.Type_Kind  {
+func (*UnionColumn) T() pb.Type_Kind {
 	return pb.Type_UNION
 }
