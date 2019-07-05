@@ -308,7 +308,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 	case pb.Type_INT:
 		switch enc {
 		case pb.ColumnEncoding_DIRECT_V2: // Signed Integer RLE v2
-			v, ok := batch.(*LongColumn)
+			v, ok := batch.(*BigIntColumn)
 			if !ok {
 				sr.err = errors.New("batch is not LongColumnVector")
 				return false
@@ -495,7 +495,7 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumn) (next bool, er
 	return v.Rows() != 0, nil
 }
 
-func (cr *columnReader) fillIntVector(v *LongColumn) (next bool, err error) {
+func (cr *columnReader) fillIntVector(v *BigIntColumn) (next bool, err error) {
 	if cr.dataDcr == nil {
 		// refactor: init literals size
 		cr.dataDcr = &intRleV2{signed: true}

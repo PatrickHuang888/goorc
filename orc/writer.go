@@ -166,8 +166,8 @@ func (stp *stripeWriter) write(cv ColumnVector) error {
 	switch stp.schemas[cv.ColumnId()].Kind {
 	case pb.Type_STRUCT:
 		return errors.New("struct not impl")
-	case pb.Type_INT:
-		lcv, ok := cv.(*LongColumn)
+	case pb.Type_LONG:
+		lcv, ok := cv.(*BigIntColumn)
 		if !ok {
 			return errors.New("column type int should be vector long")
 		}
