@@ -13,15 +13,29 @@ type ColumnVector interface {
 	T() pb.Type_Kind
 	ColumnId() uint32
 	Rows() int
+	HasNulls() bool
 	reset()
 }
 
 type column struct {
-	id uint32
+	id       uint32
+	nullable bool
+	Nulls    []bool
 }
 
 func (c column) ColumnId() uint32 {
 	return c.id
+}
+
+func (c *column) HasNulls() bool {
+	if c.nullable {
+		for _, b := range c.Nulls {
+			if b {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type BoolColumn struct {
@@ -32,9 +46,12 @@ type BoolColumn struct {
 func (*BoolColumn) T() pb.Type_Kind {
 	return pb.Type_BOOLEAN
 }
+
 func (bc *BoolColumn) reset() {
 	bc.Vector = bc.Vector[:0]
+	bc.Nulls = bc.Nulls[:0]
 }
+
 func (bc *BoolColumn) Rows() int {
 	return len(bc.Vector)
 }
@@ -142,22 +159,38 @@ func (bc *BinaryColumn) reset() {
 func (bc *BinaryColumn) Rows() int {
 	return len(bc.vector)
 }
-func (bc *BinaryColumn) SetVector(vector [][]byte) {
-	bc.vector = vector
-}
-func (bc *BinaryColumn) GetVector() [][]byte {
-	return bc.vector
-}
 
 type DecimalColumn struct {
 	column
-	vector [][16]byte // 38 digits, 128 bits
+	Vector [][16]byte // 38 digits, 128 bits
+}
+
+func (*DecimalColumn) T() pb.Type_Kind {
+	return pb.Type_DECIMAL
+}
+func (dc *DecimalColumn) Rows() int {
+	return len(dc.Vector)
+}
+func (dc *DecimalColumn) reset() {
+	dc.Vector = dc.Vector[:0]
 }
 
 type Date uint64
 type DateColumn struct {
 	column
-	vector []Date
+	Vector []Date
+}
+
+func (*DateColumn) T() pb.Type_Kind {
+	return pb.Type_DATE
+}
+
+func (dc *DateColumn) Rows() int {
+	return len(dc.Vector)
+}
+
+func (dc *DateColumn) reset() {
+	dc.Vector = dc.Vector[:0]
 }
 
 type Timestamp struct {
@@ -166,11 +199,19 @@ type Timestamp struct {
 }
 type TimestampColumn struct {
 	column
-	vector []Timestamp
+	Vector []Timestamp
 }
 
 func (*TimestampColumn) T() pb.Type_Kind {
 	return pb.Type_TIMESTAMP
+}
+
+func (tc *TimestampColumn) Rows() int {
+	return len(tc.Vector)
+}
+
+func (tc *TimestampColumn) reset() {
+	tc.Vector = tc.Vector[:0]
 }
 
 type FloatColumn struct {
@@ -270,11 +311,19 @@ func (sc *StructColumn) reset() {
 
 type ListColumn struct {
 	column
-	vector ColumnVector
+	Child ColumnVector
 }
 
 func (*ListColumn) T() pb.Type_Kind {
 	return pb.Type_LIST
+}
+
+func (lc *ListColumn) Rows() int {
+	return lc.Child.Rows()
+}
+
+func (lc *ListColumn) reset() {
+	lc.Child.reset()
 }
 
 type MapColumn struct {

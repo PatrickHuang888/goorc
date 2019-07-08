@@ -105,57 +105,71 @@ func schemasToTypes(schemas []*TypeDescription) []*Type {
 }
 */
 
-func (td *TypeDescription) CreateVectorBatch(maxSize int) (cv ColumnVector, err error) {
-	if maxSize < DEFAULT_ROW_SIZE {
-		maxSize = DEFAULT_ROW_SIZE
-	}
+func (td *TypeDescription) CreateVectorBatch() (cv ColumnVector, err error) {
 
 	switch td.Kind {
 	case Type_BOOLEAN:
-		fallthrough
+		cv = &BoolColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_BYTE:
-		fallthrough
+		cv = &TinyIntColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_SHORT:
-		fallthrough
+		cv = &TinyIntColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_INT:
-		fallthrough
+		cv = &IntColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_LONG:
-		fallthrough
-	case Type_DATE:
-		cv = &LongColumn{column: column{id: td.Id}, vector: make([]int64, DEFAULT_ROW_SIZE, maxSize)}
-	case Type_TIMESTAMP:
-		cv = &TimestampColumn{column: column{id: td.Id}, vector: make([]uint64, DEFAULT_ROW_SIZE, maxSize)}
+		cv = &BigIntColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_FLOAT:
-		fallthrough
+		cv = &FloatColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_DOUBLE:
-		cv = &DoubleColumnVector{columnVector: columnVector{id: td.Id},
-			Vector: make([]float64, DEFAULT_ROW_SIZE, maxSize)}
+		cv = &DoubleColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_DECIMAL:
-	// todo:
-	case Type_STRING:
-		cv = &StringColumnVector{columnVector: columnVector{id: td.Id},
-			vector: make([]string, DEFAULT_ROW_SIZE, maxSize)}
+		cv = &DecimalColumn{column: column{id: td.Id, nullable: false}}
+
+	case Type_DATE:
+		cv = &DateColumn{column: column{id: td.Id}}
+
+	case Type_TIMESTAMP:
+		cv = &TimestampColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_BINARY:
-		return nil, errors.New("not impl")
+		cv = &BinaryColumn{column: column{id: td.Id, nullable: false}}
+
+	case Type_STRING:
+		cv = &StringColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_CHAR:
 		return nil, errors.New("not impl")
+
 	case Type_VARCHAR:
-		return nil, errors.New("not impl")
+		cv = &StringColumn{column: column{id: td.Id, nullable: false}}
+
 	case Type_STRUCT:
 		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {
-			f[i], err = v.CreateVectorBatch(maxSize)
+			f[i], err = v.CreateVectorBatch()
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
 		}
-		cv = &StructColumnVector{columnVector: columnVector{id: td.Id}, fields: f}
+		cv = &StructColumn{column: column{id: td.Id, nullable: true}, fields: f}
+
 	case Type_UNION:
-	// todo:
+		// todo:
+		return nil, errors.New("not impl")
 	case Type_LIST:
-	// todo:
+		cv = &ListColumn{column: column{id: td.Id, nullable: true}}
+
 	case Type_MAP:
 		// todo:
+		return nil, errors.New("not impl")
+
 	default:
 		return nil, errors.Errorf("unknown type %s", td.Kind.String())
 	}
