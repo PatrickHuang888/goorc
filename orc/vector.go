@@ -14,28 +14,53 @@ type ColumnVector interface {
 	ColumnId() uint32
 	Rows() int
 	HasNulls() bool
+	presents() []bool
+	// todo: Presents and Vector verify, length should be equal if has nulls
 	reset()
 }
 
 type column struct {
 	id       uint32
 	nullable bool
+	setNulls bool
+	hasNulls bool
 	Nulls    []bool
 }
 
-func (c column) ColumnId() uint32 {
+func (c *column) ColumnId() uint32 {
 	return c.id
 }
 
+// call this function will not reflect Nulls change
 func (c *column) HasNulls() bool {
-	if c.nullable {
-		for _, b := range c.Nulls {
-			if b {
-				return true
-			}
+	if !c.nullable {
+		return false
+	}
+	if c.setNulls {
+		return c.hasNulls
+	}
+	for _, b := range c.Nulls {
+		if b {
+			c.setNulls = true
+			c.hasNulls = true
 		}
 	}
+	c.setNulls = true
 	return false
+}
+
+func (c *column) presents() []bool {
+	bb := make([]bool, len(c.Nulls))
+	for i, b := range c.Nulls {
+		bb[i] = !b
+	}
+	return bb
+}
+
+func (c *column) reset() {
+	c.Nulls = c.Nulls[:0]
+	c.setNulls= false
+	c.hasNulls= false
 }
 
 type BoolColumn struct {
@@ -49,7 +74,7 @@ func (*BoolColumn) T() pb.Type_Kind {
 
 func (bc *BoolColumn) reset() {
 	bc.Vector = bc.Vector[:0]
-	bc.Nulls = bc.Nulls[:0]
+	bc.column.reset()
 }
 
 func (bc *BoolColumn) Rows() int {
@@ -58,91 +83,69 @@ func (bc *BoolColumn) Rows() int {
 
 type TinyIntColumn struct {
 	column
-	vector []byte
+	Vector []byte
 }
 
 func (*TinyIntColumn) T() pb.Type_Kind {
 	return pb.Type_BYTE
 }
 func (tic *TinyIntColumn) reset() {
-	tic.vector = tic.vector[:0]
+	tic.Vector = tic.Vector[:0]
+	tic.column.reset()
 }
 func (tic *TinyIntColumn) Rows() int {
-	return len(tic.vector)
-}
-func (tic *TinyIntColumn) SetVector(vector []byte) {
-	tic.vector = vector
-}
-func (tic *TinyIntColumn) GetVector() []byte {
-	return tic.vector
+	return len(tic.Vector)
 }
 
 type SmallIntColumn struct {
 	column
-	vector []int16
+	Vector []int16
 }
 
 func (*SmallIntColumn) T() pb.Type_Kind {
 	return pb.Type_SHORT
 }
 func (sic *SmallIntColumn) reset() {
-	sic.vector = sic.vector[:0]
+	sic.Vector = sic.Vector[:0]
+	sic.column.reset()
 }
 func (sic *SmallIntColumn) Rows() int {
-	return len(sic.vector)
-}
-func (sic *SmallIntColumn) SetVector(vector []int16) {
-	sic.vector = vector
-}
-func (sic *SmallIntColumn) GetVector() []int16 {
-	return sic.vector
+	return len(sic.Vector)
 }
 
 type IntColumn struct {
 	column
-	vector []int32
+	Vector []int32
 }
 
 func (*IntColumn) T() pb.Type_Kind {
 	return pb.Type_INT
 }
 func (ic *IntColumn) reset() {
-	ic.vector = ic.vector[:0]
+	ic.column.reset()
+	ic.Vector = ic.Vector[:0]
 }
 func (ic *IntColumn) Rows() int {
-	return len(ic.vector)
-}
-func (ic *IntColumn) SetVector(vector []int32) {
-	ic.vector = vector
-}
-func (ic *IntColumn) GetVector() []int32 {
-	return ic.vector
+	return len(ic.Vector)
 }
 
 // nullable int column vector for all integer types
 type BigIntColumn struct {
 	column
-	vector []int64
+	Vector []int64
 }
 
 func (*BigIntColumn) T() pb.Type_Kind {
 	return pb.Type_LONG
 }
 
-func (bic *BigIntColumn) GetVector() []int64 {
-	return bic.vector
-}
-
-func (bic *BigIntColumn) SetVector(vector []int64) {
-	bic.vector = vector
-}
-
 func (bic *BigIntColumn) Rows() int {
-	return len(bic.vector)
+	return len(bic.Vector)
 }
 
 func (bic *BigIntColumn) reset() {
-	bic.vector = bic.vector[:0]
+	bic.column.reset()
+	bic.Vector = bic.Vector[:0]
 }
 
 type BinaryColumn struct {

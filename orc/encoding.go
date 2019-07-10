@@ -153,7 +153,10 @@ func (brl *boolRunLength) writeValues(out *bytes.Buffer) error {
 		i += j
 	}
 	brl.byteRunLength.literals= bs
-	return brl.byteRunLength.writeValues(out)
+	if err:=brl.byteRunLength.writeValues(out);err!=nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 /*type intRunLengthV1 struct {
