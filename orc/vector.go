@@ -261,19 +261,11 @@ func (dc *DoubleColumn) GetVector() []float64 {
 
 type StringColumn struct {
 	column
-	vector []string
-}
-
-func (sc *StringColumn) GetVector() []string {
-	return sc.vector
-}
-
-func (sc *StringColumn) SetVector(v []string) {
-	sc.vector = v
+	Vector []string
 }
 
 func (sc *StringColumn) Rows() int {
-	return len(sc.vector)
+	return len(sc.Vector)
 }
 
 func (*StringColumn) T() pb.Type_Kind {
@@ -281,20 +273,13 @@ func (*StringColumn) T() pb.Type_Kind {
 }
 
 func (sc *StringColumn) reset() {
-	sc.vector = sc.vector[:0]
+	sc.Vector = sc.Vector[:0]
+	sc.column.reset()
 }
 
 type StructColumn struct {
 	column
-	fields []ColumnVector
-}
-
-func (sc *StructColumn) AddFields(subColumn ColumnVector) {
-	sc.fields = append(sc.fields, subColumn)
-}
-
-func (sc *StructColumn) GetFields() []ColumnVector {
-	return sc.fields
+	Fields []ColumnVector
 }
 
 func (*StructColumn) T() pb.Type_Kind {
@@ -302,12 +287,12 @@ func (*StructColumn) T() pb.Type_Kind {
 }
 
 func (sc *StructColumn) Rows() int {
-	// toReAssure: impl with arbitrary column
-	return sc.fields[0].Rows()
+	// toAssure
+	return sc.Fields[0].Rows()
 }
 
 func (sc *StructColumn) reset() {
-	for _, c := range sc.fields {
+	for _, c := range sc.Fields {
 		c.reset()
 	}
 }
