@@ -2,6 +2,7 @@ package orc
 
 import (
 	"github.com/PatrickHuang888/goorc/pb/pb"
+	"math/big"
 	"time"
 )
 
@@ -150,19 +151,23 @@ func (bic *BigIntColumn) reset() {
 
 type BinaryColumn struct {
 	column
-	vector [][]byte
+	Vector [][]byte
 }
 
 func (*BinaryColumn) T() pb.Type_Kind {
 	return pb.Type_BINARY
 }
 func (bc *BinaryColumn) reset() {
-	bc.vector = bc.vector[:0]
+	bc.Vector = bc.Vector[:0]
+	bc.column.reset()
 }
 func (bc *BinaryColumn) Rows() int {
-	return len(bc.vector)
+	return len(bc.Vector)
 }
 
+type Decimal struct {
+	big.Int
+}
 type DecimalColumn struct {
 	column
 	Vector [][16]byte // 38 digits, 128 bits
