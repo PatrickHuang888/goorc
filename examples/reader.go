@@ -25,7 +25,7 @@ func main() {
 	if err != nil {
 		fmt.Printf("%+v", err)
 	}
-	batch, err := schema.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
+	batch, err := schema.CreateVectorBatch()
 	if err != nil {
 		fmt.Printf("create row batch error %+v", err)
 		os.Exit(1)
@@ -33,9 +33,9 @@ func main() {
 	for it.NextStripe() {
 		for it.NextBatch(batch) {
 			//data := batch.(*orc.StructColumnVector).GetFields()
-			x:= batch.(*orc.StringColumnVector)
+			x:= batch.(*orc.StringColumn)
 			//x:= data[0].(*orc.LongColumnVector)
-			for _, v := range x.GetVector(){
+			for _, v := range x.Vector{
 				fmt.Println(v)
 			}
 			/*y:= data[1].(*orc.BytesColumnVector)

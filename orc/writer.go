@@ -23,18 +23,16 @@ const (
 )
 
 type WriterOptions struct {
-	schemas    []*TypeDescription
 	chunkSize  uint64
 	cmpKind    pb.CompressionKind
 	stripeSize int
 }
 
-func NewWriterOptions(schema *TypeDescription) *WriterOptions {
+func DefaultWriterOptions() *WriterOptions {
 	o := &WriterOptions{}
 	o.cmpKind = pb.CompressionKind_ZLIB
 	o.stripeSize = STRIPE_LIMIT
 	o.chunkSize = DEFAULT_CHUNK_SIZE
-	o.schemas = schema.normalize()
 	return o
 }
 
@@ -56,17 +54,18 @@ type writer struct {
 
 	ps *pb.PostScript
 
-	// current stripe and info
-	stripe *stripeWriter
+	currentStripe *stripeWriter
 
 	stripeInfos []*pb.StripeInformation
 	columnStats []*pb.ColumnStatistics
 
-	opts *WriterOptions
+	schemas []*TypeDescription
+	opts    *WriterOptions
 }
 
 type stripeWriter struct {
-	opts *WriterOptions
+	schemas []*TypeDescription
+	opts    *WriterOptions
 
 	// streams <id, stream{present, data, length}>
 	streams map[uint32][]*streamWriter
@@ -77,15 +76,7 @@ type stripeWriter struct {
 	info *pb.StripeInformation
 }
 
-type streamWriter struct {
-	info     *pb.Stream
-	encoding *pb.ColumnEncoding
-	enc      Encoder
-	buf      *bytes.Buffer
-	cmpBuf   *bytes.Buffer // accumulated compressed buffer
-}
-
-func NewWriter(path string, opts *WriterOptions) (Writer, error) {
+func NewWriter(path string, schema *TypeDescription, opts *WriterOptions) (Writer, error) {
 	// fixme: create new one, error when exist
 	log.Infof("open %s", path)
 	f, err := os.Create(path)
@@ -93,7 +84,7 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 		return nil, errors.WithStack(err)
 	}
 
-	w := &writer{opts: opts, path: path, f: f}
+	w := &writer{opts: opts, path: path, f: f, schemas: schema.normalize()}
 	n, err := w.writeHeader()
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -102,7 +93,7 @@ func NewWriter(path string, opts *WriterOptions) (Writer, error) {
 	return w, nil
 }
 
-func newStripeWriter(offset uint64, opts *WriterOptions) *stripeWriter {
+func newStripeWriter(offset uint64, schemas []*TypeDescription, opts *WriterOptions) *stripeWriter {
 	idxBuf := bytes.NewBuffer(make([]byte, DEFAULT_INDEX_SIZE))
 	idxBuf.Reset()
 	ss := make(map[uint32][]*streamWriter)
@@ -111,19 +102,19 @@ func newStripeWriter(offset uint64, opts *WriterOptions) *stripeWriter {
 	si.NumberOfRows = &r
 	o := offset
 	si.Offset = &o
-	stp := &stripeWriter{opts: opts, idxBuf: idxBuf, streams: ss, info: si}
+	stp := &stripeWriter{opts: opts, idxBuf: idxBuf, streams: ss, info: si, schemas: schemas}
 	return stp
 }
 
 func (w *writer) Write(cv ColumnVector) error {
-	// todo: verify cv type and column type
-	if w.stripe == nil {
-		w.stripe = newStripeWriter(w.offset, w.opts)
+	stripe := w.currentStripe
+	if stripe == nil {
+		stripe = newStripeWriter(w.offset, w.schemas, w.opts)
+		w.currentStripe = stripe
 	}
-	if err := w.stripe.write(cv); err != nil {
+	if err := stripe.write(cv); err != nil {
 		return errors.WithStack(err)
 	}
-
 	if err := w.flushStripe(false); err != nil {
 		return errors.WithStack(err)
 	}
@@ -131,171 +122,431 @@ func (w *writer) Write(cv ColumnVector) error {
 }
 
 func (w *writer) flushStripe(force bool) error {
-	// fixme: assuming 1 stripe all in memory
-	// a stripe should contains whole row
-	stp := w.stripe
-	if stp.shouldFlush() || force {
-		if err := stp.flush(w.f); err != nil {
+	// fixme: assuming 1 currentStripe all in memory
+	// a currentStripe should contains whole row
+	stripe := w.currentStripe
+	if stripe.shouldFlush() || force {
+		if err := stripe.flush(w.f); err != nil {
 			return errors.WithStack(err)
 		}
 		// todo: update column stats
-		// reset current stripe
-		w.offset += stp.info.GetOffset() + stp.info.GetIndexLength() + stp.info.GetDataLength()
-		w.stripeInfos = append(w.stripeInfos, stp.info)
-		log.Debugf("flushed stripe %v", stp.info)
-		stp = newStripeWriter(w.offset, w.opts)
-		w.stripe = stp
+		// reset current currentStripe
+		w.offset += stripe.info.GetOffset() + stripe.info.GetIndexLength() + stripe.info.GetDataLength()
+		w.stripeInfos = append(w.stripeInfos, stripe.info)
+		log.Debugf("flushed currentStripe %v", stripe.info)
+		stripe = newStripeWriter(w.offset, w.schemas, w.opts)
+		w.currentStripe = stripe
 	}
 	return nil
 }
 
-func (stp *stripeWriter) shouldFlush() bool {
+func (stripe *stripeWriter) shouldFlush() bool {
 	var l uint64
-	for _, td := range stp.opts.schemas {
-		for _, s := range stp.streams[td.Id] {
+	for _, td := range stripe.schemas {
+		for _, s := range stripe.streams[td.Id] {
 			if s != nil {
-				l += uint64(s.cmpBuf.Len())
+				l += uint64(s.compressedBuf.Len())
 			}
 		}
 	}
-	return l >= stp.opts.chunkSize
+	return l >= stripe.opts.chunkSize
 }
 
-func (stp *stripeWriter) write(cv ColumnVector) error {
-	switch stp.opts.schemas[cv.ColumnId()].Kind {
-	case pb.Type_STRUCT:
-		return errors.New("struct not impl")
-	case pb.Type_INT:
-		lcv, ok := cv.(*LongColumnVector)
-		if !ok {
-			return errors.New("column type int should be vector long")
-		}
-		if _, ok := stp.streams[cv.ColumnId()]; !ok {
-			stp.streams[cv.ColumnId()] = make([]*streamWriter, 2)
-		}
+// should not change columnVector when write started!
+func (stripe *stripeWriter) write(cv ColumnVector) error {
+	id := cv.ColumnId()
+	encoding := stripe.columnEncoding(id)
 
-		// todo: present stream
+	streams := stripe.streams[id]
+	if streams == nil {
+		streams = make([]*streamWriter, 4)
+		stripe.streams[id] = streams
+	}
+	present := stripe.streams[id][0]
+	data := stripe.streams[id][1]
 
-		// write data stream
-		dtStm := stp.streams[cv.ColumnId()][1]
-		if dtStm == nil {
-			info := &pb.Stream{Kind: new(pb.Stream_Kind), Column: new(uint32), Length: new(uint64)}
-			*info.Kind = pb.Stream_DATA
-			*info.Column = cv.ColumnId()
-			buf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
-			buf.Reset()
-			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
-			cmpBuf.Reset()
-			enc := &intRleV2{signed: true}
-			dv2 := pb.ColumnEncoding_DIRECT_V2
-			encoding := &pb.ColumnEncoding{Kind: &dv2}
-			dtStm = &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
-			stp.streams[cv.ColumnId()][1] = dtStm
+	if cv.HasNulls() {
+		if present == nil {
+			present = newPresentStream(id, encoding)
+			stripe.streams[id][0] = present
 		}
-		if err := dtStm.writeInts(lcv.GetVector()); err != nil {
+		if err := present.writeBools(cv.presents()); err != nil {
 			return errors.WithStack(err)
 		}
-		_, err := compressTo(stp.opts.cmpKind, stp.opts.chunkSize, dtStm.buf, dtStm.cmpBuf)
-		if err != nil {
-			return errors.Wrap(err, "compressing data stream error")
+	}
+
+	switch stripe.schemas[id].Kind {
+	case pb.Type_BOOLEAN:
+		column := cv.(*BoolColumn)
+		if data == nil {
+			data = newBoolDataStream(id)
+			stripe.streams[id][1] = data
 		}
+		var vector []bool
+		if column.HasNulls() {
+			for i, v := range column.Vector {
+				if !column.Nulls[i] {
+					vector = append(vector, v)
+				}
+			}
+		} else {
+			vector = column.Vector
+		}
+		if err := data.writeBools(vector); err != nil {
+			return errors.WithStack(err)
+		}
+
+	case pb.Type_BYTE:
+		column := cv.(*TinyIntColumn)
+		if data == nil {
+			data = newByteDataStream(id)
+			stripe.streams[id][1] = data
+		}
+		var vector []byte
+		if column.HasNulls() { // toAssure: using copy when hasNulls
+			var vector []byte
+			for i, p := range column.Nulls {
+				if !p {
+					vector = append(vector, column.Vector[i])
+				}
+			}
+		} else {
+			vector = column.Vector
+		}
+		if err := data.writeBytes(vector); err != nil {
+			return errors.WithStack(err)
+		}
+
+	case pb.Type_SHORT:
+		column := cv.(*SmallIntColumn)
+
+		var vector []int64
+		if column.HasNulls() {
+			for i, p := range column.Nulls {
+				if !p {
+					vector = append(vector, int64(column.Vector[i]))
+				}
+			}
+		} else {
+			for _, v := range column.Vector {
+				vector = append(vector, int64(v))
+			}
+		}
+
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if data == nil {
+				data = newIntDataStreamV2(id)
+				stripe.streams[id][1] = data
+			}
+
+			if err := data.writeLongsV2(vector); err != nil {
+				return errors.WithStack(err)
+			}
+			break
+		}
+
+		return errors.Errorf("writing encoding %s for short not impl",
+			pb.ColumnEncoding_Kind_name[int32(encoding)])
+
+	case pb.Type_INT:
+		column := cv.(*IntColumn)
+
+		var vector []int64
+		if column.HasNulls() {
+			for i, p := range column.Nulls {
+				if !p {
+					vector = append(vector, int64(column.Vector[i]))
+				}
+			}
+		} else {
+			for _, v := range column.Vector {
+				vector = append(vector, int64(v))
+			}
+		}
+
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if data == nil {
+				data = newIntDataStreamV2(id)
+				stripe.streams[id][1] = data
+			}
+			if err := data.writeLongsV2(vector); err != nil {
+				return errors.WithStack(err)
+			}
+			break
+		}
+
+		return errors.Errorf("writing encoding %s for int not impl",
+			pb.ColumnEncoding_Kind_name[int32(encoding)])
+
+	case pb.Type_LONG:
+		column := cv.(*BigIntColumn)
+
+		var vector []int64
+		if column.HasNulls() {
+			for i, p := range column.Nulls {
+				if !p {
+					vector = append(vector, int64(column.Vector[i]))
+				}
+			}
+		} else {
+			vector = column.Vector
+		}
+
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if data == nil {
+				data = newIntDataStreamV2(id)
+				stripe.streams[id][1] = data
+			}
+			if err := data.writeLongsV2(vector); err != nil {
+				return errors.WithStack(err)
+			}
+			break
+		}
+
+		return errors.Errorf("writing encoding %s for int64 not impl",
+			pb.ColumnEncoding_Kind_name[int32(encoding)])
 
 	case pb.Type_STRING:
-		scv, ok := cv.(*StringColumnVector)
-		if !ok {
-			return errors.New("column type stream should vector string")
+		column := cv.(*StringColumn)
+
+		var lengthVector []uint64
+		var contents [][]byte
+		if column.hasNulls {
+			for i, n := range column.Nulls {
+				if !n {
+					s := column.Vector[i]
+					contents = append(contents, []byte(s))              // convert into bytes encoding utf-8
+					lengthVector = append(lengthVector, uint64(len(s))) // len return bytes size
+				}
+			}
+		} else {
+			for _, s := range column.Vector {
+				contents = append(contents, []byte(s))
+				lengthVector = append(lengthVector, uint64(len(s)))
+			}
 		}
 
-		var lghV []uint64 // length vector
-		var cntV [][]byte  // content vector
-		for _, s := range scv.GetVector() {
-			lghV = append(lghV, uint64(len(s))) // len return bytes
-			cntV = append(cntV, []byte(s))        // convert into bytes encoding utf-8
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if data == nil {
+				data = newStringDataStreamV2(id)
+				stripe.streams[id][1] = data
+			}
+			if err := data.writeBytesDirectV2(contents); err != nil {
+				return errors.WithStack(err)
+			}
+
+			lengthStream := stripe.streams[id][2]
+			if lengthStream == nil {
+				lengthStream = newLengthStreamV2(id)
+				stripe.streams[cv.ColumnId()][2] = lengthStream
+			}
+			if err := lengthStream.writeULongsV2(lengthVector); err != nil {
+				return errors.WithStack(err)
+			}
+			break
 		}
 
-		if _, ok := stp.streams[cv.ColumnId()]; !ok {
-			stp.streams[cv.ColumnId()] = make([]*streamWriter, 3)
+		return errors.Errorf("writing encoding %s for string not impl",
+			pb.ColumnEncoding_Kind_name[int32(encoding)])
+
+	case pb.Type_BINARY:
+		column := cv.(*BinaryColumn)
+
+		var vector [][]byte
+		var lengthVector []uint64
+		if column.hasNulls {
+			for i, n := range column.Nulls {
+				if !n {
+					vector = append(vector, column.Vector[i])
+					lengthVector = append(lengthVector, uint64(len(column.Vector[i])))
+				}
+			}
+		} else {
+			vector = column.Vector
 		}
 
-		// todo: present stream
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if data == nil {
+				data = newBinaryDataStreamV2(id)
+				stripe.streams[id][1] = data
+				if err := data.writeBytesDirectV2(vector); err != nil {
+					return errors.WithStack(err)
+				}
+			}
 
-		// write data stream
-		dtStm := stp.streams[cv.ColumnId()][1]
-		if dtStm == nil {
-			info := &pb.Stream{Kind: new(pb.Stream_Kind), Column: new(uint32), Length: new(uint64)}
-			*info.Kind = pb.Stream_DATA
-			*info.Column = cv.ColumnId()
-			buf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
-			buf.Reset()
-			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
-			cmpBuf.Reset()
-			enc := &bytesDirectV2{}
-			dv2 := pb.ColumnEncoding_DIRECT_V2
-			encoding := &pb.ColumnEncoding{Kind: &dv2}
-			dtStm = &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
-			stp.streams[cv.ColumnId()][1] = dtStm
-		}
-
-		if err := dtStm.writeBytesDirectV2(cntV); err != nil {
-			return errors.WithStack(err)
-		}
-		_, err := compressTo(stp.opts.cmpKind, stp.opts.chunkSize, dtStm.buf, dtStm.cmpBuf)
-		if err != nil {
-			return errors.Wrap(err, "compressing data stream error")
+			lengthStream := stripe.streams[id][2]
+			if lengthStream == nil {
+				lengthStream = newLengthStreamV2(id)
+				stripe.streams[cv.ColumnId()][2] = lengthStream
+			}
+			if err := lengthStream.writeULongsV2(lengthVector); err != nil {
+				return errors.WithStack(err)
+			}
+			break
 		}
 
-		// write length stream
-		lghStm := stp.streams[cv.ColumnId()][2]
-		if lghStm == nil {
-			info := &pb.Stream{Kind: new(pb.Stream_Kind), Column: new(uint32), Length: new(uint64)}
-			*info.Kind = pb.Stream_LENGTH
-			*info.Column = cv.ColumnId()
-			buf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
-			buf.Reset()
-			cmpBuf := bytes.NewBuffer(make([]byte, stp.opts.chunkSize))
-			cmpBuf.Reset()
-			enc := &intRleV2{}
-			dv2 := pb.ColumnEncoding_DIRECT_V2
-			encoding := &pb.ColumnEncoding{Kind: &dv2}
-			lghStm = &streamWriter{info: info, buf: buf, cmpBuf: cmpBuf, encoding: encoding, enc: enc}
-			stp.streams[cv.ColumnId()][2] = lghStm
+		return errors.Errorf("writing encoding %s for binary not impl",
+			pb.ColumnEncoding_Kind_name[int32(encoding)])
+
+	case pb.Type_DATE:
+		column := cv.(*DateColumn)
+		var vector []int64
+
+		if cv.HasNulls() {
+			for i, b := range column.Nulls {
+				if !b {
+					vector = append(vector, column.Vector[i].getDays())
+				}
+			}
+		} else {
+			for _, d := range column.Vector {
+				vector = append(vector, d.getDays())
+			}
 		}
-		if err := lghStm.writeUints(lghV); err != nil {
-			return errors.WithStack(err)
+
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if data == nil {
+				data = newSignedIntStreamV2(id, pb.Stream_DATA)
+				stripe.streams[id][1] = data
+			}
+			if err := data.writeLongsV2(vector); err != nil {
+				return errors.WithStack(err)
+			}
+			break
 		}
-		if _, err := compressTo(stp.opts.cmpKind, stp.opts.chunkSize, lghStm.buf, lghStm.cmpBuf); err != nil {
-			return errors.Wrap(err, "compressing data stream error")
+
+		return errors.Errorf("writing encoding %s for date not impl",
+			pb.ColumnEncoding_Kind_name[int32(encoding)])
+
+	case pb.Type_TIMESTAMP:
+		column := cv.(*TimestampColumn)
+
+		var seconds []int64
+		var nanos []uint64
+
+		if column.hasNulls {
+			for i, b := range column.Nulls {
+				if !b {
+					s, n := column.Vector[i].getSecondsAndNanos()
+					seconds = append(seconds, s)
+					nanos = append(nanos, uint64(n))
+				}
+			}
+		} else {
+			for _, t := range column.Vector {
+				s, n := t.getSecondsAndNanos()
+				seconds = append(seconds, s)
+				nanos = append(nanos, uint64(n))
+			}
+		}
+
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if data == nil {
+				data = newSignedIntStreamV2(id, pb.Stream_DATA)
+				stripe.streams[id][1] = data
+			}
+			if err := data.writeLongsV2(seconds); err != nil {
+				return errors.WithStack(err)
+			}
+
+			secondary := stripe.streams[id][2]
+			if secondary == nil {
+				secondary = newUnsignedIntStreamV2(id, pb.Stream_SECONDARY)
+				stripe.streams[id][2] = secondary
+			}
+			if err := secondary.writeULongsV2(nanos); err != nil {
+				return errors.WithStack(err)
+			}
+			break
+		}
+
+		return errors.Errorf("writing encoding %s for timestamp not impl",
+			pb.ColumnEncoding_Kind_name[int32(encoding)])
+
+	case pb.Type_STRUCT:
+		column := cv.(*StructColumn)
+		for _, c := range column.Fields {
+			if err := stripe.write(c); err != nil {
+				return errors.WithStack(err)
+			}
 		}
 
 	default:
 		return errors.New("no impl")
 	}
 
-	*stp.info.NumberOfRows += uint64(cv.Rows())
+	for _, s := range streams {
+		if s != nil {
+			if err := s.compress(stripe.opts.cmpKind, stripe.opts.chunkSize); err != nil {
+				return errors.WithStack(err)
+			}
+		}
+	}
+
+	*stripe.info.NumberOfRows += uint64(cv.Rows())
 	return nil
 }
 
-// 1 stripe should be self-contained
-func (stp *stripeWriter) flush(f *os.File) error {
+func (stripe *stripeWriter) columnEncoding(id uint32) pb.ColumnEncoding_Kind {
+	switch stripe.schemas[id].Kind {
+	case pb.Type_SHORT:
+		fallthrough
+	case pb.Type_INT:
+		fallthrough
+	case pb.Type_LONG:
+		return pb.ColumnEncoding_DIRECT_V2
+	case pb.Type_FLOAT:
+		fallthrough
+	case pb.Type_DOUBLE:
+		return pb.ColumnEncoding_DIRECT
+	case pb.Type_STRING:
+		// todo:
+		return pb.ColumnEncoding_DIRECT_V2
+	case pb.Type_BOOLEAN:
+		return pb.ColumnEncoding_DIRECT
+	case pb.Type_BYTE:
+		return pb.ColumnEncoding_DIRECT
+	case pb.Type_BINARY:
+		return pb.ColumnEncoding_DIRECT_V2
+	case pb.Type_DECIMAL:
+		return pb.ColumnEncoding_DIRECT_V2
+	case pb.Type_DATE:
+		return pb.ColumnEncoding_DIRECT_V2
+	case pb.Type_TIMESTAMP:
+		return pb.ColumnEncoding_DIRECT_V2
+	case pb.Type_STRUCT:
+		return pb.ColumnEncoding_DIRECT
+	case pb.Type_LIST:
+		return pb.ColumnEncoding_DIRECT_V2
+	case pb.Type_MAP:
+		return pb.ColumnEncoding_DIRECT_V2
+	case pb.Type_UNION:
+		return pb.ColumnEncoding_DIRECT
+
+	default:
+		panic("column type unknown")
+	}
+}
+
+// 1 currentStripe should be self-contained
+func (stripe *stripeWriter) flush(f *os.File) error {
 	// row number updated at write
-	// write index
-	idxL := uint64(stp.idxBuf.Len())
+	idxLength := uint64(stripe.idxBuf.Len())
 	// buf will be reset after writeTo
-	_, err := stp.idxBuf.WriteTo(f)
+	_, err := stripe.idxBuf.WriteTo(f)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	log.Debugf("flush index with %d", idxL)
+	log.Debugf("flush index with length %d", idxLength)
 
-	// write data streams
 	var dataL uint64
-	for _, td := range stp.opts.schemas {
-		for _, s := range stp.streams[td.Id] {
+	for _, td := range stripe.schemas {
+		for _, s := range stripe.streams[td.Id] {
 			if s != nil {
-				*s.info.Length = uint64(s.cmpBuf.Len())
-				log.Tracef("write stream %s of column %d length %d", s.info.GetKind().String(),
+				*s.info.Length = uint64(s.compressedBuf.Len())
+				log.Tracef("flush stream %s of column %d length %d", s.info.GetKind().String(),
 					s.info.GetColumn(), *s.info.Length)
-				n, err := s.cmpBuf.WriteTo(f)
+				n, err := s.compressedBuf.WriteTo(f)
 				if err != nil {
 					return errors.WithStack(err)
 				}
@@ -303,82 +554,111 @@ func (stp *stripeWriter) flush(f *os.File) error {
 			}
 		}
 	}
-	log.Debugf("flush data stream with %d", dataL)
 
-	// write stripe footer
-	sf := &pb.StripeFooter{}
-	for i := 0; i < len(stp.opts.schemas); i++ {
-		ss := stp.streams[uint32(i)]
-		for _, s := range ss {
+	// stripe footer
+	footer := &pb.StripeFooter{}
+	for _, schema := range stripe.schemas {
+		for _, s := range  stripe.streams[schema.Id]{
 			if s != nil {
-				sf.Streams = append(sf.Streams, s.info)
-				sf.Columns = append(sf.Columns, s.encoding)
+				footer.Streams = append(footer.Streams, s.info)
+				footer.Columns = append(footer.Columns, s.encoding)
 			}
 		}
 	}
-	sfm, err := proto.Marshal(sf)
+	mf, err := proto.Marshal(footer)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	sfCmpBuf, err := compressByteSlice(stp.opts.cmpKind, stp.opts.chunkSize, sfm)
+	cmf, err := compressByteSlice(stripe.opts.cmpKind, stripe.opts.chunkSize, mf)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	ftLength := uint64(len(sfCmpBuf))
-	if _, err := f.Write(sfCmpBuf); err != nil {
+	ftLength := uint64(len(cmf))
+	if _, err := f.Write(cmf); err != nil {
 		return errors.WithStack(err)
 	}
-	log.Debugf("write stripe footer, length: %d", ftLength)
+	log.Debugf("flush stripe footer with length: %d", ftLength)
 
-	stp.info.IndexLength = &idxL
-	stp.info.DataLength = &dataL
-	stp.info.FooterLength = &ftLength
+	stripe.info.IndexLength = &idxLength
+	stripe.info.DataLength = &dataL
+	stripe.info.FooterLength = &ftLength
 
 	return nil
 }
 
-func (stm *streamWriter) writeUints(v []uint64) error {
-	irl := stm.enc.(*intRleV2)
-	irl.reset()
-	irl.signed = false
+type streamWriter struct {
+	info          *pb.Stream
+	encoding      *pb.ColumnEncoding
+	encoder       Encoder
+	buf           *bytes.Buffer
+	compressedBuf *bytes.Buffer
+}
+
+func (s *streamWriter) writeBools(bb []bool) error {
+	enc := s.encoder.(*boolRunLength)
+	enc.bools = bb
+	if err := enc.writeValues(s.buf); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func (s *streamWriter) writeBytes(bb []byte) error {
+	enc := s.encoder.(*byteRunLength)
+	enc.literals = bb
+	if err := enc.writeValues(s.buf); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func (s *streamWriter) writeULongsV2(v []uint64) error {
+	irl := s.encoder.(*intRleV2)
 	irl.uliterals = v
-	stm.buf.Reset()
-	if err := irl.writeValues(stm.buf); err != nil {
+	if err := irl.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
-func (stm *streamWriter) writeInts(v []int64) error {
-	irl := stm.enc.(*intRleV2)
-	irl.reset()
-	irl.signed = true
+
+func (s *streamWriter) writeLongsV2(v []int64) error {
+	irl := s.encoder.(*intRleV2)
 	irl.literals = v
-	stm.buf.Reset()
-	if err := irl.writeValues(stm.buf); err != nil {
+	if err := irl.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func (stm *streamWriter) writeBytesDirectV2(bs [][]byte) error {
-	// refactor: will not doing copy, just append to buffer ?
-	enc := stm.enc.(*bytesDirectV2)
-	enc.reset()
-	enc.content= bs
-	stm.buf.Reset()
-	if err:= enc.writeValues(stm.buf); err!=nil {
+func (s *streamWriter) writeBytesDirectV2(bs [][]byte) error {
+	enc := s.encoder.(*bytesDirectV2)
+	enc.content = bs
+	if err := enc.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func (stm *streamWriter) reset() {
-	*stm.info.Length = 0
-	stm.buf.Reset()
+func (s *streamWriter) compress(cmpKind pb.CompressionKind, chunkSize uint64) error {
+	switch cmpKind {
+	case pb.CompressionKind_ZLIB:
+		if _, err := compressZlibTo(cmpKind, chunkSize, s.compressedBuf, s.buf);
+			err != nil {
+			return errors.Wrap(err, "compress bool present stream error")
+		}
+	default:
+		return errors.New("compress other than ZLIB not impl")
+	}
+	return nil
+}
+
+func (s *streamWriter) reset() {
+	*s.info.Length = 0
+	s.buf.Reset()
 }
 
 func (w *writer) GetSchema() *TypeDescription {
-	return w.opts.schemas[0]
+	return w.schemas[0]
 }
 
 func (w *writer) Close() error {
@@ -411,7 +691,7 @@ func (w *writer) writeFileTail() error {
 		*ft.NumberOfRows += si.GetNumberOfRows()
 	}
 	ft.Stripes = w.stripeInfos
-	ft.Types = schemasToTypes(w.opts.schemas)
+	ft.Types = schemasToTypes(w.schemas)
 
 	// metadata
 
@@ -429,7 +709,7 @@ func (w *writer) writeFileTail() error {
 	if _, err := w.f.Write(ftCmpBuf); err != nil {
 		return errors.WithStack(err)
 	}
-	log.Debugf("write footer with length: %d", ftl)
+	log.Debugf("write file footer with length: %d", ftl)
 
 	// write postscript
 	ps := &pb.PostScript{}
@@ -455,53 +735,49 @@ func (w *writer) writeFileTail() error {
 	return nil
 }
 
-// compressing src buf into dst, maybe to several chunks
-func compressTo(kind pb.CompressionKind, chunkSize uint64, src *bytes.Buffer, dst *bytes.Buffer) (cmpLength int64, err error) {
-	switch kind {
-	case pb.CompressionKind_ZLIB:
-		srcBytes := src.Bytes()
-		chunkLength := MinUint64(MAX_CHUNK_LENGTH, chunkSize)
-		buf := bytes.NewBuffer(make([]byte, chunkLength))
-		buf.Reset()
-		w, err := flate.NewWriter(buf, -1)
-		if err != nil {
+// compress src buf into dst, maybe to several chunks
+func compressZlibTo(kind pb.CompressionKind, chunkSize uint64, dst *bytes.Buffer, src *bytes.Buffer) (cmpLength int64,
+	err error) {
+
+	srcBytes := src.Bytes()
+	chunkLength := MinUint64(MAX_CHUNK_LENGTH, chunkSize)
+	buf := bytes.NewBuffer(make([]byte, chunkLength))
+	buf.Reset()
+	w, err := flate.NewWriter(buf, -1)
+	if err != nil {
+		return 0, errors.WithStack(err)
+	}
+	srcLen := src.Len()
+	if uint64(srcLen) < chunkLength {
+		if _, err := src.WriteTo(w); err != nil {
 			return 0, errors.WithStack(err)
 		}
-		srcLen := src.Len()
-		if uint64(srcLen) < chunkLength {
-			if _, err := src.WriteTo(w); err != nil {
-				return 0, errors.WithStack(err)
-			}
-			if err = w.Close(); err != nil {
-				return 0, errors.WithStack(err)
-			}
-			var header []byte
-			orig := buf.Len() >= srcLen
-			if orig {
-				header = encChunkHeader(srcLen, orig)
-			} else {
-				header = encChunkHeader(buf.Len(), orig)
-			}
-			if _, err = dst.Write(header); err != nil {
-				return 0, err
-			}
-			if orig {
-				if n, err := dst.Write(srcBytes); err != nil {
-					return int64(n), errors.WithStack(err)
-				}
-			} else {
-				if n, err := buf.WriteTo(dst); err != nil {
-					return n, errors.WithStack(err)
-				}
-			}
-
+		if err = w.Close(); err != nil {
+			return 0, errors.WithStack(err)
+		}
+		var header []byte
+		orig := buf.Len() >= srcLen
+		if orig {
+			header = encChunkHeader(srcLen, orig)
 		} else {
-			// todo: several chunk
-			return 0, errors.New("no impl")
+			header = encChunkHeader(buf.Len(), orig)
+		}
+		if _, err = dst.Write(header); err != nil {
+			return 0, err
+		}
+		if orig {
+			if n, err := dst.Write(srcBytes); err != nil {
+				return int64(n), errors.WithStack(err)
+			}
+		} else {
+			if n, err := buf.WriteTo(dst); err != nil {
+				return n, errors.WithStack(err)
+			}
 		}
 
-	default:
-		return 0, errors.New("compression other than zlib not impl")
+	} else {
+		// todo: several chunk
+		return 0, errors.New("no impl")
 	}
 	return
 }
@@ -523,7 +799,7 @@ func decChunkHeader(h []byte) (length int, orig bool) {
 	return int(h[2])<<15 | int(h[1])<<7 | int(h[0])>>1, h[0]&0x01 == 0x01
 }
 
-// compress byte slice into chunk slice, used in stripe footer, tail footer
+// compress byte slice into chunk slice, used in currentStripe footer, tail footer
 // thinking should be smaller than chunksize
 func compressByteSlice(kind pb.CompressionKind, chunkSize uint64, b []byte) (compressed []byte, err error) {
 	switch kind {
@@ -531,7 +807,7 @@ func compressByteSlice(kind pb.CompressionKind, chunkSize uint64, b []byte) (com
 		src := bytes.NewBuffer(b)
 		dst := bytes.NewBuffer(make([]byte, len(b)))
 		dst.Reset()
-		if _, err = compressTo(kind, chunkSize, src, dst); err != nil {
+		if _, err = compressZlibTo(kind, chunkSize, dst, src); err != nil {
 			return nil, err
 		}
 		return dst.Bytes(), nil
@@ -540,4 +816,121 @@ func compressByteSlice(kind pb.CompressionKind, chunkSize uint64, b []byte) (com
 		return nil, errors.New("compression other than zlib not impl")
 	}
 	return
+}
+
+func newPresentStream(id uint32, encoding pb.ColumnEncoding_Kind) *streamWriter {
+	k := pb.Stream_PRESENT
+	info := &pb.Stream{Kind: &k, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &boolRunLength{}
+	e := &pb.ColumnEncoding{Kind: &encoding}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
+}
+
+func newBoolDataStream(id uint32) *streamWriter {
+	k := pb.Stream_DATA
+	info := &pb.Stream{Kind: &k, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &boolRunLength{}
+	ce := pb.ColumnEncoding_DIRECT
+	e := &pb.ColumnEncoding{Kind: &ce}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
+}
+
+func newByteDataStream(id uint32) *streamWriter {
+	k := pb.Stream_DATA
+	info := &pb.Stream{Kind: &k, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &byteRunLength{}
+	ce := pb.ColumnEncoding_DIRECT
+	e := &pb.ColumnEncoding{Kind: &ce}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
+}
+
+func newIntDataStreamV2(id uint32) *streamWriter {
+	k := pb.Stream_DATA
+	info := &pb.Stream{Kind: &k, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &intRleV2{}
+	enc.signed = true
+	ce := pb.ColumnEncoding_DIRECT_V2
+	e := &pb.ColumnEncoding{Kind: &ce}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
+}
+
+func newStringDataStreamV2(id uint32) *streamWriter {
+	k := pb.Stream_DATA
+	info := &pb.Stream{Kind: &k, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &bytesDirectV2{}
+	ce := pb.ColumnEncoding_DIRECT_V2
+	e := &pb.ColumnEncoding{Kind: &ce}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
+}
+
+func newLengthStreamV2(id uint32) *streamWriter {
+	k := pb.Stream_LENGTH
+	info := &pb.Stream{Kind: &k, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &intRleV2{}
+	dv2 := pb.ColumnEncoding_DIRECT_V2
+	encoding := &pb.ColumnEncoding{Kind: &dv2}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: encoding, encoder: enc}
+}
+
+func newBinaryDataStreamV2(id uint32) *streamWriter {
+	k := pb.Stream_DATA
+	info := &pb.Stream{Kind: &k, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &bytesDirectV2{}
+	ce := pb.ColumnEncoding_DIRECT_V2
+	e := &pb.ColumnEncoding{Kind: &ce}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
+}
+
+func newSignedIntStreamV2(id uint32, kind pb.Stream_Kind) *streamWriter {
+	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &intRleV2{}
+	enc.signed = true
+	ce := pb.ColumnEncoding_DIRECT_V2
+	e := &pb.ColumnEncoding{Kind: &ce}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
+}
+
+func newUnsignedIntStreamV2(id uint32, kind pb.Stream_Kind) *streamWriter {
+	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &intRleV2{}
+	enc.signed = false
+	ce := pb.ColumnEncoding_DIRECT_V2
+	e := &pb.ColumnEncoding{Kind: &ce}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
 }
