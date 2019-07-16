@@ -351,7 +351,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) bool {
 		}
 		// todo: present
 		var ret bool
-		for _, vf := range v.fields {
+		for _, vf := range v.Fields {
 			if sr.NextBatch(vf) {
 				ret = true
 			}
@@ -374,8 +374,8 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumn) (next bool, er
 	// has leftover
 	if dec.consumeIndex != 0 {
 		for ; dec.consumeIndex < len(dec.content); dec.consumeIndex++ {
-			if len(v.vector) < cap(v.vector) {
-				v.vector = append(v.vector, string(dec.content[dec.consumeIndex]))
+			if len(v.Vector) < cap(v.Vector) {
+				v.Vector = append(v.Vector, string(dec.content[dec.consumeIndex]))
 			} else {
 				// still not finished
 				return true, nil
@@ -444,7 +444,7 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumn) (next bool, er
 	}
 
 	// decoding data stream
-	for len(v.vector) < cap(v.vector) {
+	for len(v.Vector) < cap(v.Vector) {
 		if cr.dataRead < dataLength {
 			// refactor: seek every time?
 			if _, err = cr.f.Seek(int64(cr.dataStart+cr.dataRead), 0); err != nil {
@@ -479,8 +479,8 @@ func (cr *columnReader) fillStringVectorDirectV2(v *StringColumn) (next bool, er
 			}
 
 			for ; dec.consumeIndex < len(dec.content); dec.consumeIndex++ {
-					if len(v.vector) < cap(v.vector) {
-						v.vector = append(v.vector, string(dec.content[dec.consumeIndex]))
+					if len(v.Vector) < cap(v.Vector) {
+						v.Vector = append(v.Vector, string(dec.content[dec.consumeIndex]))
 					} else {
 						// full
 						return true, nil
@@ -505,8 +505,8 @@ func (cr *columnReader) fillIntVector(v *BigIntColumn) (next bool, err error) {
 	// has decoded leftover
 	if rle.consumeIndex != 0 {
 		for ; rle.consumeIndex < rle.len(); rle.consumeIndex++ {
-				if len(v.vector) < cap(v.vector) {
-					v.vector = append(v.vector, rle.literals[rle.consumeIndex])
+				if len(v.Vector) < cap(v.Vector) {
+					v.Vector = append(v.Vector, rle.literals[rle.consumeIndex])
 				} else {
 					// still not finished
 					return true, nil
@@ -562,8 +562,8 @@ func (cr *columnReader) fillIntVector(v *BigIntColumn) (next bool, err error) {
 		}
 
 		for ; rle.consumeIndex < rle.len(); rle.consumeIndex++ {
-				if len(v.vector) < cap(v.vector) {
-					v.vector = append(v.vector, rle.literals[rle.consumeIndex])
+				if len(v.Vector) < cap(v.Vector) {
+					v.Vector = append(v.Vector, rle.literals[rle.consumeIndex])
 				} else {
 					//full
 					return true, nil

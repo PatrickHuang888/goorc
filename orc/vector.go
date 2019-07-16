@@ -2,7 +2,6 @@ package orc
 
 import (
 	"github.com/PatrickHuang888/goorc/pb/pb"
-	"math/big"
 	"time"
 )
 
@@ -60,8 +59,8 @@ func (c *column) presents() []bool {
 
 func (c *column) reset() {
 	c.Nulls = c.Nulls[:0]
-	c.setNulls= false
-	c.hasNulls= false
+	c.setNulls = false
+	c.hasNulls = false
 }
 
 type BoolColumn struct {
@@ -165,8 +164,10 @@ func (bc *BinaryColumn) Rows() int {
 	return len(bc.Vector)
 }
 
+/*// hive 0.13 support 38 digits
 type Decimal struct {
 	big.Int
+	scale uint64
 }
 type DecimalColumn struct {
 	column
@@ -181,9 +182,24 @@ func (dc *DecimalColumn) Rows() int {
 }
 func (dc *DecimalColumn) reset() {
 	dc.Vector = dc.Vector[:0]
+}*/
+
+type Date time.Time
+
+func NewDate(year int, month time.Month, day int) Date {
+	return Date(time.Date(year, month, day, 0, 0, 0, 0, time.UTC))
 }
 
-type Date uint64
+func (d *Date) String() string {
+	return time.Time(*d).Format("2006-01-02")
+}
+
+// days from 1970, Jan, 1 UTC
+func (d *Date) getDays() int64 {
+	s := time.Time(*d).Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
+	return int64(s.Hours() / 24)
+}
+
 type DateColumn struct {
 	column
 	Vector []Date
@@ -201,13 +217,18 @@ func (dc *DateColumn) reset() {
 	dc.Vector = dc.Vector[:0]
 }
 
-type Timestamp struct {
-	Date  Date
-	Nanos time.Duration
-}
+type Timestamp time.Time
 type TimestampColumn struct {
 	column
 	Vector []Timestamp
+}
+
+// return seconds from 2015, Jan, 1 and nano seconds
+func (t *Timestamp) getSecondsAndNanos() (seconds int64, nanos uint) {
+	d:= time.Time(*t).Sub(time.Date(2015, 1, 1 , 0, 0, 0, 0, time.UTC))
+	seconds= int64(d.Seconds())
+	nanos= uint(time.Time(*t).Nanosecond())
+	return
 }
 
 func (*TimestampColumn) T() pb.Type_Kind {

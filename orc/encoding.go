@@ -139,8 +139,7 @@ func (brl *boolRunLength) readValues(in *bytes.Buffer) error {
 }
 
 func (brl *boolRunLength) writeValues(out *bytes.Buffer) error {
-	brl.byteRunLength.reset()
-	bs := brl.byteRunLength.literals
+	var bs []byte
 	for i := 0; i < len(brl.bools); {
 		j := 0
 		var b byte
@@ -320,7 +319,6 @@ func (rle *intRleV2) reset() {
 	} else {
 		rle.uliterals = rle.uliterals[:0]
 	}
-	rle.signed = false
 	rle.sub = Encoding_UNSET
 	rle.consumeIndex = 0
 }

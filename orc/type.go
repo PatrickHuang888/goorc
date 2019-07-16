@@ -130,7 +130,9 @@ func (td *TypeDescription) CreateVectorBatch() (cv ColumnVector, err error) {
 		cv = &DoubleColumn{column: column{id: td.Id, nullable: false}}
 
 	case Type_DECIMAL:
-		cv = &DecimalColumn{column: column{id: td.Id, nullable: false}}
+		// todo:
+		//cv = &DecimalColumn{column: column{id: td.Id, nullable: false}}
+		return nil, errors.New("not impl")
 
 	case Type_DATE:
 		cv = &DateColumn{column: column{id: td.Id}}
@@ -158,7 +160,7 @@ func (td *TypeDescription) CreateVectorBatch() (cv ColumnVector, err error) {
 				return nil, errors.WithStack(err)
 			}
 		}
-		cv = &StructColumn{column: column{id: td.Id, nullable: true}, fields: f}
+		cv = &StructColumn{column: column{id: td.Id, nullable: true}, Fields: f}
 
 	case Type_UNION:
 		// todo:
