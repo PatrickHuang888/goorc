@@ -310,7 +310,7 @@ type intRleV2 struct {
 	signed       bool
 	literals     []int64
 	uliterals    []uint64
-	consumeIndex int
+	consumedIndex int  // for read
 }
 
 func (rle *intRleV2) reset() {
@@ -320,17 +320,17 @@ func (rle *intRleV2) reset() {
 		rle.uliterals = rle.uliterals[:0]
 	}
 	rle.sub = Encoding_UNSET
-	rle.consumeIndex = 0
+	rle.consumedIndex = 0
 }
 
-func (rle *intRleV2) len() int {
+/*func (rle *intRleV2) len() int {
 	if rle.signed {
 		return len(rle.literals)
 	} else {
 		return len(rle.uliterals)
 	}
 }
-
+*/
 // decoding buffer all to u/literals
 func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 	for in.Len() > 0 {

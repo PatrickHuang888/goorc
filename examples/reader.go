@@ -16,37 +16,37 @@ func main() {
 	}
 	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
-	schema, err := reader.GetColumnSchema(0)
-	if err != nil {
-		fmt.Printf("get schema error %+v", err)
-		os.Exit(1)
-	}
-	it, err := reader.Stripes()
+	schema := reader.GetSchema()
+	stripes, err := reader.Stripes()
 	if err != nil {
 		fmt.Printf("%+v", err)
 	}
-	batch, err := schema.CreateVectorBatch()
-	if err != nil {
-		fmt.Printf("create row batch error %+v", err)
-		os.Exit(1)
-	}
-	for it.NextStripe() {
-		for it.NextBatch(batch) {
+	for _, stripe := range stripes {
+		batch, err := schema.CreateVectorBatch()
+		if err != nil {
+			fmt.Printf("create row batch error %+v", err)
+			os.Exit(1)
+		}
+
+		for hasNext := false; hasNext && err == nil; hasNext, err = stripe.NextBatch(batch) {
 			//data := batch.(*orc.StructColumnVector).GetFields()
-			x:= batch.(*orc.StringColumn)
+			x := batch.(*orc.StringColumn)
 			//x:= data[0].(*orc.LongColumnVector)
-			for _, v := range x.Vector{
-				fmt.Println(v)
+			if !x.HasNulls() {
+				for _, v := range x.Vector {
+					fmt.Println(v)
+				}
 			}
 			/*y:= data[1].(*orc.BytesColumnVector)
 			for _,v := range y.GetVector() {
 				fmt.Println(string(v))
 			}*/
 		}
-		if err = it.Err(); err != nil {
+		if err != nil {
 			fmt.Printf("%+v", err)
+			break
 		}
 	}
 
-	it.Close()
+	reader.Close()
 }
