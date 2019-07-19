@@ -218,68 +218,11 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 		}
 
 	case pb.Type_SHORT:
-		column := cv.(*SmallIntColumn)
-
-		var vector []int64
-		if column.HasNulls() {
-			for i, p := range column.Nulls {
-				if !p {
-					vector = append(vector, int64(column.Vector[i]))
-				}
-			}
-		} else {
-			for _, v := range column.Vector {
-				vector = append(vector, int64(v))
-			}
-		}
-
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			if data == nil {
-				data = newIntDataStreamV2(id)
-				stripe.streams[id][1] = data
-			}
-
-			if err := data.writeLongsV2(vector); err != nil {
-				return errors.WithStack(err)
-			}
-			break
-		}
-
-		return errors.Errorf("writing encoding %s for short not impl",
-			pb.ColumnEncoding_Kind_name[int32(encoding)])
-
+		fallthrough
 	case pb.Type_INT:
-		column := cv.(*IntColumn)
-
-		var vector []int64
-		if column.HasNulls() {
-			for i, p := range column.Nulls {
-				if !p {
-					vector = append(vector, int64(column.Vector[i]))
-				}
-			}
-		} else {
-			for _, v := range column.Vector {
-				vector = append(vector, int64(v))
-			}
-		}
-
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			if data == nil {
-				data = newIntDataStreamV2(id)
-				stripe.streams[id][1] = data
-			}
-			if err := data.writeLongsV2(vector); err != nil {
-				return errors.WithStack(err)
-			}
-			break
-		}
-
-		return errors.Errorf("writing encoding %s for int not impl",
-			pb.ColumnEncoding_Kind_name[int32(encoding)])
-
+		fallthrough
 	case pb.Type_LONG:
-		column := cv.(*BigIntColumn)
+		column := cv.(*LongColumn)
 
 		var vector []int64
 		if column.HasNulls() {

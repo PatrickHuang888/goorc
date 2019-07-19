@@ -97,55 +97,24 @@ func (tic *TinyIntColumn) Rows() int {
 	return len(tic.Vector)
 }
 
-type SmallIntColumn struct {
-	column
-	Vector []int16
-}
-
-func (*SmallIntColumn) T() pb.Type_Kind {
-	return pb.Type_SHORT
-}
-func (sic *SmallIntColumn) reset() {
-	sic.Vector = sic.Vector[:0]
-	sic.column.reset()
-}
-func (sic *SmallIntColumn) Rows() int {
-	return len(sic.Vector)
-}
-
-type IntColumn struct {
-	column
-	Vector []int32
-}
-
-func (*IntColumn) T() pb.Type_Kind {
-	return pb.Type_INT
-}
-func (ic *IntColumn) reset() {
-	ic.column.reset()
-	ic.Vector = ic.Vector[:0]
-}
-func (ic *IntColumn) Rows() int {
-	return len(ic.Vector)
-}
 
 // nullable int column vector for all integer types
-type BigIntColumn struct {
+type LongColumn struct {
 	column
 	Vector []int64
 }
 
-func (*BigIntColumn) T() pb.Type_Kind {
+func (*LongColumn) T() pb.Type_Kind {
 	return pb.Type_LONG
 }
 
-func (bic *BigIntColumn) Rows() int {
-	return len(bic.Vector)
+func (lc *LongColumn) Rows() int {
+	return len(lc.Vector)
 }
 
-func (bic *BigIntColumn) reset() {
-	bic.column.reset()
-	bic.Vector = bic.Vector[:0]
+func (lc *LongColumn) reset() {
+	lc.column.reset()
+	lc.Vector = lc.Vector[:0]
 }
 
 type BinaryColumn struct {

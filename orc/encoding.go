@@ -26,13 +26,23 @@ const (
 type Decoder interface {
 	readValues(in *bytes.Buffer) error
 	reset()
+	len() int
 }
 
 type Encoder interface {
 	writeValues(out *bytes.Buffer) error
 }
 
+type decoder struct {
+	consumedIndex int
+}
+
+func (d *decoder) reset()  {
+	d.consumedIndex= 0
+}
+
 type byteRunLength struct {
+	decoder
 	literals []byte
 }
 
@@ -111,6 +121,11 @@ func (brl *byteRunLength) writeValues(out *bytes.Buffer) error {
 
 func (brl *byteRunLength) reset() {
 	brl.literals = brl.literals[:0]
+	brl.decoder.reset()
+}
+
+func (brl *byteRunLength) len() int {
+	return len(brl.literals)
 }
 
 type boolRunLength struct {
@@ -323,14 +338,14 @@ func (rle *intRleV2) reset() {
 	rle.consumedIndex = 0
 }
 
-/*func (rle *intRleV2) len() int {
+func (rle *intRleV2) len() int {
 	if rle.signed {
 		return len(rle.literals)
 	} else {
 		return len(rle.uliterals)
 	}
 }
-*/
+
 // decoding buffer all to u/literals
 func (rle *intRleV2) readValues(in *bytes.Buffer) error {
 	for in.Len() > 0 {

@@ -121,7 +121,7 @@ func (td *TypeDescription) CreateVectorBatch() (cv ColumnVector, err error) {
 		cv = &IntColumn{column: column{id: td.Id, nullable: false}}
 
 	case Type_LONG:
-		cv = &BigIntColumn{column: column{id: td.Id, nullable: false}}
+		cv = &LongColumn{column: column{id: td.Id, nullable: false}}
 
 	case Type_FLOAT:
 		cv = &FloatColumn{column: column{id: td.Id, nullable: false}}
