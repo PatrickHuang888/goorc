@@ -32,7 +32,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	batch, err := x.CreateVectorBatch(orc.DEFAULT_ROW_SIZE)
+	batch, err := x.CreateVectorBatch()
 	if err != nil {
 		fmt.Printf("got error when create row batch %v+", err)
 		os.Exit(1)
@@ -43,7 +43,7 @@ func main() {
 		v[i] = fmt.Sprintf("string-%s", strconv.Itoa(i))
 	}
 	//batch.(*orc.LongColumnVector).SetVector(v)
-	batch.(*orc.StringColumn).SetVector(v)
+	batch.(*orc.StringColumn).Vector= v
 	if err := writer.Write(batch); err != nil {
 		fmt.Printf("write error %+v", err)
 		os.Exit(1)

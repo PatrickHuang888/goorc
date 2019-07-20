@@ -291,9 +291,9 @@ func TestIntRunLengthV2Patch(t *testing.T)  {
 func TestIntRunLengthV2(t *testing.T) {
 	rle := &intRleV2{}
 	//short repeat
+	rle.signed = false
 	bs := []byte{0x0a, 0x27, 0x10}
 	b1 := bytes.NewBuffer(bs)
-	rle.signed = false
 	err := rle.readValues(b1)
 	assert.Nil(t, err)
 	assert.Equal(t, Encoding_SHORT_REPEAT, rle.sub)
@@ -316,7 +316,6 @@ func TestIntRunLengthV2(t *testing.T) {
 	err = rle.writeValues(b1) //encoding
 	assert.Nil(t, err)
 	rle.reset()
-	rle.signed = true
 	err = rle.readValues(b1) // decoding
 	assert.Nil(t, err)
 	assert.Equal(t, 10, rle.len())
@@ -324,6 +323,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.Equal(t, int64(-1), rle.literals[9])
 
 	// direct
+	rle.signed= false
 	rle.reset()
 	r := []uint64{23713, 43806, 57005, 48879}
 	b2 := bytes.NewBuffer([]byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef})
@@ -331,8 +331,6 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 4, rle.len())
 	assert.EqualValues(t, r, rle.uliterals[0:4])
-
-
 }
 
 func TestZigzag(t *testing.T) {
