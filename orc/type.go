@@ -106,28 +106,29 @@ func schemasToTypes(schemas []*TypeDescription) []*Type {
 */
 
 func (td *TypeDescription) CreateVectorBatch() (cv ColumnVector, err error) {
+	return td.newColumn(false)
+}
 
+func (td *TypeDescription) newColumn(nullable bool) (cv ColumnVector, err error) {
 	switch td.Kind {
 	case Type_BOOLEAN:
-		cv = &BoolColumn{column: column{id: td.Id, nullable: false}}
+		cv = &BoolColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_BYTE:
-		cv = &TinyIntColumn{column: column{id: td.Id, nullable: false}}
+		cv = &TinyIntColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_SHORT:
-		cv = &TinyIntColumn{column: column{id: td.Id, nullable: false}}
-
+		fallthrough
 	case Type_INT:
-		cv = &IntColumn{column: column{id: td.Id, nullable: false}}
-
+		fallthrough
 	case Type_LONG:
-		cv = &LongColumn{column: column{id: td.Id, nullable: false}}
+		cv = &LongColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_FLOAT:
-		cv = &FloatColumn{column: column{id: td.Id, nullable: false}}
+		cv = &FloatColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_DOUBLE:
-		cv = &DoubleColumn{column: column{id: td.Id, nullable: false}}
+		cv = &DoubleColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_DECIMAL:
 		// todo:
@@ -135,38 +136,41 @@ func (td *TypeDescription) CreateVectorBatch() (cv ColumnVector, err error) {
 		return nil, errors.New("not impl")
 
 	case Type_DATE:
-		cv = &DateColumn{column: column{id: td.Id}}
+		cv = &DateColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_TIMESTAMP:
-		cv = &TimestampColumn{column: column{id: td.Id, nullable: false}}
+		cv = &TimestampColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_BINARY:
-		cv = &BinaryColumn{column: column{id: td.Id, nullable: false}}
+		cv = &BinaryColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_STRING:
-		cv = &StringColumn{column: column{id: td.Id, nullable: false}}
-
+		fallthrough
 	case Type_CHAR:
-		return nil, errors.New("not impl")
-
+		fallthrough
 	case Type_VARCHAR:
-		cv = &StringColumn{column: column{id: td.Id, nullable: false}}
+		cv = &StringColumn{column: column{id: td.Id, nullable: nullable}}
 
 	case Type_STRUCT:
 		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {
-			f[i], err = v.CreateVectorBatch()
+			f[i], err = v.newColumn(true)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
 		}
-		cv = &StructColumn{column: column{id: td.Id, nullable: true}, Fields: f}
+		cv = &StructColumn{column: column{id: td.Id, nullable: nullable}, Fields: f}
 
 	case Type_UNION:
 		// todo:
 		return nil, errors.New("not impl")
 	case Type_LIST:
-		cv = &ListColumn{column: column{id: td.Id, nullable: true}}
+		assert(len(td.Children) == 1)
+		c, err := td.Children[0].newColumn(true)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		cv = &ListColumn{column: column{id: td.Id, nullable: nullable}, Child: c}
 
 	case Type_MAP:
 		// todo:

@@ -275,7 +275,7 @@ func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 
 // direct v2 for string/char/varchar
 type bytesDirectV2 struct {
-	consumeIndex int
+	decoder
 	content      [][]byte // utf-8 bytes
 	length       []uint64
 	pos          int
@@ -285,7 +285,11 @@ func (bd *bytesDirectV2) reset() {
 	bd.content = bd.content[:0]
 	bd.length = nil
 	bd.pos = 0
-	bd.consumeIndex = 0
+	bd.decoder.reset()
+}
+
+func (bd *bytesDirectV2) len() int  {
+	return len(bd.content)
 }
 
 // decode bytes, but should have extracted length stream first by rle v2
