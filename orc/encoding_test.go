@@ -108,8 +108,8 @@ func TestBoolRunLength(t *testing.T)  {
 	irl.signed = false
 	t2 := bytes.NewBuffer([]byte{0xfb, 0x02, 0x03, 0x04, 0x07, 0xb})
 	err := irl.readValues(t2)
-	assert.Nil(t, err)
-	assert.Equal(t, irl.numLiterals, 5)
+	assertx.Nil(t, err)
+	assertx.Equal(t, irl.numLiterals, 5)
 	if irl.uliterals[0] != 2 {
 		t.Fatal("uliteral error")
 	}
@@ -355,4 +355,9 @@ func TestChunkHeader(t *testing.T) {
 	dl, o := decChunkHeader(v)
 	assert.Equal(t, l, dl)
 	assert.Equal(t, o, false)
+}
+
+func TestTimestampTrailing(t *testing.T)  {
+	assert.Equal(t, uint64(0x0a), encodingNano(1000))
+	assert.Equal(t, uint64(0x0c), encodingNano(100000))
 }

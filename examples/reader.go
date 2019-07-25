@@ -28,7 +28,13 @@ func main() {
 			os.Exit(1)
 		}
 
-		for hasNext := false; hasNext && err == nil; hasNext, err = stripe.NextBatch(batch) {
+		for next := true; next; {
+			next, err = stripe.NextBatch(batch)
+			if err != nil {
+				fmt.Printf("%+v", err)
+				break
+			}
+
 			//data := batch.(*orc.StructColumnVector).GetFields()
 			x := batch.(*orc.StringColumn)
 			//x:= data[0].(*orc.LongColumnVector)
@@ -41,10 +47,6 @@ func main() {
 			for _,v := range y.GetVector() {
 				fmt.Println(string(v))
 			}*/
-		}
-		if err != nil {
-			fmt.Printf("%+v", err)
-			break
 		}
 	}
 

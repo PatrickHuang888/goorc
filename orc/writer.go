@@ -7,6 +7,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"math"
 	"os"
 )
 
@@ -338,12 +339,12 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 		if cv.HasNulls() {
 			for i, b := range column.Nulls {
 				if !b {
-					vector = append(vector, column.Vector[i].getDays())
+					vector = append(vector, toDays(column.Vector[i]))
 				}
 			}
 		} else {
 			for _, d := range column.Vector {
-				vector = append(vector, d.getDays())
+				vector = append(vector, toDays(d))
 			}
 		}
 
@@ -362,7 +363,7 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 			pb.ColumnEncoding_Kind_name[int32(encoding)])
 
 	case pb.Type_TIMESTAMP:
-		column := cv.(*TimestampColumn)
+		/*column := cv.(*TimestampColumn)
 
 		var seconds []int64
 		var nanos []uint64
@@ -401,7 +402,7 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 				return errors.WithStack(err)
 			}
 			break
-		}
+		}*/
 
 		return errors.Errorf("writing encoding %s for timestamp not impl",
 			pb.ColumnEncoding_Kind_name[int32(encoding)])
@@ -501,7 +502,7 @@ func (stripe *stripeWriter) flush(f *os.File) error {
 	// stripe footer
 	footer := &pb.StripeFooter{}
 	for _, schema := range stripe.schemas {
-		for _, s := range  stripe.streams[schema.Id]{
+		for _, s := range stripe.streams[schema.Id] {
 			if s != nil {
 				footer.Streams = append(footer.Streams, s.info)
 				footer.Columns = append(footer.Columns, s.encoding)
@@ -876,4 +877,27 @@ func newUnsignedIntStreamV2(id uint32, kind pb.Stream_Kind) *streamWriter {
 	ce := pb.ColumnEncoding_DIRECT_V2
 	e := &pb.ColumnEncoding{Kind: &ce}
 	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoding: e, encoder: enc}
+}
+
+func encodingNano(nano uint64) (encoded uint64) {
+	t := trailingZeros(nano)
+	if t > 2 {
+		n := uint64(float64(nano) / math.Pow10(t))
+		encoded = n<<3 | uint64(t-2)
+	} else {
+		return nano
+	}
+	return
+}
+
+func decodingNano(encoded uint64) (nano uint64) {
+	return 0
+}
+
+func trailingZeros(x uint64) (count int) {
+	for int(math.Mod(float64(x), 10)) == 0 {
+		count++
+		x /= 10
+	}
+	return
 }

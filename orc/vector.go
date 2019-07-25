@@ -97,7 +97,6 @@ func (tic *TinyIntColumn) Rows() int {
 	return len(tic.Vector)
 }
 
-
 // nullable int column vector for all integer types
 type LongColumn struct {
 	column
@@ -163,9 +162,15 @@ func (d *Date) String() string {
 	return time.Time(*d).Format("2006-01-02")
 }
 
+func fromDays(days int64) Date {
+	d := time.Duration(days * 24 * int64(time.Hour))
+	t := Date(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC).Add(d))
+	return t
+}
+
 // days from 1970, Jan, 1 UTC
-func (d *Date) getDays() int64 {
-	s := time.Time(*d).Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
+func toDays(d Date) int64 {
+	s := time.Time(d).Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
 	return int64(s.Hours() / 24)
 }
 
@@ -194,9 +199,9 @@ type TimestampColumn struct {
 
 // return seconds from 2015, Jan, 1 and nano seconds
 func (t *Timestamp) getSecondsAndNanos() (seconds int64, nanos uint) {
-	d:= time.Time(*t).Sub(time.Date(2015, 1, 1 , 0, 0, 0, 0, time.UTC))
-	seconds= int64(d.Seconds())
-	nanos= uint(time.Time(*t).Nanosecond())
+	d := time.Time(*t).Sub(time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC))
+	seconds = int64(d.Seconds())
+	nanos = uint(time.Time(*t).Nanosecond())
 	return
 }
 
@@ -271,6 +276,8 @@ func (sc *StringColumn) reset() {
 	sc.Vector = sc.Vector[:0]
 	sc.column.reset()
 }
+
+// todo: decimal column
 
 type StructColumn struct {
 	column

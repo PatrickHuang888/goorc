@@ -165,7 +165,7 @@ func (td *TypeDescription) newColumn(nullable bool) (cv ColumnVector, err error)
 		// todo:
 		return nil, errors.New("not impl")
 	case Type_LIST:
-		assert(len(td.Children) == 1)
+		assertx(len(td.Children) == 1)
 		c, err := td.Children[0].newColumn(true)
 		if err != nil {
 			return nil, errors.WithStack(err)
