@@ -10,6 +10,7 @@ import (
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -31,7 +32,7 @@ type ReaderOptions struct {
 	RowSize         int
 }
 
-func CreateReaderOptions() *ReaderOptions {
+func DefaultReaderOptions() *ReaderOptions {
 	return &ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE}
 }
 
@@ -44,7 +45,7 @@ type reader struct {
 	stripes []StripeReader
 }
 
-func CreateReader(path string) (r Reader, err error) {
+func CreateReader(path string, opts *ReaderOptions) (r Reader, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, errors.Wrapf(err, "open file %s error", path)
@@ -56,8 +57,8 @@ func CreateReader(path string) (r Reader, err error) {
 	}
 
 	schemas := unmarshallSchema(tail.Footer.Types)
-	opts := CreateReaderOptions()
 	opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
+	opts.CompressionKind= tail.Postscript.GetCompression()
 	r = &reader{f: f, tail: tail, opts: opts, schemas: schemas}
 	return
 }
@@ -361,7 +362,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (bool, error) {
 	batch.reset()
 
 	columnReader := sr.columnReaders[batch.ColumnId()]
-	fmt.Printf("read cursor now %d\n", columnReader.readCursor)
+	log.Debugf("reading cursor at %d\n", columnReader.readCursor)
 
 	/*indexStream := cr.streams[pb.Stream_ROW_INDEX]
 	fmt.Println("==========")
@@ -526,9 +527,12 @@ func (cr *columnReader) readDatesV2(column *DateColumn) (next bool, err error) {
 				return true, nil
 			}
 		}
-		// decoder consuming finished
-		dd.reset()
 
+		if cr.dataRead >= cr.dataLength {
+			break
+		}
+
+		dd.reset()
 		if err := cr.readData(); err != nil {
 			return false, errors.WithStack(err)
 		}
@@ -563,9 +567,12 @@ func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, er
 				return true, nil
 			}
 		}
-		// decoder consuming finished
-		dd.reset()
 
+		if cr.dataRead >= cr.dataLength {
+			break
+		}
+
+		dd.reset()
 		// todo: read secondary
 		if err := cr.readData(); err != nil {
 			return false, errors.WithStack(err)
@@ -609,9 +616,12 @@ func (cr *columnReader) readBools(column *BoolColumn) (next bool, err error) {
 				return true, nil
 			}
 		}
-		// decoder consuming finished
-		dd.reset()
 
+		if cr.dataRead >= cr.dataLength {
+			break
+		}
+
+		dd.reset()
 		if err := cr.readData(); err != nil {
 			return false, errors.WithStack(err)
 		}
@@ -649,14 +659,16 @@ func (cr *columnReader) readBinaryV2(column *BinaryColumn) (next bool, err error
 				return true, nil
 			}
 		}
-		// decoder consuming finished
-		dd.reset()
 
+		if cr.dataRead >= cr.dataLength {
+			break
+		}
+
+		dd.reset()
 		if err := cr.readLength(); err != nil {
 			return false, errors.WithStack(err)
 		}
 		dd.length = cr.lengthes
-
 		if err := cr.readData(); err != nil {
 			return false, errors.WithStack(err)
 		}
@@ -666,16 +678,14 @@ func (cr *columnReader) readBinaryV2(column *BinaryColumn) (next bool, err error
 }
 
 func (cr *columnReader) readStringsV2(column *StringColumn) (next bool, err error) {
-	presentStream := cr.streams[pb.Stream_PRESENT]
 	dd := cr.dataDecoder.(*bytesDirectV2)
 
-	for cr.dataRead < cr.dataLength {
+	for cr.dataRead <= cr.dataLength {
 		for i := dd.consumedIndex; i < dd.len(); {
 			l := len(column.Vector)
 			if l < cap(column.Vector) {
-
 				if column.nullable {
-					if presentStream == nil || cr.presents[l-1] {
+					if cr.streams[pb.Stream_PRESENT] == nil || cr.presents[l-1] {
 						column.Nulls = append(column.Nulls, false)
 						column.Vector = append(column.Vector, string(dd.content[i]))
 						i++
@@ -694,14 +704,17 @@ func (cr *columnReader) readStringsV2(column *StringColumn) (next bool, err erro
 				return true, nil
 			}
 		}
+
+		if cr.dataRead >= cr.dataLength {
+			break
+		}
+
 		// decoder consuming finished
 		dd.reset()
-
 		if err := cr.readLength(); err != nil {
 			return false, errors.WithStack(err)
 		}
 		dd.length = cr.lengthes
-
 		if err := cr.readData(); err != nil {
 			return false, errors.WithStack(err)
 		}
@@ -772,10 +785,6 @@ func (cr *columnReader) readLength() error {
 }
 
 func (cr *columnReader) readData() error {
-	if cr.dataRead >= cr.dataLength {
-		return nil
-	}
-
 	if _, err := cr.f.Seek(int64(cr.dataStart+cr.dataRead), 0); err != nil {
 		return errors.WithStack(err)
 	}
@@ -823,9 +832,12 @@ func (cr *columnReader) readBytes(column *TinyIntColumn) (next bool, err error) 
 				return true, nil
 			}
 		}
-		// decoder consuming finished
-		dd.reset()
 
+		if cr.dataRead >= cr.dataLength {
+			break
+		}
+
+		dd.reset()
 		if err := cr.readData(); err != nil {
 			return false, errors.WithStack(err)
 		}
@@ -838,7 +850,7 @@ func (cr *columnReader) readLongsV2(column *LongColumn) (next bool, err error) {
 	presentStream := cr.streams[pb.Stream_PRESENT]
 	dd := cr.dataDecoder.(*intRleV2)
 
-	for cr.dataRead < cr.dataLength {
+	for cr.dataRead <= cr.dataLength {
 		for i := dd.consumedIndex; i < dd.len(); {
 			l := len(column.Vector)
 			if l < cap(column.Vector) {
@@ -862,9 +874,12 @@ func (cr *columnReader) readLongsV2(column *LongColumn) (next bool, err error) {
 				return true, nil
 			}
 		}
-		// decoder consuming finished
-		dd.reset()
 
+		if cr.dataRead >= cr.dataLength {
+			break
+		}
+
+		dd.reset()
 		if err := cr.readData(); err != nil {
 			return false, errors.WithStack(err)
 		}

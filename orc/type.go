@@ -105,30 +105,51 @@ func schemasToTypes(schemas []*TypeDescription) []*Type {
 }
 */
 
-func (td *TypeDescription) CreateVectorBatch() (cv ColumnVector, err error) {
-	return td.newColumn(false)
+func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (ColumnVector, error) {
+	return td.newColumn(opts.RowSize, false, true)
 }
 
-func (td *TypeDescription) newColumn(nullable bool) (cv ColumnVector, err error) {
+// vector provided by writer
+func (td *TypeDescription) CreateWriterBatch(opts *WriterOptions) (ColumnVector, error) {
+	return td.newColumn(opts.RowSize, false, false)
+}
+
+func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bool) (ColumnVector, error) {
 	switch td.Kind {
 	case Type_BOOLEAN:
-		cv = &BoolColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &BoolColumn{column: column{id: td.Id, nullable: nullable}}
+		if createVector {
+			c.Vector = make([]bool, rowSize)
+		}
+		return c, nil
 
 	case Type_BYTE:
-		cv = &TinyIntColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &TinyIntColumn{column: column{id: td.Id, nullable: nullable}}
+		if createVector {
+			c.Vector = make([]byte, rowSize)
+		}
+		return c, nil
 
 	case Type_SHORT:
 		fallthrough
 	case Type_INT:
 		fallthrough
 	case Type_LONG:
-		cv = &LongColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &LongColumn{column: column{id: td.Id, nullable: nullable}}
+		if createVector {
+			c.Vector = make([]int64, rowSize)
+		}
+		return c, nil
 
 	case Type_FLOAT:
-		cv = &FloatColumn{column: column{id: td.Id, nullable: nullable}}
+		// todo:
 
 	case Type_DOUBLE:
-		cv = &DoubleColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &DoubleColumn{column: column{id: td.Id, nullable: nullable}}
+		if createVector {
+			c.Vector = make([]float64, rowSize)
+		}
+		return c, nil
 
 	case Type_DECIMAL:
 		// todo:
@@ -136,41 +157,61 @@ func (td *TypeDescription) newColumn(nullable bool) (cv ColumnVector, err error)
 		return nil, errors.New("not impl")
 
 	case Type_DATE:
-		cv = &DateColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &DateColumn{column: column{id: td.Id, nullable: nullable}}
+		if createVector {
+			// todo:
+		}
+		return c, nil
 
 	case Type_TIMESTAMP:
-		cv = &TimestampColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &TimestampColumn{column: column{id: td.Id, nullable: nullable}}
+		if createVector {
+			// todo:
+		}
+		return c, nil
 
 	case Type_BINARY:
-		cv = &BinaryColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &BinaryColumn{column: column{id: td.Id, nullable: nullable}}
+		if createVector {
+			c.Vector = make([][]byte, rowSize)
+		}
+		return c, nil
 
 	case Type_STRING:
 		fallthrough
 	case Type_CHAR:
 		fallthrough
 	case Type_VARCHAR:
-		cv = &StringColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &StringColumn{column: column{id: td.Id, nullable: nullable}}
+		if createVector {
+			c.Vector = make([]string, rowSize)
+		}
+		return c, nil
 
 	case Type_STRUCT:
 		f := make([]ColumnVector, len(td.Children))
 		for i, v := range td.Children {
-			f[i], err = v.newColumn(true)
+			var err error
+			f[i], err = v.newColumn(rowSize, true, createVector)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
 		}
-		cv = &StructColumn{column: column{id: td.Id, nullable: nullable}, Fields: f}
+		c := &StructColumn{column: column{id: td.Id, nullable: nullable}, Fields: f}
+		return c, nil
 
 	case Type_UNION:
 		// todo:
 		return nil, errors.New("not impl")
+
 	case Type_LIST:
 		assertx(len(td.Children) == 1)
-		c, err := td.Children[0].newColumn(true)
+		c, err := td.Children[0].newColumn(rowSize, true, createVector)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-		cv = &ListColumn{column: column{id: td.Id, nullable: nullable}, Child: c}
+		lc := &ListColumn{column: column{id: td.Id, nullable: nullable}, Child: c}
+		return lc, nil
 
 	case Type_MAP:
 		// todo:
@@ -179,5 +220,6 @@ func (td *TypeDescription) newColumn(nullable bool) (cv ColumnVector, err error)
 	default:
 		return nil, errors.Errorf("unknown type %s", td.Kind.String())
 	}
-	return cv, err
+	return nil, nil
+	return nil, nil
 }

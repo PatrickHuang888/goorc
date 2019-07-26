@@ -219,44 +219,32 @@ func (tc *TimestampColumn) reset() {
 
 type FloatColumn struct {
 	column
-	vector []float32
+	Vector []float32
 }
 
 func (*FloatColumn) T() pb.Type_Kind {
 	return pb.Type_FLOAT
 }
 func (fc *FloatColumn) reset() {
-	fc.vector = fc.vector[:0]
+	fc.Vector = fc.Vector[:0]
 }
 func (fc *FloatColumn) Rows() int {
-	return len(fc.vector)
-}
-func (fc *FloatColumn) SetVector(vector []float32) {
-	fc.vector = vector
-}
-func (fc *FloatColumn) GetVector() []float32 {
-	return fc.vector
+	return len(fc.Vector)
 }
 
 type DoubleColumn struct {
 	column
-	vector []float64
+	Vector []float64
 }
 
 func (*DoubleColumn) T() pb.Type_Kind {
 	return pb.Type_DOUBLE
 }
 func (dc *DoubleColumn) reset() {
-	dc.vector = dc.vector[:0]
+	dc.Vector = dc.Vector[:0]
 }
 func (dc *DoubleColumn) Rows() int {
-	return len(dc.vector)
-}
-func (dc *DoubleColumn) SetVector(vector []float64) {
-	dc.vector = vector
-}
-func (dc *DoubleColumn) GetVector() []float64 {
-	return dc.vector
+	return len(dc.Vector)
 }
 
 type StringColumn struct {

@@ -27,6 +27,7 @@ type WriterOptions struct {
 	chunkSize  uint64
 	cmpKind    pb.CompressionKind
 	stripeSize int
+	RowSize int
 }
 
 func DefaultWriterOptions() *WriterOptions {
