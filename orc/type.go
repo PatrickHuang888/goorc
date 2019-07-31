@@ -11,6 +11,7 @@ type TypeDescription struct {
 	Kind          Type_Kind
 	ChildrenNames []string
 	Children      []*TypeDescription
+	Encoding      ColumnEncoding_Kind
 }
 
 func (td *TypeDescription) Print() {
@@ -22,43 +23,32 @@ func (td *TypeDescription) Print() {
 	}
 }
 
-// normalize type description
-func CreateSchema(td *TypeDescription) (*TypeDescription, error) {
-	schema, err := walkSchema(td)
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	for i := 0; i < len(schema); i++ {
-		schema[i].Id = uint32(i)
-	}
-	return schema[0], nil
-}
-
-func (td *TypeDescription) normalize() []*TypeDescription {
-	ss, err := walkSchema(td)
-	if err != nil {
+// set ids of schema, flat the schema tree to slice
+func (td *TypeDescription) normalize() (schemas []*TypeDescription) {
+	var id uint32
+	if err := walkSchema(&schemas, td, id); err != nil {
 		fmt.Printf("%v+", err)
 		return nil
 	}
-	return ss
+	return
 }
 
-// pre-order traverse, turn type description tree into slice
-func walkSchema(node *TypeDescription) (schema []*TypeDescription, err error) {
+// pre-order traverse
+func walkSchema(schemas *[]*TypeDescription, node *TypeDescription, id uint32) error {
+	node.Id = id
+	*schemas = append(*schemas, node)
+
 	if node.Kind == Type_STRUCT || node.Kind == Type_LIST {
 		for _, td := range node.Children {
-			ts, err := walkSchema(td)
-			if err != nil {
-				return nil, err
+			id++
+			if err := walkSchema(schemas, td, id); err != nil {
+				return errors.WithStack(err)
 			}
-			schema = append(schema, ts...)
 		}
 	} else if node.Kind == Type_UNION || node.Kind == Type_MAP {
-		err = errors.New("type union or map no impl")
-	} else {
-		schema = []*TypeDescription{node}
+		return errors.New("type union or map no impl")
 	}
-	return
+	return nil
 }
 
 func schemasToTypes(schemas []*TypeDescription) []*Type {
@@ -74,36 +64,6 @@ func schemasToTypes(schemas []*TypeDescription) []*Type {
 	}
 	return t
 }
-
-/*func (td *TypeDescription) CreateRowBatch(maxSize int) (batch ColumnVector, err error) {
-	if maxSize < DEFAULT_ROW_SIZE {
-		maxSize = DEFAULT_ROW_SIZE
-	}
-
-	switch expr {
-
-	}
-	if td.Kind == Type_STRUCT {
-		numCols := len(td.Children)
-		cols := make([]hive.ColumnVector, numCols)
-		vrb = &hive.VectorizedRowBatch{NumCols: numCols, Cols: cols}
-		for i, v := range td.Children {
-			cols[i], err = v.CreateColumn(maxSize)
-			if err != nil {
-				return nil, errors.WithStack(err)
-			}
-		}
-	} else {
-		cols := make([]hive.ColumnVector, 1)
-		cols[0], err = td.CreateColumn(maxSize)
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		vrb = &hive.VectorizedRowBatch{NumCols: 1, Cols: cols}
-	}
-	return
-}
-*/
 
 func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (ColumnVector, error) {
 	return td.newColumn(opts.RowSize, false, true)

@@ -18,7 +18,6 @@ func main() {
 		fmt.Printf("create reader error: %+v", err)
 		os.Exit(1)
 	}
-	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
 	schema := reader.GetSchema()
 	stripes, err := reader.Stripes()
@@ -39,18 +38,22 @@ func main() {
 				break
 			}
 
-			//data := batch.(*orc.StructColumnVector).GetFields()
-			x := batch.(*orc.StringColumn)
-			//x:= data[0].(*orc.LongColumnVector)
-			if !x.HasNulls() {
-				for _, v := range x.Vector {
-					fmt.Println(v)
+			data := batch.(*orc.StructColumn).Fields
+			x := data[0].(*orc.LongColumn)
+			y := data[1].(*orc.StringColumn)
+			for i:=0; i<batch.Rows(); i++ {
+				if x.HasNulls() && x.Nulls[i]{
+						fmt.Println("x: null")
+				}else {
+					fmt.Printf("x: %d, ", x.Vector[i])
+				}
+				if y.HasNulls() && y.Nulls[i] {
+					fmt.Println("y: null")
+				}else {
+					fmt.Printf("y: %s\n", y.Vector[i])
 				}
 			}
-			/*y:= data[1].(*orc.BytesColumnVector)
-			for _,v := range y.GetVector() {
-				fmt.Println(string(v))
-			}*/
+
 		}
 	}
 

@@ -91,10 +91,6 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		if err = proto.Unmarshal(decompressed, index); err != nil {
 			return nil, errors.Wrapf(err, "unmarshal strip index error")
 		}
-		//fmt.Printf("Stripe index: %s\n", index.String())
-		/*for _, entry := range index.Entry {
-			fmt.Printf("strip index entry: %s\n", entry.String())
-		}*/
 
 		// footer
 		footerOffset := int64(offset + indexLength + dataLength)
@@ -239,12 +235,13 @@ func (sr *stripeReader) prepare() error {
 			}
 			crs[i].indexStart = crs[i-1].indexStart + previous
 
-			if crs[i].present {
-				for _, s := range crs[i-1].streams {
-					if s.GetKind() != pb.Stream_ROW_INDEX {
-						previous += s.GetLength()
-					}
+			previous= 0
+			for _, s := range crs[i-1].streams {
+				if s.GetKind() != pb.Stream_ROW_INDEX {
+					previous += s.GetLength()
 				}
+			}
+			if crs[i].present {
 				crs[i].presentLength = crs[i-1].streams[pb.Stream_PRESENT].GetLength()
 			}
 			crs[i].presentStart = crs[i-1].presentStart + previous
@@ -1149,11 +1146,10 @@ func decompressedTo(dst *bytes.Buffer, src *bytes.Buffer, kind pb.CompressionKin
 	return
 }
 
-func assertx(condition bool) error {
+func assertx(condition bool) {
 	if !condition {
-		return errors.New("assertx error!")
+		panic("assert error")
 	}
-	return nil
 }
 
 // read one chunk and decompressed to out, n is read count of f
@@ -1166,7 +1162,7 @@ func readAChunk(opts *ReaderOptions, f *os.File, out *bytes.Buffer) (n uint64, e
 	original := (head[0] & 0x01) == 1
 	chunkLength := uint64(head[2])<<15 | uint64(head[1])<<7 | uint64(head[0])>>1
 	if uint64(chunkLength) > opts.ChunkSize {
-		return 0, errors.New("chunk length larger than chunk size")
+		return 0, errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, opts.ChunkSize)
 	}
 
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
