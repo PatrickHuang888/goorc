@@ -14,44 +14,43 @@ func init() {
 }
 
 func main() {
-	//schema := &orc.TypeDescription{Kind:pb.Type_STRUCT}
-	//x := &orc.TypeDescription{Kind:pb.Type_INT}
-	x := &orc.TypeDescription{Kind: pb.Type_STRING}
-	//schema.ChildrenNames= []string{"x", "y"}
-	//schema.Children=[]*orc.TypeDescription{x, y}
-	/*schema, err:= orc.CreateSchema(x)
-	if err!=nil {
-		fmt.Printf("create schema error %v+", err)
-		os.Exit(1)
-	}*/
+	schema := &orc.TypeDescription{Kind:pb.Type_STRUCT}
+	x := &orc.TypeDescription{Kind:pb.Type_INT}
+	y := &orc.TypeDescription{Kind: pb.Type_STRING}
+	schema.ChildrenNames= []string{"x", "y"}
+	schema.Children=[]*orc.TypeDescription{x, y}
 
 	opts := orc.DefaultWriterOptions()
-	writer, err := orc.NewWriter("my-file-w.orc", x, opts)
+	writer, err := orc.NewWriter("my-file-w.orc", schema, opts)
 	if err != nil {
 		fmt.Printf("create writer error %+v", err)
 		os.Exit(1)
 	}
 
-	batch, err := x.CreateVectorBatch()
+	batch, err := schema.CreateWriterBatch(opts)
 	if err != nil {
 		fmt.Printf("got error when create row batch %v+", err)
 		os.Exit(1)
 	}
 
-	v := make([]string, 3000)
+	/*v := make([]string, 3000)
 	for i := 0; i < 3000; i++ {
 		v[i] = fmt.Sprintf("string-%s", strconv.Itoa(i))
+	}*/
+	vint:=make([]int64, 1500)
+	vstr:= make([]string, 1500)
+	for i:=0; i<1500; i++ {
+		vint[i]= int64(i)
+		vstr[i] = fmt.Sprintf("string-%s", strconv.Itoa(i))
 	}
-	//batch.(*orc.LongColumnVector).SetVector(v)
-	batch.(*orc.StringColumn).Vector= v
+	batch.(*orc.StructColumn).Fields[0].(*orc.LongColumn).Vector= vint
+	batch.(*orc.StructColumn).Fields[1].(*orc.StringColumn).Vector= vstr
+	//batch.(*orc.StringColumn).Vector = v
 	if err := writer.Write(batch); err != nil {
 		fmt.Printf("write error %+v", err)
 		os.Exit(1)
 	}
-	//writer.WriteBatch()
-	//batch.(*orc.LongColumnVector).SetVector(v[:1000])
-	//writer.AddRowBatch(batch)
-	//writer.Flush()
+
 	if err := writer.Close(); err != nil {
 		fmt.Printf("close error %+v", err)
 	}

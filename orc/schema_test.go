@@ -27,7 +27,7 @@ func TestMarshal(t *testing.T) {
 		fmt.Println(s)
 	}
 
-	root = unmarshallSchema(pbTypes)
+	root = unmarshallSchema(pbTypes)[0]
 	root.Print()
 
 }

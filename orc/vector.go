@@ -97,55 +97,23 @@ func (tic *TinyIntColumn) Rows() int {
 	return len(tic.Vector)
 }
 
-type SmallIntColumn struct {
-	column
-	Vector []int16
-}
-
-func (*SmallIntColumn) T() pb.Type_Kind {
-	return pb.Type_SHORT
-}
-func (sic *SmallIntColumn) reset() {
-	sic.Vector = sic.Vector[:0]
-	sic.column.reset()
-}
-func (sic *SmallIntColumn) Rows() int {
-	return len(sic.Vector)
-}
-
-type IntColumn struct {
-	column
-	Vector []int32
-}
-
-func (*IntColumn) T() pb.Type_Kind {
-	return pb.Type_INT
-}
-func (ic *IntColumn) reset() {
-	ic.column.reset()
-	ic.Vector = ic.Vector[:0]
-}
-func (ic *IntColumn) Rows() int {
-	return len(ic.Vector)
-}
-
 // nullable int column vector for all integer types
-type BigIntColumn struct {
+type LongColumn struct {
 	column
 	Vector []int64
 }
 
-func (*BigIntColumn) T() pb.Type_Kind {
+func (*LongColumn) T() pb.Type_Kind {
 	return pb.Type_LONG
 }
 
-func (bic *BigIntColumn) Rows() int {
-	return len(bic.Vector)
+func (lc *LongColumn) Rows() int {
+	return len(lc.Vector)
 }
 
-func (bic *BigIntColumn) reset() {
-	bic.column.reset()
-	bic.Vector = bic.Vector[:0]
+func (lc *LongColumn) reset() {
+	lc.column.reset()
+	lc.Vector = lc.Vector[:0]
 }
 
 type BinaryColumn struct {
@@ -194,9 +162,15 @@ func (d *Date) String() string {
 	return time.Time(*d).Format("2006-01-02")
 }
 
+func fromDays(days int64) Date {
+	d := time.Duration(days * 24 * int64(time.Hour))
+	t := Date(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC).Add(d))
+	return t
+}
+
 // days from 1970, Jan, 1 UTC
-func (d *Date) getDays() int64 {
-	s := time.Time(*d).Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
+func toDays(d Date) int64 {
+	s := time.Time(d).Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
 	return int64(s.Hours() / 24)
 }
 
@@ -225,9 +199,9 @@ type TimestampColumn struct {
 
 // return seconds from 2015, Jan, 1 and nano seconds
 func (t *Timestamp) getSecondsAndNanos() (seconds int64, nanos uint) {
-	d:= time.Time(*t).Sub(time.Date(2015, 1, 1 , 0, 0, 0, 0, time.UTC))
-	seconds= int64(d.Seconds())
-	nanos= uint(time.Time(*t).Nanosecond())
+	d := time.Time(*t).Sub(time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC))
+	seconds = int64(d.Seconds())
+	nanos = uint(time.Time(*t).Nanosecond())
 	return
 }
 
@@ -245,44 +219,32 @@ func (tc *TimestampColumn) reset() {
 
 type FloatColumn struct {
 	column
-	vector []float32
+	Vector []float32
 }
 
 func (*FloatColumn) T() pb.Type_Kind {
 	return pb.Type_FLOAT
 }
 func (fc *FloatColumn) reset() {
-	fc.vector = fc.vector[:0]
+	fc.Vector = fc.Vector[:0]
 }
 func (fc *FloatColumn) Rows() int {
-	return len(fc.vector)
-}
-func (fc *FloatColumn) SetVector(vector []float32) {
-	fc.vector = vector
-}
-func (fc *FloatColumn) GetVector() []float32 {
-	return fc.vector
+	return len(fc.Vector)
 }
 
 type DoubleColumn struct {
 	column
-	vector []float64
+	Vector []float64
 }
 
 func (*DoubleColumn) T() pb.Type_Kind {
 	return pb.Type_DOUBLE
 }
 func (dc *DoubleColumn) reset() {
-	dc.vector = dc.vector[:0]
+	dc.Vector = dc.Vector[:0]
 }
 func (dc *DoubleColumn) Rows() int {
-	return len(dc.vector)
-}
-func (dc *DoubleColumn) SetVector(vector []float64) {
-	dc.vector = vector
-}
-func (dc *DoubleColumn) GetVector() []float64 {
-	return dc.vector
+	return len(dc.Vector)
 }
 
 type StringColumn struct {
@@ -302,6 +264,8 @@ func (sc *StringColumn) reset() {
 	sc.Vector = sc.Vector[:0]
 	sc.column.reset()
 }
+
+// todo: decimal column
 
 type StructColumn struct {
 	column

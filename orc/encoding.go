@@ -26,13 +26,23 @@ const (
 type Decoder interface {
 	readValues(in *bytes.Buffer) error
 	reset()
+	len() int
 }
 
 type Encoder interface {
 	writeValues(out *bytes.Buffer) error
 }
 
+type decoder struct {
+	consumedIndex int
+}
+
+func (d *decoder) reset()  {
+	d.consumedIndex= 0
+}
+
 type byteRunLength struct {
+	decoder
 	literals []byte
 }
 
@@ -111,6 +121,11 @@ func (brl *byteRunLength) writeValues(out *bytes.Buffer) error {
 
 func (brl *byteRunLength) reset() {
 	brl.literals = brl.literals[:0]
+	brl.decoder.reset()
+}
+
+func (brl *byteRunLength) len() int {
+	return len(brl.literals)
 }
 
 type boolRunLength struct {
@@ -260,7 +275,7 @@ func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 
 // direct v2 for string/char/varchar
 type bytesDirectV2 struct {
-	consumeIndex int
+	decoder
 	content      [][]byte // utf-8 bytes
 	length       []uint64
 	pos          int
@@ -270,7 +285,11 @@ func (bd *bytesDirectV2) reset() {
 	bd.content = bd.content[:0]
 	bd.length = nil
 	bd.pos = 0
-	bd.consumeIndex = 0
+	bd.decoder.reset()
+}
+
+func (bd *bytesDirectV2) len() int  {
+	return len(bd.content)
 }
 
 // decode bytes, but should have extracted length stream first by rle v2
@@ -310,7 +329,7 @@ type intRleV2 struct {
 	signed       bool
 	literals     []int64
 	uliterals    []uint64
-	consumeIndex int
+	consumedIndex int  // for read
 }
 
 func (rle *intRleV2) reset() {
@@ -320,7 +339,7 @@ func (rle *intRleV2) reset() {
 		rle.uliterals = rle.uliterals[:0]
 	}
 	rle.sub = Encoding_UNSET
-	rle.consumeIndex = 0
+	rle.consumedIndex = 0
 }
 
 func (rle *intRleV2) len() int {

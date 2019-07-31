@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"os"
 
 	"github.com/PatrickHuang888/goorc/orc"
@@ -9,44 +10,52 @@ import (
 
 func main() {
 	//reader, err := orc.CreateReader("/u01/apache/orc/java/examples/my-file.orc")
-	reader, err := orc.CreateReader("my-file-w.orc")
+	logrus.SetLevel(logrus.DebugLevel)
+
+	opts := orc.DefaultReaderOptions()
+	reader, err := orc.CreateReader("my-file-w.orc", opts)
 	if err != nil {
 		fmt.Printf("create reader error: %+v", err)
 		os.Exit(1)
 	}
-	fmt.Printf("row count: %d\n", reader.NumberOfRows())
 
-	schema, err := reader.GetColumnSchema(0)
-	if err != nil {
-		fmt.Printf("get schema error %+v", err)
-		os.Exit(1)
-	}
-	it, err := reader.Stripes()
+	schema := reader.GetSchema()
+	stripes, err := reader.Stripes()
 	if err != nil {
 		fmt.Printf("%+v", err)
 	}
-	batch, err := schema.CreateVectorBatch()
-	if err != nil {
-		fmt.Printf("create row batch error %+v", err)
-		os.Exit(1)
-	}
-	for it.NextStripe() {
-		for it.NextBatch(batch) {
-			//data := batch.(*orc.StructColumnVector).GetFields()
-			x:= batch.(*orc.StringColumn)
-			//x:= data[0].(*orc.LongColumnVector)
-			for _, v := range x.Vector{
-				fmt.Println(v)
-			}
-			/*y:= data[1].(*orc.BytesColumnVector)
-			for _,v := range y.GetVector() {
-				fmt.Println(string(v))
-			}*/
+	for _, stripe := range stripes {
+		batch, err := schema.CreateReaderBatch(opts)
+		if err != nil {
+			fmt.Printf("create row batch error %+v", err)
+			os.Exit(1)
 		}
-		if err = it.Err(); err != nil {
-			fmt.Printf("%+v", err)
+
+		for next := true; next; {
+			next, err = stripe.NextBatch(batch)
+			if err != nil {
+				fmt.Printf("%+v", err)
+				break
+			}
+
+			data := batch.(*orc.StructColumn).Fields
+			x := data[0].(*orc.LongColumn)
+			y := data[1].(*orc.StringColumn)
+			for i:=0; i<batch.Rows(); i++ {
+				if x.HasNulls() && x.Nulls[i]{
+						fmt.Println("x: null")
+				}else {
+					fmt.Printf("x: %d, ", x.Vector[i])
+				}
+				if y.HasNulls() && y.Nulls[i] {
+					fmt.Println("y: null")
+				}else {
+					fmt.Printf("y: %s\n", y.Vector[i])
+				}
+			}
+
 		}
 	}
 
-	it.Close()
+	reader.Close()
 }
