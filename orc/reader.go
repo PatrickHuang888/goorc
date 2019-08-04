@@ -58,7 +58,7 @@ func CreateReader(path string, opts *ReaderOptions) (r Reader, err error) {
 
 	schemas := unmarshallSchema(tail.Footer.Types)
 	opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
-	opts.CompressionKind= tail.Postscript.GetCompression()
+	opts.CompressionKind = tail.Postscript.GetCompression()
 	r = &reader{f: f, tail: tail, opts: opts, schemas: schemas}
 	return
 }
@@ -167,10 +167,15 @@ type columnReader struct {
 	dataBuf     *bytes.Buffer
 	dataDecoder Decoder // data decoder
 
-	lengthRead   bool
-	lengthStart  uint64
+	stream3Read   bool
+
+	lengthStart  uint64  // length not always stream 3rd
 	lengthLength uint64
 	lengthes     []uint64 // length data
+
+	secondaryStart uint64
+	secondaryLength uint64
+	secondaries     []uint64 // or secondaries data
 
 	directStart  uint64
 	directLength uint64
@@ -235,7 +240,7 @@ func (sr *stripeReader) prepare() error {
 			}
 			crs[i].indexStart = crs[i-1].indexStart + previous
 
-			previous= 0
+			previous = 0
 			for _, s := range crs[i-1].streams {
 				if s.GetKind() != pb.Stream_ROW_INDEX {
 					previous += s.GetLength()
@@ -304,7 +309,15 @@ func (sr *stripeReader) prepare() error {
 			}
 
 		case pb.Type_DECIMAL:
-		// todo:
+			if crs[i].encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+				crs[i].dataDecoder = &base128VarInt{}
+				crs[i].dataStart = crs[i].presentStart + crs[i].presentLength
+				crs[i].dataLength = crs[i].streams[pb.Stream_DATA].GetLength()
+				crs[i].secondaryStart = crs[i].dataStart + crs[i].dataLength
+				crs[i].secondaryLength = crs[i].streams[pb.Stream_SECONDARY].GetLength()
+			} else {
+				return errors.New("column decimal encoding unknown")
+			}
 
 		case pb.Type_DATE:
 		// todo:
@@ -449,7 +462,13 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (bool, error) {
 		}
 
 	case pb.Type_DECIMAL:
-		// todo:
+		column, ok := batch.(*Decimal64Column)
+		if !ok {
+			return false, errors.New("decimal column should be decimal64")
+		}
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			return columnReader.readDecimal64sV2(column)
+		}
 
 	case pb.Type_DATE:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
@@ -662,7 +681,7 @@ func (cr *columnReader) readBinaryV2(column *BinaryColumn) (next bool, err error
 		}
 
 		dd.reset()
-		if err := cr.readLength(); err != nil {
+		if err := cr.readStream3(pb.Type_BINARY); err != nil {
 			return false, errors.WithStack(err)
 		}
 		dd.length = cr.lengthes
@@ -708,7 +727,7 @@ func (cr *columnReader) readStringsV2(column *StringColumn) (next bool, err erro
 
 		// decoder consuming finished
 		dd.reset()
-		if err := cr.readLength(); err != nil {
+		if err := cr.readStream3(pb.Type_STRING); err != nil {
 			return false, errors.WithStack(err)
 		}
 		dd.length = cr.lengthes
@@ -862,6 +881,55 @@ func (cr *columnReader) readLongsV2(column *LongColumn) (next bool, err error) {
 					}
 				} else { // no nulls
 					column.Vector = append(column.Vector, dd.literals[i])
+					i++
+				}
+				cr.readCursor++
+			} else {
+				// still not finished
+				dd.consumedIndex = i
+				return true, nil
+			}
+		}
+
+		if cr.dataRead >= cr.dataLength {
+			break
+		}
+
+		dd.reset()
+		if err := cr.readData(); err != nil {
+			return false, errors.WithStack(err)
+		}
+	}
+
+	return false, nil
+}
+
+func (cr *columnReader) readDecimal64sV2(column *Decimal64Column) (next bool, err error) {
+	// toAssure: read secondary all once?
+	if err := cr.readStream3(pb.Stream_SECONDARY); err != nil {
+		return false, errors.WithStack(err)
+	}
+
+	presentStream := cr.streams[pb.Stream_PRESENT]
+	dd := cr.dataDecoder.(*base128VarInt)
+
+	for cr.dataRead <= cr.dataLength {
+		for i := dd.consumedIndex; i < dd.len(); {
+			l := len(column.Vector)
+			if l < cap(column.Vector) {
+				if column.nullable {
+					if presentStream == nil || cr.presents[l-1] {
+						column.Nulls = append(column.Nulls, false)
+						d := Decimal64{Value: dd.values[i], Scale: uint16(cr.secondaries[i])}
+						column.Vector = append(column.Vector, d)
+						i++
+					} else {
+						column.Nulls = append(column.Nulls, true)
+						column.Vector = append(column.Vector, Decimal64{})
+					}
+				} else { // no nulls
+					column.Vector = append(column.Vector,
+						Decimal64{Value: dd.values[i], Scale: uint16(cr.secondaries[i])})
 					i++
 				}
 				cr.readCursor++

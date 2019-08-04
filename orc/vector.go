@@ -132,25 +132,25 @@ func (bc *BinaryColumn) Rows() int {
 	return len(bc.Vector)
 }
 
-/*// hive 0.13 support 38 digits
-type Decimal struct {
-	big.Int
-	scale uint64
+// hive 0.13 support 38 digits
+type Decimal64 struct {
+	Value int64
+	Scale uint16
 }
-type DecimalColumn struct {
+type Decimal64Column struct {
 	column
-	Vector [][16]byte // 38 digits, 128 bits
+	Vector []Decimal64
 }
 
-func (*DecimalColumn) T() pb.Type_Kind {
+func (*Decimal64Column) T() pb.Type_Kind {
 	return pb.Type_DECIMAL
 }
-func (dc *DecimalColumn) Rows() int {
+func (dc *Decimal64Column) Rows() int {
 	return len(dc.Vector)
 }
-func (dc *DecimalColumn) reset() {
+func (dc *Decimal64Column) reset() {
 	dc.Vector = dc.Vector[:0]
-}*/
+}
 
 type Date time.Time
 
@@ -264,8 +264,6 @@ func (sc *StringColumn) reset() {
 	sc.Vector = sc.Vector[:0]
 	sc.column.reset()
 }
-
-// todo: decimal column
 
 type StructColumn struct {
 	column
