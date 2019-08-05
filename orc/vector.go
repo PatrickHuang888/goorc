@@ -133,13 +133,10 @@ func (bc *BinaryColumn) Rows() int {
 }
 
 // hive 0.13 support 38 digits
-type Decimal64 struct {
-	Value int64
-	Scale uint16
-}
 type Decimal64Column struct {
 	column
-	Vector []Decimal64
+	Vector []int64  // precision 18
+	Scale uint16
 }
 
 func (*Decimal64Column) T() pb.Type_Kind {

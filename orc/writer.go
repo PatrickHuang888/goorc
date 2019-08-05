@@ -350,14 +350,14 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 		if cv.HasNulls() {
 			for i, b := range column.Nulls {
 				if !b {
-					values = append(values, column.Vector[i].Value)
-					scales = append(scales, uint64(column.Vector[i].Scale))
+					values = append(values, column.Vector[i])
+					scales = append(scales, uint64(column.Scale))
 				}
 			}
 		} else {
 			for _, d := range column.Vector {
-				values = append(values, d.Value)
-				scales = append(scales, uint64(d.Scale))
+				values = append(values, d)
+				scales = append(scales, uint64(column.Scale))
 			}
 
 		}
@@ -943,8 +943,6 @@ func newUnsignedIntStreamV2(id uint32, kind pb.Stream_Kind) *streamWriter {
 	cb.Reset()
 	enc := &intRleV2{}
 	enc.signed = false
-	//ce := pb.ColumnEncoding_DIRECT_V2
-	//e := &pb.ColumnEncoding{Kind: &ce}
 	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoder: enc}
 }
 
