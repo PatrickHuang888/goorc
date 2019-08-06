@@ -2,18 +2,15 @@ package main
 
 import (
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"os"
 
 	"github.com/PatrickHuang888/goorc/orc"
 )
 
 func main() {
-	//reader, err := orc.CreateReader("/u01/apache/orc/java/examples/my-file.orc")
-	logrus.SetLevel(logrus.DebugLevel)
 
 	opts := orc.DefaultReaderOptions()
-	reader, err := orc.CreateReader("my-file-w.orc", opts)
+	reader, err := orc.NewReader("my-file-w.orc", opts)
 	if err != nil {
 		fmt.Printf("create reader error: %+v", err)
 		os.Exit(1)
@@ -24,6 +21,7 @@ func main() {
 	if err != nil {
 		fmt.Printf("%+v", err)
 	}
+
 	for _, stripe := range stripes {
 		batch, err := schema.CreateReaderBatch(opts)
 		if err != nil {

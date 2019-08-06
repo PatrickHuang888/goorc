@@ -23,13 +23,13 @@ const (
 	MAX_CHUNK_LENGTH             = uint64(32768) // 15 bit
 )
 
-var VERSION=[]uint32{0, 12}
+var VERSION = []uint32{0, 12}
 
 type WriterOptions struct {
 	chunkSize  uint64
 	cmpKind    pb.CompressionKind
 	stripeSize int
-	RowSize int
+	RowSize    int
 }
 
 func DefaultWriterOptions() *WriterOptions {
@@ -65,13 +65,13 @@ type writer struct {
 
 	schemas []*TypeDescription
 
-	opts    *WriterOptions
+	opts *WriterOptions
 }
 
 type stripeWriter struct {
 	schemas []*TypeDescription
 
-	opts    *WriterOptions
+	opts *WriterOptions
 
 	// streams <id, stream{present, data, length}>
 	streams map[uint32][]*streamWriter
@@ -90,9 +90,9 @@ func NewWriter(path string, schema *TypeDescription, opts *WriterOptions) (Write
 		return nil, errors.WithStack(err)
 	}
 
-	schemas:= schema.normalize()
-	for _, s:=range schemas {
-		s.Encoding= getColumnEncoding(opts, s.Kind)
+	schemas := schema.normalize()
+	for _, s := range schemas {
+		s.Encoding = getColumnEncoding(opts, s.Kind)
 	}
 	w := &writer{opts: opts, path: path, f: f, schemas: schemas}
 	n, err := w.writeHeader()
@@ -343,6 +343,47 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 		return errors.Errorf("writing encoding %s for binary not impl",
 			pb.ColumnEncoding_Kind_name[int32(encoding)])
 
+	case pb.Type_DECIMAL:
+		column := cv.(*Decimal64Column)
+		var values []int64
+		var scales []uint64
+		if cv.HasNulls() {
+			for i, b := range column.Nulls {
+				if !b {
+					values = append(values, column.Vector[i])
+					scales = append(scales, uint64(column.Scale))
+				}
+			}
+		} else {
+			for _, d := range column.Vector {
+				values = append(values, d)
+				scales = append(scales, uint64(column.Scale))
+			}
+
+		}
+
+		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if data == nil {
+				data = newBase128VarIntsDataStream(id)
+				stripe.streams[id][1] = data
+			}
+			if err := data.writeBase128VarInts(values); err != nil {
+				return errors.WithStack(err)
+			}
+
+			secondary := stripe.streams[id][2]
+			if secondary == nil {
+				secondary = newUnsignedIntStreamV2(id, pb.Stream_SECONDARY)
+				stripe.streams[id][2] = secondary
+			}
+			if err := secondary.writeULongsV2(scales); err != nil {
+				return errors.WithStack(err)
+			}
+			break
+		}
+
+		return errors.New("not impl")
+
 	case pb.Type_DATE:
 		column := cv.(*DateColumn)
 		var vector []int64
@@ -517,7 +558,7 @@ func (stripe *stripeWriter) flush(f *os.File) error {
 				footer.Streams = append(footer.Streams, s.info)
 			}
 		}
-		ce:= &pb.ColumnEncoding{Kind:&schema.Encoding}
+		ce := &pb.ColumnEncoding{Kind: &schema.Encoding}
 		footer.Columns = append(footer.Columns, ce)
 	}
 	mf, err := proto.Marshal(footer)
@@ -542,7 +583,7 @@ func (stripe *stripeWriter) flush(f *os.File) error {
 }
 
 type streamWriter struct {
-	info          *pb.Stream
+	info *pb.Stream
 	//encoding      *pb.ColumnEncoding
 	encoder       Encoder
 	buf           *bytes.Buffer
@@ -588,6 +629,15 @@ func (s *streamWriter) writeLongsV2(v []int64) error {
 func (s *streamWriter) writeBytesDirectV2(bs [][]byte) error {
 	enc := s.encoder.(*bytesDirectV2)
 	enc.content = bs
+	if err := enc.writeValues(s.buf); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func (s *streamWriter) writeBase128VarInts(values []int64) error {
+	enc := s.encoder.(*base128VarInt)
+	enc.values = values
 	if err := enc.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
@@ -671,7 +721,7 @@ func (w *writer) writeFileTail() error {
 	ps.FooterLength = &ftl
 	ps.Compression = &w.opts.cmpKind
 	ps.CompressionBlockSize = &w.opts.chunkSize
-	ps.Version= VERSION
+	ps.Version = VERSION
 	m := MAGIC
 	ps.Magic = &m
 	psb, err := proto.Marshal(ps)
@@ -872,8 +922,17 @@ func newSignedIntStreamV2(id uint32, kind pb.Stream_Kind) *streamWriter {
 	cb.Reset()
 	enc := &intRleV2{}
 	enc.signed = true
-	//ce := pb.ColumnEncoding_DIRECT_V2
-	//e := &pb.ColumnEncoding{Kind: &ce}
+	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoder: enc}
+}
+
+func newBase128VarIntsDataStream(id uint32) *streamWriter {
+	k := pb.Stream_DATA
+	info := &pb.Stream{Kind: &k, Column: &id, Length: new(uint64)}
+	buf := &bytes.Buffer{}
+	buf.Reset()
+	cb := &bytes.Buffer{}
+	cb.Reset()
+	enc := &base128VarInt{}
 	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoder: enc}
 }
 
@@ -885,8 +944,6 @@ func newUnsignedIntStreamV2(id uint32, kind pb.Stream_Kind) *streamWriter {
 	cb.Reset()
 	enc := &intRleV2{}
 	enc.signed = false
-	//ce := pb.ColumnEncoding_DIRECT_V2
-	//e := &pb.ColumnEncoding{Kind: &ce}
 	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoder: enc}
 }
 

@@ -112,9 +112,11 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 		return c, nil
 
 	case Type_DECIMAL:
-		// todo:
-		//cv = &DecimalColumn{column: column{id: td.Id, nullable: false}}
-		return nil, errors.New("not impl")
+		c := &Decimal64Column{column: column{id: td.Id, nullable: false}}
+		if createVector {
+			c.Vector = make([]int64, rowSize)
+		}
+		return c, nil
 
 	case Type_DATE:
 		c := &DateColumn{column: column{id: td.Id, nullable: nullable}}
@@ -180,6 +182,5 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 	default:
 		return nil, errors.Errorf("unknown type %s", td.Kind.String())
 	}
-	return nil, nil
 	return nil, nil
 }

@@ -37,8 +37,8 @@ type decoder struct {
 	consumedIndex int
 }
 
-func (d *decoder) reset()  {
-	d.consumedIndex= 0
+func (d *decoder) reset() {
+	d.consumedIndex = 0
 }
 
 type byteRunLength struct {
@@ -133,21 +133,21 @@ type boolRunLength struct {
 	byteRunLength
 }
 
-func (brl *boolRunLength) reset()  {
-	brl.bools= brl.bools[:0]
+func (brl *boolRunLength) reset() {
+	brl.bools = brl.bools[:0]
 	brl.byteRunLength.reset()
 }
 
 // bool run length use byte run length encoding, but how to know the length of bools?
 func (brl *boolRunLength) readValues(in *bytes.Buffer) error {
-	if err:=brl.byteRunLength.readValues(in);err!=nil {
+	if err := brl.byteRunLength.readValues(in); err != nil {
 		return errors.WithStack(err)
 	}
-	bs:= brl.byteRunLength.literals
-	for i:=0; i<len(bs); i++ {
-		for j:=0; j<=7; j++ {
-			v:= bs[i]>>byte(7-j)==0x01
-			brl.bools= append(brl.bools, v)
+	bs := brl.byteRunLength.literals
+	for i := 0; i < len(bs); i++ {
+		for j := 0; j <= 7; j++ {
+			v := bs[i]>>byte(7-j) == 0x01
+			brl.bools = append(brl.bools, v)
 		}
 	}
 	return nil
@@ -166,8 +166,8 @@ func (brl *boolRunLength) writeValues(out *bytes.Buffer) error {
 		bs = append(bs, b)
 		i += j
 	}
-	brl.byteRunLength.literals= bs
-	if err:=brl.byteRunLength.writeValues(out);err!=nil {
+	brl.byteRunLength.literals = bs
+	if err := brl.byteRunLength.writeValues(out); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
@@ -276,9 +276,9 @@ func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 // direct v2 for string/char/varchar
 type bytesDirectV2 struct {
 	decoder
-	content      [][]byte // utf-8 bytes
-	length       []uint64
-	pos          int
+	content [][]byte // utf-8 bytes
+	length  []uint64
+	pos     int
 }
 
 func (bd *bytesDirectV2) reset() {
@@ -288,7 +288,7 @@ func (bd *bytesDirectV2) reset() {
 	bd.decoder.reset()
 }
 
-func (bd *bytesDirectV2) len() int  {
+func (bd *bytesDirectV2) len() int {
 	return len(bd.content)
 }
 
@@ -325,11 +325,11 @@ func (bd *bytesDirectV2) writeValues(out *bytes.Buffer) error {
 
 // int run length encoding v2
 type intRleV2 struct {
-	sub          byte // sub encoding
-	signed       bool
-	literals     []int64
-	uliterals    []uint64
-	consumedIndex int  // for read
+	sub           byte // sub encoding
+	signed        bool
+	literals      []int64
+	uliterals     []uint64
+	consumedIndex int // for read
 }
 
 func (rle *intRleV2) reset() {
@@ -1700,6 +1700,42 @@ func (rle *intRleV2) addValue(positive bool, delta uint64) {
 		}
 		rle.uliterals = append(rle.uliterals, x)
 	}
+}
+
+type base128VarInt struct {
+	decoder
+	values []int64
+}
+
+func (enc *base128VarInt) writeValues(out *bytes.Buffer) error {
+	bb := make([]byte, 10)
+	for _, v := range enc.values {
+		c := binary.PutVarint(bb, v)
+		if _, err := out.Write(bb[:c]); err != nil {
+			return errors.WithStack(err)
+		}
+	}
+	return nil
+}
+
+func (dec *base128VarInt) len() int {
+	return len(dec.values)
+}
+
+func (dec *base128VarInt) readValues(in *bytes.Buffer) error {
+	for in.Len()>0 {
+		v, err:= binary.ReadVarint(in)
+		if err!=nil {
+			return errors.WithStack(err)
+		}
+		dec.values= append(dec.values, v)
+	}
+	return nil
+}
+
+func (dec *base128VarInt) reset()  {
+	dec.values=dec.values[:0]
+	dec.decoder.reset()
 }
 
 func widthEncoding(width byte) (w byte, err error) {
