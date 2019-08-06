@@ -10,7 +10,7 @@ import (
 func main() {
 
 	opts := orc.DefaultReaderOptions()
-	reader, err := orc.CreateReader("my-file-w.orc", opts)
+	reader, err := orc.NewReader("my-file-w.orc", opts)
 	if err != nil {
 		fmt.Printf("create reader error: %+v", err)
 		os.Exit(1)

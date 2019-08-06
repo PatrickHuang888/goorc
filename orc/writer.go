@@ -379,6 +379,7 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 			if err := secondary.writeULongsV2(scales); err != nil {
 				return errors.WithStack(err)
 			}
+			break
 		}
 
 		return errors.New("not impl")

@@ -45,7 +45,7 @@ type reader struct {
 	stripes []StripeReader
 }
 
-func CreateReader(path string, opts *ReaderOptions) (r Reader, err error) {
+func NewReader(path string, opts *ReaderOptions) (r Reader, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, errors.Wrapf(err, "open file %s error", path)
@@ -857,6 +857,7 @@ func (cr *columnReader) readDecimal64sV2(column *Decimal64Column) (next bool, er
 		if err := cr.readSecondary(); err != nil {
 			return false, errors.WithStack(err)
 		}
+		// toAssure:
 		column.Scale = uint16(cr.secondaries[0])
 
 		dd.reset()
