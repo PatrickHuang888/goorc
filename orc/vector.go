@@ -135,8 +135,8 @@ func (bc *BinaryColumn) Rows() int {
 // hive 0.13 support 38 digits
 type Decimal64Column struct {
 	column
-	Vector []int64  // precision 18
-	Scale uint16
+	Vector []int64 // precision 18
+	Scale  uint16
 }
 
 func (*Decimal64Column) T() pb.Type_Kind {
@@ -195,11 +195,16 @@ type TimestampColumn struct {
 }
 
 // return seconds from 2015, Jan, 1 and nano seconds
-func (t *Timestamp) getSecondsAndNanos() (seconds int64, nanos uint) {
-	d := time.Time(*t).Sub(time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC))
-	seconds = int64(d.Seconds())
-	nanos = uint(time.Time(*t).Nanosecond())
+func getSecondsAndNanos(t Timestamp) (seconds int64, nanos uint) {
+	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
+	seconds = int64(time.Time(t).Second()- base.Second())
+	nanos = uint(time.Time(t).Nanosecond()- base.Nanosecond())
 	return
+}
+
+func getTimestamp(seconds int64, nanos uint64) Timestamp {
+	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
+	return Timestamp(base.Add(time.Duration(float64(seconds) + float64(nanos/1e9))))
 }
 
 func (*TimestampColumn) T() pb.Type_Kind {

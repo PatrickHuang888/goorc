@@ -7,7 +7,6 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"math"
 	"os"
 )
 
@@ -415,7 +414,7 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 			pb.ColumnEncoding_Kind_name[int32(encoding)])
 
 	case pb.Type_TIMESTAMP:
-		/*column := cv.(*TimestampColumn)
+		column := cv.(*TimestampColumn)
 
 		var seconds []int64
 		var nanos []uint64
@@ -423,16 +422,17 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 		if column.hasNulls {
 			for i, b := range column.Nulls {
 				if !b {
-					s, n := column.Vector[i].getSecondsAndNanos()
+					// todo: using local time zone
+					s, n := getSecondsAndNanos(column.Vector[i])
 					seconds = append(seconds, s)
-					nanos = append(nanos, uint64(n))
+					nanos = append(nanos, encodingNano(n))
 				}
 			}
 		} else {
 			for _, t := range column.Vector {
-				s, n := t.getSecondsAndNanos()
+				s, n := getSecondsAndNanos(t)
 				seconds = append(seconds, s)
-				nanos = append(nanos, uint64(n))
+				nanos = append(nanos, encodingNano(n))
 			}
 		}
 
@@ -454,7 +454,7 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 				return errors.WithStack(err)
 			}
 			break
-		}*/
+		}
 
 		return errors.Errorf("writing encoding %s for timestamp not impl",
 			pb.ColumnEncoding_Kind_name[int32(encoding)])
@@ -947,25 +947,4 @@ func newUnsignedIntStreamV2(id uint32, kind pb.Stream_Kind) *streamWriter {
 	return &streamWriter{info: info, buf: buf, compressedBuf: cb, encoder: enc}
 }
 
-func encodingNano(nano uint64) (encoded uint64) {
-	t := trailingZeros(nano)
-	if t > 2 {
-		n := uint64(float64(nano) / math.Pow10(t))
-		encoded = n<<3 | uint64(t-2)
-	} else {
-		return nano
-	}
-	return
-}
 
-func decodingNano(encoded uint64) (nano uint64) {
-	return 0
-}
-
-func trailingZeros(x uint64) (count int) {
-	for int(math.Mod(float64(x), 10)) == 0 {
-		count++
-		x /= 10
-	}
-	return
-}

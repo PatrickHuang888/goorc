@@ -566,7 +566,7 @@ func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, er
 				if column.nullable {
 					if !cr.present || cr.presents[l-1] {
 						column.Nulls = append(column.Nulls, false)
-						//column.Vector = append(column.Vector, fromDays(dd.literals[i]))
+						column.Vector = append(column.Vector, getTimestamp(dd.literals[i]))
 						i++
 					} else {
 						column.Nulls = append(column.Nulls, true)
@@ -588,8 +588,11 @@ func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, er
 			break
 		}
 
+		if err := cr.readSecondary(); err != nil {
+			return false, errors.WithStack(err)
+		}
+
 		dd.reset()
-		// todo: read secondary
 		if err := cr.readData(); err != nil {
 			return false, errors.WithStack(err)
 		}

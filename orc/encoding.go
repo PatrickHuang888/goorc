@@ -1879,3 +1879,31 @@ func Convert(u uint64) int64 {
 	}
 	return x
 }
+
+
+func encodingNano(nano uint) (encoded uint64) {
+	if nano == 0 {
+		return 0
+	} else if nano%100 != 0 {
+		return uint64(nano) << 3 // no encoding if less 2 zeros
+	} else {
+		nano /= 100
+		trailingZeros := 1
+		for nano%10 == 0 && trailingZeros < 7 { // 3 bits
+			nano /= 10
+			trailingZeros++
+		}
+		return uint64(nano)<<3 | uint64(trailingZeros)
+	}
+}
+
+func decodingNano(encoded uint64) (nano uint) {
+	zeros := 0x07 & encoded
+	nano = uint(encoded >> 3)
+	if zeros != 0 {
+		for i := 0; i <= int(zeros); i++ {
+			nano *= 10
+		}
+	}
+	return
+}
