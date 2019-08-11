@@ -195,10 +195,10 @@ type TimestampColumn struct {
 }
 
 // return seconds from 2015, Jan, 1 and nano seconds
-func getSecondsAndNanos(t Timestamp) (seconds int64, nanos uint) {
+func getSecondsAndNanos(t Timestamp) (seconds int64, nanos uint64) {
 	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
 	seconds = int64(time.Time(t).Second()- base.Second())
-	nanos = uint(time.Time(t).Nanosecond()- base.Nanosecond())
+	nanos = uint64(time.Time(t).Nanosecond()- base.Nanosecond())
 	return
 }
 

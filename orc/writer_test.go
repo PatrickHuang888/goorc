@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+	"time"
 )
 
 var workDir = os.TempDir() + string(os.PathSeparator)
@@ -84,4 +85,49 @@ func TestDecimalWriter(t *testing.T) {
 	}
 
 	reader.Close()
+}
+
+func TestTimestamp(t *testing.T) {
+	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP}
+	wopts := DefaultWriterOptions()
+	writer, err := NewWriter(workDir+"testTimestamp.orc", schema, wopts)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	batch, err := schema.CreateWriterBatch(wopts)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	var vector []Timestamp
+	layout:= "2006-01-01 00:00:00.999999999"
+	v, _ := time.Parse(layout, "2037-01-01 00:00:00.000999")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "2003-01-01 00:00:00.000000222")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "2003-01-01 00:00:00.000000222")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "1995-01-01 00:00:00.688888888")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "2002-01-01 00:00:00.1")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "2010-03-02 00:00:00.000009001")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "2005-01-01 00:00:00.000002229")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "2006-01-01 00:00:00.900203003")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "2003-01-01 00:00:00.800000007")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "1996-08-02 00:00:00.723100809")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "1998-11-02 00:00:00.857340643")
+	vector = append(vector, Timestamp(v))
+	v, _ = time.Parse(layout, "2008-10-02 00:00:00")
+	vector = append(vector, Timestamp(v))
+
+	batch.(*TimestampColumn).Vector = vector
+	if err := writer.Write(batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	writer.Close()
 }
