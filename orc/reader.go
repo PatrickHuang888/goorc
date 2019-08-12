@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 
 	"github.com/PatrickHuang888/goorc/pb/pb"
 	"github.com/golang/protobuf/proto"
@@ -157,12 +158,12 @@ type columnReader struct {
 	indexStart  uint64 // index area start
 	indexLength uint64
 
-	present       bool //if has present stream
-	presentStart  uint64
-	presentLength uint64
-	presentRead   bool   // if present already read
+	//present       bool //if has present stream
+	//presentStart  uint64
+	//presentLength uint64
+	//presentRead   bool   // if present already read
 	presents      []bool // present data
-
+	presentDecoder Decoder
 	dataDecoder      Decoder // data decoder
 	secondaryDecoder Decoder
 	lengthes         []uint64 // length data
@@ -175,7 +176,7 @@ type streamReader struct {
 	start      uint64
 	length     uint64
 	readLength uint64
-	info       *pb.Stream
+	kind       pb.Stream_Kind
 	buf        *bytes.Buffer
 }
 
@@ -210,42 +211,72 @@ func (sr *stripeReader) prepare() error {
 
 	// get all streams of a column
 	// and gather streams all kind
-	for _, stream := range sr.footer.GetStreams() {
-		id := stream.GetColumn()
-		crs[id].streams[stream.GetKind()] = &streamReader{info:stream}
+	infos:= make(map[pb.Stream_Kind][]*pb.Stream)
+	for _, info := range sr.footer.GetStreams() {
+		id := info.GetColumn()
+		k:= info.GetKind()
+		crs[id].streams[k] = &streamReader{length: info.GetLength(), kind: k}
+		infos[k]= append(infos[k], info)
+	}
+
+	//calculate index stream fields
+	var totalLengthIndex uint64
+	for i:=0; i<n; i++ {
+		index:= crs[i].streams[pb.Stream_ROW_INDEX]
+		if index!=nil {
+			if i == 0 {
+				index.start = sr.info.GetOffset()
+			} else {
+				indexi := crs[i].streams[pb.Stream_ROW_INDEX]
+				if indexi != nil {
+					indexPre := crs[i-1].streams[pb.Stream_ROW_INDEX]
+					indexi.start = indexPre.start + indexPre.length
+				}
+			}
+		}
+		totalLengthIndex+=index.length
 	}
 
 	for i := 0; i < n; i++ {
-		if crs[i].streams[pb.Stream_PRESENT] != nil {
+		/*if crs[i].streams[pb.Stream_PRESENT] != nil {
 			crs[i].present = true
+		}*/
+		/*var streamKinds []int
+		for k:= range crs[i].streams {
+			streamKinds= append(streamKinds, int(k))
 		}
+		sort.Ints(streamKinds)*/
 
-		if i==0 {
-			crs[0].indexStart = sr.info.GetOffset()
-			// present is first stream in data
-			crs[0].presentStart = sr.info.GetOffset() + sr.info.GetIndexLength()
-			if crs[0].present {
-				crs[0].presentLength = crs[0].streams[pb.Stream_PRESENT].info.GetLength()
+		if i == 0 {
+			index0 := crs[i].streams[pb.Stream_ROW_INDEX]
+			if index0!=nil {
+				index0.start = sr.info.GetOffset()
 			}
-			crs[0].streams[pb] = crs[0].presentStart + crs[0].presentLength
-		}else{
-			var previous uint64
-			if crs[i].streams[pb.Stream_ROW_INDEX] != nil {
-				previous = crs[i-1].streams[pb.Stream_ROW_INDEX].GetLength()
-				crs[i].indexLength = crs[i].streams[pb.Stream_ROW_INDEX].GetLength()
+			present0:= crs[i].streams[pb.Stream_PRESENT]
+			if present0!=nil {
+				present0.start = index0.start + index0.length
+				crs[0].presentDecoder= &boolRunLength{}
 			}
-			crs[i].indexStart = crs[i-1].indexStart + previous
+		} else {
+			indexi:= crs[i].streams[pb.Stream_ROW_INDEX]
+			if indexi!=nil {
+				indexPre:= crs[i-1].streams[pb.Stream_ROW_INDEX]
+				indexi.start= indexPre.start+ indexPre.length
+			}
+
+
+
 
 			previous = 0
 			for _, s := range crs[i-1].streams {
-				if s.GetKind() != pb.Stream_ROW_INDEX {
+				if s.info.GetKind() != pb.Stream_ROW_INDEX {
 					previous += s.GetLength()
 				}
 			}
 			if crs[i].present {
 				crs[i].presentLength = crs[i-1].streams[pb.Stream_PRESENT].GetLength()
 			}
-			crs[i].presentStart = crs[i-1].presentStart + previous
+			crs[i].presentStart = crs[i-1].presentStart + previous*/
 		}
 
 		switch crs[i].schema.Kind {
@@ -834,11 +865,11 @@ func (cr *columnReader) readLongsV2(column *LongColumn) (next bool, err error) {
 }
 
 func (cr *columnReader) readDecimal64sV2(column *Decimal64Column) (next bool, err error) {
-	data:= cr.streams[pb.Stream_DATA]
-	secondary:= cr.streams[pb.Stream_SECONDARY]
+	data := cr.streams[pb.Stream_DATA]
+	secondary := cr.streams[pb.Stream_SECONDARY]
 	dd := cr.dataDecoder.(*base128VarInt)
-	sd:= cr.secondaryDecoder.(*intRleV2)
-	for  {
+	sd := cr.secondaryDecoder.(*intRleV2)
+	for {
 		for i := dd.consumedIndex; i < dd.len(); {
 			l := len(column.Vector)
 			if l < cap(column.Vector) {
@@ -863,7 +894,7 @@ func (cr *columnReader) readDecimal64sV2(column *Decimal64Column) (next bool, er
 			}
 		}
 
-		if data.readAll(){
+		if data.readAll() {
 			break
 		}
 
