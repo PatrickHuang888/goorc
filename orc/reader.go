@@ -143,18 +143,17 @@ type stripeReader struct {
 }
 
 type columnReader struct {
-	id       int
-	schema   *TypeDescription
-	encoding *pb.ColumnEncoding
-
-	streams map[pb.Stream_Kind]*streamReader
-
+	id           int
+	schema       *TypeDescription
+	encoding     *pb.ColumnEncoding
 	f            *os.File
 	numberOfRows uint64
 	opts         *ReaderOptions
 
-	indexStart  uint64 // index area start
-	indexLength uint64
+	streams map[pb.Stream_Kind]*streamReader
+
+	//indexStart  uint64 // index area start
+	//indexLength uint64
 
 	presents       []bool // present data
 	presentDecoder Decoder
@@ -162,8 +161,7 @@ type columnReader struct {
 
 	dataDecoder      Decoder // data decoder
 	secondaryDecoder Decoder
-
-	lengthDecoder Decoder
+	lengthDecoder    Decoder
 	//lengthes         []uint64 // length data
 	//secondaries      []uint64
 
@@ -204,6 +202,7 @@ func (sr *stripeReader) prepare() error {
 		cr.f = sr.f
 		cr.numberOfRows = sr.info.GetNumberOfRows()
 		cr.opts = sr.opts
+		cr.presentDecoder = &boolRunLength{}
 		crs[i] = cr
 	}
 
@@ -212,7 +211,8 @@ func (sr *stripeReader) prepare() error {
 		id := si.GetColumn()
 		k := si.GetKind()
 		length := si.GetLength()
-		s := &streamReader{start: start, length: si.GetLength(), kind: k}
+		buf := bytes.NewBuffer(make([]byte, sr.opts.ChunkSize))
+		s := &streamReader{start: start, length: si.GetLength(), kind: k, buf: buf}
 		start += length
 		crs[id].streams[k] = s
 		//infos[k] = append(infos[k], info)
@@ -394,6 +394,9 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (next bool, err error) {
 		fallthrough
 	case pb.Type_LONG:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if cr.dataDecoder == nil {
+				cr.dataDecoder = &intRleV2{signed: true}
+			}
 			next, err = cr.readLongsV2(batch.(*LongColumn))
 		}
 
@@ -405,17 +408,35 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (next bool, err error) {
 
 	case pb.Type_STRING:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if cr.dataDecoder == nil {
+				cr.dataDecoder = &bytesDirectV2{}
+			}
+			if cr.lengthDecoder == nil {
+				cr.lengthDecoder = &intRleV2{signed: false}
+			}
 			next, err = cr.readStringsV2(batch.(*StringColumn))
 		}
 
 	case pb.Type_BOOLEAN:
+		if cr.dataDecoder == nil {
+			cr.dataDecoder = &boolRunLength{}
+		}
 		next, err = cr.readBools(batch.(*BoolColumn))
 
 	case pb.Type_BYTE: // TinyInt
+		if cr.dataDecoder == nil {
+			cr.dataDecoder = &byteRunLength{}
+		}
 		next, err = cr.readBytes(batch.(*TinyIntColumn))
 
 	case pb.Type_BINARY:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if cr.dataDecoder == nil {
+				cr.dataDecoder = &bytesDirectV2{}
+			}
+			if cr.lengthDecoder == nil {
+				cr.lengthDecoder = &intRleV2{signed: false}
+			}
 			next, err = cr.readBinaryV2(batch.(*BinaryColumn))
 		}
 
@@ -425,17 +446,32 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (next bool, err error) {
 			return false, errors.New("decimal column should be decimal64")
 		}
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if cr.dataDecoder == nil {
+				cr.dataDecoder = &base128VarInt{}
+			}
+			if cr.secondaryDecoder == nil {
+				cr.secondaryDecoder = &intRleV2{signed: false}
+			}
 			next, err = cr.readDecimal64sV2(column)
 		}
 
 	case pb.Type_DATE:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if cr.dataDecoder == nil {
+				cr.dataDecoder = &intRleV2{signed: true}
+			}
 			next, err := cr.readDatesV2(batch.(*DateColumn))
 			return next, errors.WithStack(err)
 		}
 
 	case pb.Type_TIMESTAMP:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+			if cr.dataDecoder == nil {
+				cr.dataDecoder = &intRleV2{signed: true}
+			}
+			if cr.secondaryDecoder == nil {
+				cr.secondaryDecoder = &intRleV2{signed: false}
+			}
 			next, err = cr.readTimestampsV2(batch.(*TimestampColumn))
 		}
 
@@ -760,14 +796,15 @@ func (cr *columnReader) readBytes(column *TinyIntColumn) (next bool, err error) 
 }
 
 func (cr *columnReader) readLongsV2(column *LongColumn) (next bool, err error) {
-	data := cr.streams[pb.Stream_DATA]
 	dd := cr.dataDecoder.(*intRleV2)
+	data := cr.streams[pb.Stream_DATA]
+	assertx(data != nil)
 	for {
 		for i := dd.consumedIndex; i < dd.len(); {
 			l := len(column.Vector)
 			if l < cap(column.Vector) {
 				if column.nullable {
-					if cr.presents == nil || cr.presents[l-1] {
+					if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
 						column.Nulls = append(column.Nulls, false)
 						column.Vector = append(column.Vector, dd.literals[i])
 						i++
@@ -781,7 +818,6 @@ func (cr *columnReader) readLongsV2(column *LongColumn) (next bool, err error) {
 				}
 				cr.readCursor++
 			} else {
-				// still not finished
 				dd.consumedIndex = i
 				return true, nil
 			}

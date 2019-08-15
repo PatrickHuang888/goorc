@@ -130,4 +130,36 @@ func TestTimestamp(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	writer.Close()
+
+	ropts:= DefaultReaderOptions()
+	reader, err := NewReader(workDir+"testTimestamp.orc", ropts)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	schema = reader.GetSchema()
+	stripes, err := reader.Stripes()
+	if err != nil {
+		fmt.Printf("%+v", err)
+	}
+
+	for _, stripe := range stripes {
+		batch, err := schema.CreateReaderBatch(ropts)
+		if err != nil {
+			fmt.Printf("create row batch error %+v", err)
+			os.Exit(1)
+		}
+
+		_, err = stripe.NextBatch(batch)
+		if err != nil {
+			fmt.Printf("%+v", err)
+			break
+		}
+
+		assert.Equal(t, 12, batch.Rows())
+
+	}
+
+	reader.Close()
+
 }

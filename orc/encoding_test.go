@@ -363,6 +363,6 @@ func TestTimestampTrailing(t *testing.T)  {
 }
 
 func TestNanoEncoding(t *testing.T)  {
-	assert.Equal(t, uint64(0x0a), encodingNano(uint(1000)))
-	assert.Equal(t, uint64(0x0c), encodingNano(uint(100000)))
+	assert.Equal(t, uint64(0x0a), encodingNano(uint64(1000)))
+	assert.Equal(t, uint64(0x0c), encodingNano(uint64(100000)))
 }

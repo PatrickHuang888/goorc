@@ -1881,19 +1881,19 @@ func Convert(u uint64) int64 {
 }
 
 
-func encodingNano(nano uint) (encoded uint64) {
-	if nano == 0 {
+func encodingNano(nanos uint64) (encoded uint64) {
+	if nanos == 0 {
 		return 0
-	} else if nano%100 != 0 {
-		return uint64(nano) << 3 // no encoding if less 2 zeros
+	} else if nanos%100 != 0 {
+		return uint64(nanos) << 3 // no encoding if less 2 zeros
 	} else {
-		nano /= 100
+		nanos /= 100
 		trailingZeros := 1
-		for nano%10 == 0 && trailingZeros < 7 { // 3 bits
-			nano /= 10
+		for nanos%10 == 0 && trailingZeros < 7 { // 3 bits
+			nanos /= 10
 			trailingZeros++
 		}
-		return uint64(nano)<<3 | uint64(trailingZeros)
+		return nanos<<3 | uint64(trailingZeros)
 	}
 }
 
