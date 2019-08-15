@@ -283,8 +283,8 @@ type bytesDirectV2 struct {
 
 func (bd *bytesDirectV2) reset() {
 	bd.content = bd.content[:0]
-	bd.length = nil
-	bd.pos = 0
+	//bd.length = nil
+	//bd.pos = 0
 	bd.decoder.reset()
 }
 
