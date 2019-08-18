@@ -593,6 +593,7 @@ type streamWriter struct {
 func (s *streamWriter) writeBools(bb []bool) error {
 	enc := s.encoder.(*boolRunLength)
 	enc.bools = bb
+	log.Debugf("stream %d-%s write bools", s.info.GetColumn(), s.info.Kind.String())
 	if err := enc.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
@@ -602,6 +603,7 @@ func (s *streamWriter) writeBools(bb []bool) error {
 func (s *streamWriter) writeBytes(bb []byte) error {
 	enc := s.encoder.(*byteRunLength)
 	enc.literals = bb
+	log.Debugf("stream %d-%s write bytes", s.info.GetColumn(), s.info.Kind.String())
 	if err := enc.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
@@ -611,6 +613,7 @@ func (s *streamWriter) writeBytes(bb []byte) error {
 func (s *streamWriter) writeULongsV2(v []uint64) error {
 	irl := s.encoder.(*intRleV2)
 	irl.uliterals = v
+	log.Debugf("stream %d-%s write ULongs", s.info.GetColumn(), s.info.Kind.String())
 	if err := irl.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
@@ -620,6 +623,7 @@ func (s *streamWriter) writeULongsV2(v []uint64) error {
 func (s *streamWriter) writeLongsV2(v []int64) error {
 	irl := s.encoder.(*intRleV2)
 	irl.literals = v
+	log.Debugf("stream %d-%s write Longs", s.info.GetColumn(), s.info.Kind.String())
 	if err := irl.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
@@ -629,6 +633,7 @@ func (s *streamWriter) writeLongsV2(v []int64) error {
 func (s *streamWriter) writeBytesDirectV2(bs [][]byte) error {
 	enc := s.encoder.(*bytesDirectV2)
 	enc.content = bs
+	log.Debugf("stream %d-%s write byte slice", s.info.GetColumn(), s.info.Kind.String())
 	if err := enc.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
@@ -638,6 +643,7 @@ func (s *streamWriter) writeBytesDirectV2(bs [][]byte) error {
 func (s *streamWriter) writeBase128VarInts(values []int64) error {
 	enc := s.encoder.(*base128VarInt)
 	enc.values = values
+	log.Debugf("stream %d-%s write base128varints", s.info.GetColumn(), s.info.Kind.String())
 	if err := enc.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}

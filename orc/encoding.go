@@ -1473,11 +1473,12 @@ func (rle *intRleV2) writeDelta(first []byte, deltaBase int64, length uint16, de
 	if width == 1 { // delta width no 1?
 		width = 2
 	}
-	log.Tracef("encoding: irl v2 Delta length %d, width %d", length, width)
+	//log.Tracef("encoding: irl v2 Delta length %d, width %d", length, width)
 	w, err := widthEncoding(width)
 	if err != nil {
 		return errors.WithStack(err)
 	}
+	log.Tracef("write delta encoded width %d", w)
 	h1 |= w & 0x1F << 1 // 5 bit for W
 	length -= 1
 	h1 |= byte(length>>8) & 0x01 // 9th bit
@@ -1792,7 +1793,7 @@ func widthEncoding(width byte) (w byte, err error) {
 }
 
 func widthDecoding(w byte, delta bool) (width byte, err error) {
-	if 2 <= w && 2 <= 20 {
+	if 2 <= w && w <= 20 {
 		if 2 == w || (4 <= w && w <= 6) || (8 <= w && w <= 14) || (16 <= w && w <= 20) {
 			log.Warnf("decoding: width code %d is deprecated", w)
 		}

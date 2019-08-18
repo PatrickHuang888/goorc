@@ -593,6 +593,7 @@ func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, er
 
 		if dd.consumedIndex == dd.len() && !data.finish() {
 			dd.reset()
+			log.Debugf("column %d stream %s read at %d", cr.id, data.kind.String(), data.readLength)
 			if err := data.read(cr.opts, cr.f, dd); err != nil {
 				return false, errors.WithStack(err)
 			}
@@ -600,6 +601,7 @@ func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, er
 
 		if sd.consumedIndex == sd.len() && !secondary.finish() {
 			sd.reset()
+			log.Debugf("column %d stream %s read at %d", cr.id, secondary.kind.String(), secondary.readLength)
 			if err := secondary.read(cr.opts, cr.f, sd); err != nil {
 				return false, errors.WithStack(err)
 			}
