@@ -100,30 +100,30 @@ func TestTimestamp(t *testing.T) {
 	}
 	var vector []Timestamp
 	layout:= "2006-01-01 00:00:00.999999999"
-	v, _ := time.Parse(layout, "2037-01-01 00:00:00.000999")
-	vector = append(vector, Timestamp(v))
-	v, _ = time.Parse(layout, "2003-01-01 00:00:00.000000222")
-	vector = append(vector, Timestamp(v))
-	v, _ = time.Parse(layout, "2003-01-01 00:00:00.000000222")
-	vector = append(vector, Timestamp(v))
+	t1, _ := time.Parse(layout, "2037-01-01 00:00:00.000999")
+	vector = append(vector, GetTimestamp(t1))
+	t2, _ := time.Parse(layout, "2003-01-01 00:00:00.000000222")
+	vector = append(vector, GetTimestamp(t2))
+	v, _ := time.Parse(layout, "2003-01-01 00:00:00.000000222")
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "1995-01-01 00:00:00.688888888")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "2002-01-01 00:00:00.1")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "2010-03-02 00:00:00.000009001")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "2005-01-01 00:00:00.000002229")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "2006-01-01 00:00:00.900203003")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "2003-01-01 00:00:00.800000007")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "1996-08-02 00:00:00.723100809")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "1998-11-02 00:00:00.857340643")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 	v, _ = time.Parse(layout, "2008-10-02 00:00:00")
-	vector = append(vector, Timestamp(v))
+	vector = append(vector, GetTimestamp(v))
 
 	batch.(*TimestampColumn).Vector = vector
 	if err := writer.Write(batch); err != nil {
@@ -157,7 +157,8 @@ func TestTimestamp(t *testing.T) {
 		}
 
 		assert.Equal(t, 12, batch.Rows())
-
+		fmt.Println(GetTime(batch.(*TimestampColumn).Vector[0]).String())
+		assert.Equal(t, GetTimestamp(t1).Seconds, batch.(*TimestampColumn).Vector[0].Seconds)
 	}
 
 	reader.Close()

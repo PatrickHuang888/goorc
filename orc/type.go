@@ -121,14 +121,14 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 	case Type_DATE:
 		c := &DateColumn{column: column{id: td.Id, nullable: nullable}}
 		if createVector {
-			// todo:
+			c.Vector=make([]Date, rowSize)
 		}
 		return c, nil
 
 	case Type_TIMESTAMP:
 		c := &TimestampColumn{column: column{id: td.Id, nullable: nullable}}
 		if createVector {
-			// todo:
+			c.Vector= make([]Timestamp, rowSize)
 		}
 		return c, nil
 

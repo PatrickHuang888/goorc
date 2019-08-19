@@ -188,23 +188,36 @@ func (dc *DateColumn) reset() {
 	dc.Vector = dc.Vector[:0]
 }
 
-type Timestamp time.Time
+// todo: local timezone
+type Timestamp struct {
+	Seconds int64
+	Nanos   uint64
+}
 type TimestampColumn struct {
 	column
 	Vector []Timestamp
 }
 
 // return seconds from 2015, Jan, 1 and nano seconds
-func getSecondsAndNanos(t Timestamp) (seconds int64, nanos uint64) {
+func GetTime(ts Timestamp) (t time.Time) {
 	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
-	seconds = int64(time.Time(t).Second()- base.Second())
-	nanos = uint64(time.Time(t).Nanosecond()- base.Nanosecond())
-	return
+	d := time.Duration(float64(ts.Seconds) + float64(ts.Nanos)/1e9)
+	return base.Add(d)
 }
 
-func getTimestamp(seconds int64, nanos uint64) Timestamp {
+/*func getSecondsAndNanos(t Timestamp) (seconds int64, nanos uint64) {
 	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
-	return Timestamp(base.Add(time.Duration(float64(seconds) + float64(nanos/1e9))))
+	base.
+		d := time.Time(t).Sub(base)
+	seconds = int64(d / time.Second)
+	nanos = uint64(d % time.Second)
+	return
+}*/
+
+func GetTimestamp(t time.Time) Timestamp {
+	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
+	d := t.Sub(base)
+	return Timestamp{int64(d / time.Second), uint64(d % time.Second)}
 }
 
 func (*TimestampColumn) T() pb.Type_Kind {

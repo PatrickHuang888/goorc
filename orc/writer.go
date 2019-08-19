@@ -422,17 +422,14 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 		if column.hasNulls {
 			for i, b := range column.Nulls {
 				if !b {
-					// todo: using local time zone
-					s, n := getSecondsAndNanos(column.Vector[i])
-					seconds = append(seconds, s)
-					nanos = append(nanos, encodingNano(n))
+					seconds = append(seconds, column.Vector[i].Seconds)
+					nanos = append(nanos, column.Vector[i].Nanos)
 				}
 			}
 		} else {
 			for _, t := range column.Vector {
-				s, n := getSecondsAndNanos(t)
-				seconds = append(seconds, s)
-				nanos = append(nanos, encodingNano(n))
+				seconds = append(seconds, t.Seconds)
+				nanos = append(nanos, t.Nanos)
 			}
 		}
 
@@ -613,7 +610,7 @@ func (s *streamWriter) writeBytes(bb []byte) error {
 func (s *streamWriter) writeULongsV2(v []uint64) error {
 	irl := s.encoder.(*intRleV2)
 	irl.uliterals = v
-	log.Debugf("stream %d-%s write ULongs", s.info.GetColumn(), s.info.Kind.String())
+	log.Debugf("stream %d-%s write ulongs", s.info.GetColumn(), s.info.Kind.String())
 	if err := irl.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
@@ -623,7 +620,7 @@ func (s *streamWriter) writeULongsV2(v []uint64) error {
 func (s *streamWriter) writeLongsV2(v []int64) error {
 	irl := s.encoder.(*intRleV2)
 	irl.literals = v
-	log.Debugf("stream %d-%s write Longs", s.info.GetColumn(), s.info.Kind.String())
+	log.Debugf("stream %d-%s write longs", s.info.GetColumn(), s.info.Kind.String())
 	if err := irl.writeValues(s.buf); err != nil {
 		return errors.WithStack(err)
 	}
