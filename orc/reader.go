@@ -566,7 +566,7 @@ func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, er
 				if column.nullable {
 					if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
 						column.Nulls = append(column.Nulls, false)
-						column.Vector = append(column.Vector, Timestamp{dd.literals[i], sd.uliterals[j]})
+						column.Vector = append(column.Vector, Timestamp{dd.literals[i], uint32(sd.uliterals[j])})
 						i++
 						j++
 					} else {
@@ -574,7 +574,7 @@ func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, er
 						column.Vector = append(column.Vector, Timestamp{})
 					}
 				} else { // no nulls
-					column.Vector = append(column.Vector, Timestamp{dd.literals[i], sd.uliterals[j]})
+					column.Vector = append(column.Vector, Timestamp{dd.literals[i], uint32(sd.uliterals[j])})
 					i++
 					j++
 				}

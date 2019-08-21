@@ -191,7 +191,7 @@ func (dc *DateColumn) reset() {
 // todo: local timezone
 type Timestamp struct {
 	Seconds int64
-	Nanos   uint64
+	Nanos   uint32
 }
 type TimestampColumn struct {
 	column
@@ -200,24 +200,13 @@ type TimestampColumn struct {
 
 // return seconds from 2015, Jan, 1 and nano seconds
 func GetTime(ts Timestamp) (t time.Time) {
-	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
-	d := time.Duration(float64(ts.Seconds) + float64(ts.Nanos)/1e9)
-	return base.Add(d)
+	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	return time.Unix(base+ts.Seconds, int64(ts.Nanos)).UTC()
 }
 
-/*func getSecondsAndNanos(t Timestamp) (seconds int64, nanos uint64) {
-	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
-	base.
-		d := time.Time(t).Sub(base)
-	seconds = int64(d / time.Second)
-	nanos = uint64(d % time.Second)
-	return
-}*/
-
 func GetTimestamp(t time.Time) Timestamp {
-	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
-	d := t.Sub(base)
-	return Timestamp{int64(d / time.Second), uint64(d % time.Second)}
+	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	return Timestamp{t.Unix()-base, uint32(t.Nanosecond())}
 }
 
 func (*TimestampColumn) T() pb.Type_Kind {

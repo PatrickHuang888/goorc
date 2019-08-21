@@ -423,13 +423,13 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 			for i, b := range column.Nulls {
 				if !b {
 					seconds = append(seconds, column.Vector[i].Seconds)
-					nanos = append(nanos, column.Vector[i].Nanos)
+					nanos = append(nanos, uint64(column.Vector[i].Nanos))
 				}
 			}
 		} else {
 			for _, t := range column.Vector {
 				seconds = append(seconds, t.Seconds)
-				nanos = append(nanos, t.Nanos)
+				nanos = append(nanos, uint64(t.Nanos))
 			}
 		}
 

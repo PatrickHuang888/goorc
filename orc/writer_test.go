@@ -87,80 +87,97 @@ func TestDecimalWriter(t *testing.T) {
 	reader.Close()
 }
 
-func TestTimestamp(t *testing.T) {
+func TestTimestamp(test *testing.T) {
 	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP}
 	wopts := DefaultWriterOptions()
 	writer, err := NewWriter(workDir+"testTimestamp.orc", schema, wopts)
 	if err != nil {
-		t.Fatalf("%+v", err)
+		test.Fatalf("%+v", err)
 	}
-	batch, err := schema.CreateWriterBatch(wopts)
+	wbatch, err := schema.CreateWriterBatch(wopts)
 	if err != nil {
-		t.Fatalf("%+v", err)
+		test.Fatalf("%+v", err)
 	}
 	var vector []Timestamp
-	layout:= "2006-01-01 00:00:00.999999999"
+	layout := "2006-01-01 00:00:00.999999999"
 	t1, _ := time.Parse(layout, "2037-01-01 00:00:00.000999")
 	vector = append(vector, GetTimestamp(t1))
 	t2, _ := time.Parse(layout, "2003-01-01 00:00:00.000000222")
 	vector = append(vector, GetTimestamp(t2))
-	v, _ := time.Parse(layout, "2003-01-01 00:00:00.000000222")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "1995-01-01 00:00:00.688888888")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "2002-01-01 00:00:00.1")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "2010-03-02 00:00:00.000009001")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "2005-01-01 00:00:00.000002229")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "2006-01-01 00:00:00.900203003")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "2003-01-01 00:00:00.800000007")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "1996-08-02 00:00:00.723100809")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "1998-11-02 00:00:00.857340643")
-	vector = append(vector, GetTimestamp(v))
-	v, _ = time.Parse(layout, "2008-10-02 00:00:00")
-	vector = append(vector, GetTimestamp(v))
+	t3, _ := time.Parse(layout, "1999-01-01 00:00:00.999999999")
+	vector = append(vector, GetTimestamp(t3))
+	t4, _ := time.Parse(layout, "1995-01-01 00:00:00.688888888")
+	vector = append(vector, GetTimestamp(t4))
+	t5, _ := time.Parse(layout, "2002-01-01 00:00:00.1")
+	vector = append(vector, GetTimestamp(t5))
+	t6, _ := time.Parse(layout, "2010-03-02 00:00:00.000009001")
+	vector = append(vector, GetTimestamp(t6))
+	t7, _ := time.Parse(layout, "2005-01-01 00:00:00.000002229")
+	vector = append(vector, GetTimestamp(t7))
+	t8, _ := time.Parse(layout, "2006-01-01 00:00:00.900203003")
+	vector = append(vector, GetTimestamp(t8))
+	t9, _ := time.Parse(layout, "2003-01-01 00:00:00.800000007")
+	vector = append(vector, GetTimestamp(t9))
+	t10, _ := time.Parse(layout, "1996-08-02 00:00:00.723100809")
+	vector = append(vector, GetTimestamp(t10))
+	t11, _ := time.Parse(layout, "1998-11-02 00:00:00.857340643")
+	vector = append(vector, GetTimestamp(t11))
+	t12, _ := time.Parse(layout, "2008-10-02 00:00:00")
+	vector = append(vector, GetTimestamp(t12))
 
-	batch.(*TimestampColumn).Vector = vector
-	if err := writer.Write(batch); err != nil {
-		t.Fatalf("%+v", err)
+	wbatch.(*TimestampColumn).Vector = vector
+	if err := writer.Write(wbatch); err != nil {
+		test.Fatalf("%+v", err)
 	}
 	writer.Close()
 
-	ropts:= DefaultReaderOptions()
+	ropts := DefaultReaderOptions()
 	reader, err := NewReader(workDir+"testTimestamp.orc", ropts)
 	if err != nil {
-		t.Fatalf("%+v", err)
+		test.Fatalf("%+v", err)
 	}
 
 	schema = reader.GetSchema()
 	stripes, err := reader.Stripes()
 	if err != nil {
-		fmt.Printf("%+v", err)
+		test.Fatalf("%+v", err)
 	}
 
-	for _, stripe := range stripes {
-		batch, err := schema.CreateReaderBatch(ropts)
-		if err != nil {
-			fmt.Printf("create row batch error %+v", err)
-			os.Exit(1)
-		}
-
-		_, err = stripe.NextBatch(batch)
-		if err != nil {
-			fmt.Printf("%+v", err)
-			break
-		}
-
-		assert.Equal(t, 12, batch.Rows())
-		fmt.Println(GetTime(batch.(*TimestampColumn).Vector[0]).String())
-		assert.Equal(t, GetTimestamp(t1).Seconds, batch.(*TimestampColumn).Vector[0].Seconds)
+	rbatch, err := schema.CreateReaderBatch(ropts)
+	if err != nil {
+		test.Fatalf("fail create batch %+v", err)
 	}
 
+	_, err = stripes[0].NextBatch(rbatch)
+	if err != nil {
+		test.Fatalf("%+v", err)
+	}
+
+	assert.Equal(test, 12, rbatch.Rows())
+	assert.Equal(test, GetTimestamp(t1).Seconds, rbatch.(*TimestampColumn).Vector[0].Seconds)
+	assert.Equal(test, GetTimestamp(t1).Nanos, rbatch.(*TimestampColumn).Vector[0].Nanos)
+	assert.Equal(test, GetTimestamp(t2).Seconds, rbatch.(*TimestampColumn).Vector[1].Seconds)
+	assert.Equal(test, GetTimestamp(t2).Nanos, rbatch.(*TimestampColumn).Vector[1].Nanos)
+	assert.Equal(test, GetTimestamp(t3).Seconds, rbatch.(*TimestampColumn).Vector[2].Seconds)
+	assert.Equal(test, GetTimestamp(t3).Nanos, rbatch.(*TimestampColumn).Vector[2].Nanos)
+	assert.Equal(test, GetTimestamp(t4).Seconds, rbatch.(*TimestampColumn).Vector[3].Seconds)
+	assert.Equal(test, GetTimestamp(t4).Nanos, rbatch.(*TimestampColumn).Vector[3].Nanos)
+	assert.Equal(test, GetTimestamp(t5).Seconds, rbatch.(*TimestampColumn).Vector[4].Seconds)
+	assert.Equal(test, GetTimestamp(t5).Nanos, rbatch.(*TimestampColumn).Vector[4].Nanos)
+	assert.Equal(test, GetTimestamp(t6).Seconds, rbatch.(*TimestampColumn).Vector[5].Seconds)
+	assert.Equal(test, GetTimestamp(t6).Nanos, rbatch.(*TimestampColumn).Vector[5].Nanos)
+	assert.Equal(test, GetTimestamp(t7).Seconds, rbatch.(*TimestampColumn).Vector[6].Seconds)
+	assert.Equal(test, GetTimestamp(t7).Nanos, rbatch.(*TimestampColumn).Vector[6].Nanos)
+	assert.Equal(test, GetTimestamp(t8).Seconds, rbatch.(*TimestampColumn).Vector[7].Seconds)
+	assert.Equal(test, GetTimestamp(t8).Nanos, rbatch.(*TimestampColumn).Vector[7].Nanos)
+	assert.Equal(test, GetTimestamp(t9).Seconds, rbatch.(*TimestampColumn).Vector[8].Seconds)
+	assert.Equal(test, GetTimestamp(t9).Nanos, rbatch.(*TimestampColumn).Vector[8].Nanos)
+	assert.Equal(test, GetTimestamp(t10).Seconds, rbatch.(*TimestampColumn).Vector[9].Seconds)
+	assert.Equal(test, GetTimestamp(t10).Nanos, rbatch.(*TimestampColumn).Vector[9].Nanos)
+	assert.Equal(test, GetTimestamp(t11).Seconds, rbatch.(*TimestampColumn).Vector[10].Seconds)
+	assert.Equal(test, GetTimestamp(t11).Nanos, rbatch.(*TimestampColumn).Vector[10].Nanos)
+	assert.Equal(test, GetTimestamp(t12).Seconds, rbatch.(*TimestampColumn).Vector[11].Seconds)
+	assert.Equal(test, GetTimestamp(t12).Nanos, rbatch.(*TimestampColumn).Vector[11].Nanos)
 	reader.Close()
 
 }

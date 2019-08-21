@@ -238,6 +238,21 @@ func TestIntRunLengthV2Direct(t *testing.T)  {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, v, rle.uliterals)
+
+	v= []uint64{999, 900203003, 688888888, 857340643}
+	rle.reset()
+	rle.uliterals= v
+	buf.Reset()
+	if err:= rle.writeValues(buf);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	rle.reset()
+	if err:=rle.readValues(buf);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, v[0], rle.uliterals[0])
+	assert.Equal(t, v[1], rle.uliterals[1])
+	assert.Equal(t, v[2], rle.uliterals[2])
 }
 
 
