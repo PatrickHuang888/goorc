@@ -72,7 +72,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		offset := stripeInfo.GetOffset()
 		indexLength := stripeInfo.GetIndexLength()
 		dataLength := stripeInfo.GetDataLength()
-		chunkSize := r.tail.Postscript.GetCompressionBlockSize()
+		ps := r.tail.GetPostscript()
 
 		// row index
 		indexOffset := offset
@@ -83,12 +83,16 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		if _, err = io.ReadFull(r.f, indexBuf); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		decompressed, err := ReadChunks(indexBuf, r.tail.GetPostscript().GetCompression(), int(chunkSize))
-		if err != nil {
-			return nil, errors.WithStack(err)
+		if ps.GetCompression() != pb.CompressionKind_NONE {
+			ib := &bytes.Buffer{}
+			if err = decompressBuffer(ps.GetCompression(), ib, bytes.NewBuffer(indexBuf));
+				err != nil {
+				return nil, err
+			}
+			indexBuf = ib.Bytes()
 		}
 		index := &pb.RowIndex{}
-		if err = proto.Unmarshal(decompressed, index); err != nil {
+		if err = proto.Unmarshal(indexBuf, index); err != nil {
 			return nil, errors.Wrapf(err, "unmarshal strip index error")
 		}
 
@@ -97,16 +101,20 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		if _, err := r.f.Seek(footerOffset, 0); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		buf := make([]byte, stripeInfo.GetFooterLength())
-		if _, err = io.ReadFull(r.f, buf); err != nil {
+		footerBuf := make([]byte, stripeInfo.GetFooterLength())
+		if _, err = io.ReadFull(r.f, footerBuf); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		dbuf, err := ReadChunks(buf, r.tail.GetPostscript().GetCompression(), int(chunkSize))
-		if err != nil {
-			return nil, errors.WithStack(err)
+		if ps.GetCompression() != pb.CompressionKind_NONE {
+			fb := &bytes.Buffer{}
+			if err = decompressBuffer(r.tail.GetPostscript().GetCompression(), fb, bytes.NewBuffer(footerBuf));
+				err != nil {
+				return nil, err
+			}
+			footerBuf = fb.Bytes()
 		}
 		footer := &pb.StripeFooter{}
-		if err = proto.Unmarshal(dbuf, footer); err != nil {
+		if err = proto.Unmarshal(footerBuf, footer); err != nil {
 			return nil, errors.Wrapf(err, "unmarshal currentStripe footer error")
 		}
 
@@ -1047,11 +1055,20 @@ func (stream *streamReader) Len() int {
 }
 
 // read whole stream into memory
-func (stream *streamReader) readWhole(opts *ReaderOptions, f *os.File) error {
-	if _, err := f.Seek(int64(stream.start), 0); err != nil {
+func (stream *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {
+	if _, err = f.Seek(int64(stream.start), 0); err != nil {
 		return errors.WithStack(err)
 	}
 	stream.buf.Reset()
+
+	if opts.CompressionKind == pb.CompressionKind_NONE {
+		if _, err = io.CopyN(stream.buf, f, int64(stream.length)); err != nil {
+			return errors.WithStack(err)
+		}
+		stream.readLength += stream.length
+		return nil
+	}
+
 	for ; !stream.finish(); {
 		l, err := readAChunk(opts, f, stream.buf)
 		if err != nil {
@@ -1064,28 +1081,6 @@ func (stream *streamReader) readWhole(opts *ReaderOptions, f *os.File) error {
 
 func (stream *streamReader) finish() bool {
 	return stream.readLength >= stream.length
-}
-
-func decompress(kind pb.CompressionKind, original bool, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
-	if original {
-		if n, err = io.Copy(dst, src); err != nil {
-			return 0, errors.WithStack(err)
-		}
-	} else {
-		switch kind {
-		case pb.CompressionKind_ZLIB:
-			r := flate.NewReader(src)
-			n, err = dst.ReadFrom(r)
-			r.Close()
-			if err != nil {
-				return 0, errors.Wrapf(err, "decompress chunk data error")
-			}
-			return n, nil
-		default:
-			return 0, errors.New("compression kind other than zlib not impl")
-		}
-	}
-	return
 }
 
 func (r *reader) NumberOfRows() uint64 {
@@ -1206,17 +1201,17 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 
 	// read file footer
 	footerStart := psOffset - footerSize
-	cmpBufSize := ps.GetCompressionBlockSize()
-	footerBuf := bytes.NewBuffer(make([]byte, cmpBufSize))
-	footerBuf.Reset()
-	cmpFooterBuf := bytes.NewBuffer(buf[footerStart : footerStart+footerSize])
-
-	if err := decompressedTo(footerBuf, cmpFooterBuf, ps.GetCompression()); err != nil {
-		return nil, errors.WithStack(err)
+	footerBuf := buf[footerStart : footerStart+footerSize]
+	if ps.GetCompression() != pb.CompressionKind_NONE {
+		fb := bytes.NewBuffer(make([]byte, ps.GetCompressionBlockSize()))
+		fb.Reset()
+		if err := decompressBuffer(ps.GetCompression(), fb, bytes.NewBuffer(footerBuf)); err != nil {
+			return nil, errors.WithStack(err)
+		}
+		footerBuf = fb.Bytes()
 	}
-
 	footer := &pb.Footer{}
-	if err = proto.Unmarshal(footerBuf.Bytes(), footer); err != nil {
+	if err = proto.Unmarshal(footerBuf, footer); err != nil {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 
@@ -1292,42 +1287,6 @@ func Max(x, y int64) int64 {
 	return y
 }
 
-// decompress buffer src into dst
-func decompressedTo(dst *bytes.Buffer, src *bytes.Buffer, kind pb.CompressionKind) (err error) {
-	switch kind {
-	case pb.CompressionKind_ZLIB:
-		for src.Len() > 0 {
-			header := make([]byte, 3)
-			if _, err = src.Read(header); err != nil {
-				return errors.WithStack(err)
-			}
-			original := header[0]&0x01 == 1
-			chunkLength := int64(header[2])<<15 | int64(header[1])<<7 | int64(header[0])>>1
-			if original {
-				if _, err = io.CopyN(dst, src, chunkLength); err != nil {
-					return errors.WithStack(err)
-				}
-			} else {
-				buf := bytes.NewBuffer(make([]byte, chunkLength))
-				buf.Reset()
-				if _, err = io.CopyN(buf, src, chunkLength); err != nil {
-					return errors.WithStack(err)
-				}
-				r := flate.NewReader(buf)
-				if _, err = io.Copy(dst, r); err != nil {
-					return errors.WithStack(err)
-				}
-				if err = r.Close(); err != nil {
-					return errors.WithStack(err)
-				}
-			}
-		}
-	default:
-		return errors.New("decompression other than zlib not impl")
-	}
-	return
-}
-
 func assertx(condition bool) {
 	if !condition {
 		panic("assert error")
@@ -1354,7 +1313,7 @@ func readAChunk(opts *ReaderOptions, f *os.File, out *bytes.Buffer) (n uint64, e
 	}
 	n += chunkLength
 
-	if _, err := decompress(opts.CompressionKind, original, out, buf); err != nil {
+	if _, err := decompressChunkData(opts.CompressionKind, original, out, buf); err != nil {
 		return n, errors.WithStack(err)
 	}
 
@@ -1397,6 +1356,67 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 			}
 		}
 		offset += chunkLength
+	}
+	return
+}
+
+// data should be compressed
+func decompressChunkData(kind pb.CompressionKind, original bool, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
+	assertx(kind != pb.CompressionKind_NONE)
+	if original {
+		if n, err = io.Copy(dst, src); err != nil {
+			return 0, errors.WithStack(err)
+		}
+	} else {
+		switch kind {
+		case pb.CompressionKind_ZLIB:
+			r := flate.NewReader(src)
+			n, err = dst.ReadFrom(r)
+			r.Close()
+			if err != nil {
+				return 0, errors.Wrapf(err, "decompress chunk data error")
+			}
+			return n, nil
+		default:
+			return 0, errors.New("compression kind other than zlib not impl")
+		}
+	}
+	return
+}
+
+// buffer should be compressed, maybe contains several chunks
+func decompressBuffer(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (err error) {
+	assertx(kind != pb.CompressionKind_NONE)
+	switch kind {
+	case pb.CompressionKind_ZLIB:
+		for src.Len() > 0 {
+			header := make([]byte, 3)
+			if _, err = src.Read(header); err != nil {
+				return errors.WithStack(err)
+			}
+			original := header[0]&0x01 == 1
+			chunkLength := int64(header[2])<<15 | int64(header[1])<<7 | int64(header[0])>>1
+			if original {
+				if _, err = io.CopyN(dst, src, chunkLength); err != nil {
+					return errors.WithStack(err)
+				}
+			} else {
+				buf := bytes.NewBuffer(make([]byte, chunkLength))
+				buf.Reset()
+				if _, err = io.CopyN(buf, src, chunkLength); err != nil {
+					return errors.WithStack(err)
+				}
+				r := flate.NewReader(buf)
+				if _, err = io.Copy(dst, r); err != nil {
+					return errors.WithStack(err)
+				}
+				if err = r.Close(); err != nil {
+					return errors.WithStack(err)
+				}
+			}
+		}
+	default:
+		return errors.New("decompression other than zlib not impl")
 	}
 	return
 }
