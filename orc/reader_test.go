@@ -1,7 +1,6 @@
 package orc
 
 import (
-	"os"
 	"testing"
 )
 
@@ -22,14 +21,12 @@ func TestNoCompression(t *testing.T)  {
 		batch, err := schema.CreateReaderBatch(opts)
 		if err != nil {
 			t.Errorf("create row batch error %+v", err)
-			os.Exit(1)
 		}
 
 		for next := true; next; {
 			next, err = stripe.NextBatch(batch)
 			if err != nil {
 				t.Fatalf("%+v", err)
-				break
 			}
 		}
 	}
