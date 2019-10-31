@@ -463,12 +463,12 @@ func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, er
 		}
 
 		dd.reset()
-		if err := dd.readValues(data); err != nil {
+		if err := dd.readValues(data.buf); err != nil {
 			return false, err
 		}
 
 		sd.reset()
-		if err := sd.readValues(secondary); err != nil {
+		if err := sd.readValues(secondary.buf); err != nil {
 			return false, errors.WithStack(err)
 		}
 
@@ -1005,7 +1005,7 @@ func (stream *streamReader) String() string {
 	return nil
 }*/
 
-func (stream *streamReader) ReadByte() (byte, error) {
+/*func (stream *streamReader) ReadByte() (byte, error) {
 	if stream.buf.Len() == 0 && !stream.finish() {
 		stream.buf.Reset()
 
@@ -1052,7 +1052,7 @@ func (stream *streamReader) Read(p []byte) (n int, err error) {
 
 func (stream *streamReader) Len() int {
 	return stream.buf.Len()
-}
+}*/
 
 // read whole stream into memory
 func (stream *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {

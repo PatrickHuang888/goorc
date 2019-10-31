@@ -403,10 +403,6 @@ func (rle *intRleV2) readValues(in BufferedReader) error {
 			}
 
 		case Encoding_DIRECT: // numbers encoding in big-endian
-			// refactoring: reset operation
-			rle.lastByte = 0
-			rle.bitsLeft = 0
-
 			b1, err := in.ReadByte()
 			if err != nil {
 				return errors.WithStack(err)
@@ -420,10 +416,10 @@ func (rle *intRleV2) readValues(in BufferedReader) error {
 			length := int(header&0x1FF + 1)
 			log.Tracef("decoding: int rl v2 Direct width %d length %d len now %d", width, length, rle.len())
 
-			for i := 0; i < length; i++{
+			for i := 0; i < length; i++ {
 				var x uint64
-				x, err:= rle.readBits(in, int(width))
-				if err!=nil {
+				x, err := rle.readBits(in, int(width))
+				if err != nil {
 					return err
 				}
 
@@ -432,9 +428,8 @@ func (rle *intRleV2) readValues(in BufferedReader) error {
 				} else {
 					rle.uliterals = append(rle.uliterals, x)
 				}
-
-				// ignore bitsLeft
 			}
+			rle.forgetBits()
 
 		case Encoding_PATCHED_BASE:
 			// fixme: according to base value is a signed smallest value, patch should always signed?
@@ -626,7 +621,7 @@ func (rle *intRleV2) readValues(in BufferedReader) error {
 func (rle *intRleV2) readPatched(firstByte byte, in BufferedReader) (err error) {
 	var mark int
 	if len(rle.literals) != 0 {
-		mark = len(rle.literals) - 1
+		mark = len(rle.literals)
 	}
 	header := make([]byte, 4) // 4 byte header
 	_, err = io.ReadFull(in, header[1:4])
@@ -685,10 +680,10 @@ func (rle *intRleV2) readPatched(firstByte byte, in BufferedReader) (err error) 
 		}
 		rle.literals = append(rle.literals, base+int64(delta))
 	}
+	rle.forgetBits()
 
 	// patched values, PGW+PW must < 64
 	for i := 0; i < int(pll); i++ {
-
 		bs, err := rle.readBits(in, int(pgw)+int(pw))
 		if err != nil {
 			return err
@@ -712,31 +707,38 @@ func (rle *intRleV2) readPatched(firstByte byte, in BufferedReader) (err error) 
 		v += base // add base back
 		rle.literals[mark] = v
 	}
+	rle.forgetBits()
 
 	return nil
 }
 
 func (rle *intRleV2) readBits(in io.ByteReader, bits int) (value uint64, err error) {
 	hasBits := rle.bitsLeft
-	//data := uint64(rle.lastByte) << 56
 	data := uint64(rle.lastByte)
 	for ; hasBits < bits; hasBits += 8 {
 		b, err := in.ReadByte()
 		if err != nil {
 			return 0, errors.WithStack(err)
 		}
-		//move := 8 - rle.bitsLeft + (6-readCount)*8
 		data <<= 8
 		data |= uint64(b)
-		//readCount++
 	}
 
 	rle.bitsLeft = hasBits - bits
 	value = data >> uint(rle.bitsLeft)
-	leadZeros := uint(8 - rle.bitsLeft)
+	//leadZeros := uint(8 - rle.bitsLeft)
+
 	// clear leadZeros
-	rle.lastByte = (byte(data) << leadZeros) >> leadZeros
+	mask:= (uint64(1)<< rle.bitsLeft) - 1
+	rle.lastByte = byte(data & mask)
+
+	//rle.lastByte = (byte(data) << leadZeros) >> leadZeros
 	return
+}
+
+func (rle *intRleV2) forgetBits() {
+	rle.bitsLeft = 0
+	rle.lastByte = 0
 }
 
 // all bits align to msb
