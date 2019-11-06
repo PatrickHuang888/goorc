@@ -364,19 +364,19 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 
 	case pb.Type_DECIMAL:
 		column := cv.(*Decimal64Column)
-		var values []int64
+		var precisions []int64
 		var scales []uint64
 		if cv.HasNulls() {
 			for i, b := range column.Nulls {
 				if !b {
-					values = append(values, column.Vector[i])
-					scales = append(scales, uint64(column.Scale))
+					precisions = append(precisions, column.Vector[i].Precision)
+					scales = append(scales, uint64(column.Vector[i].Scale))
 				}
 			}
 		} else {
 			for _, d := range column.Vector {
-				values = append(values, d)
-				scales = append(scales, uint64(column.Scale))
+				precisions = append(precisions, d.Precision)
+				scales = append(scales, uint64(d.Scale))
 			}
 
 		}
@@ -386,7 +386,7 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 				data = newBase128VarIntsDataStream(id)
 				stripe.streams[id][1] = data
 			}
-			if err := data.writeBase128VarInts(values); err != nil {
+			if err := data.writeBase128VarInts(precisions); err != nil {
 				return errors.WithStack(err)
 			}
 

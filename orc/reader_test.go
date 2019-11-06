@@ -1,13 +1,14 @@
 package orc
 
 import (
+	"fmt"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
 func init() {
-	logrus.SetLevel(logrus.TraceLevel)
+	logrus.SetLevel(logrus.InfoLevel)
 }
 
 func TestNoCompression(t *testing.T) {
@@ -195,6 +196,45 @@ func TestPatchBaseNegativeMin3(t *testing.T) {
 	}
 
 	assert.Equal(t, inp, batch.(*LongColumn).Vector)
+
+	reader.Close()
+}
+
+func BenchmarkReader(b *testing.B) {
+	path := "/u01/apache/orc/java/bench/data/generated/taxi/orc.gz"
+
+	ropts := DefaultReaderOptions()
+	reader, err := NewReader(path, ropts)
+	if err != nil {
+		b.Fatalf("create reader error %+v", err)
+	}
+
+	schema := reader.GetSchema()
+
+	stripes, err := reader.Stripes()
+	if err != nil {
+		b.Fatalf("%+v", err)
+	}
+
+	ropts.RowSize = 100000
+	batch, err := schema.CreateReaderBatch(ropts)
+	if err != nil {
+		b.Fatalf("create row batch error %+v", err)
+	}
+
+	var rows int
+
+	i := 0
+	stripe := stripes[0]
+
+	for next := true; next; {
+		next, err = stripe.NextBatch(batch)
+		if err != nil {
+			b.Fatalf("%+v", err)
+		}
+		rows += batch.Rows()
+		fmt.Printf("current stripe %d, rows now: %d\n", i, rows)
+	}
 
 	reader.Close()
 }

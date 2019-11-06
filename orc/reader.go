@@ -254,7 +254,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (next bool, err error) {
 	case pb.Type_LONG:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
 			if cr.dataDecoder == nil {
-				cr.dataDecoder = &intRleV2{signed: true}
+				cr.dataDecoder = &intRleV2{signed: true, literals: make([]int64, cr.numberOfRows)}
 			}
 			return cr.readLongsV2(batch.(*LongColumn))
 		}
@@ -269,7 +269,7 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (next bool, err error) {
 			return false, errors.Errorf("column %d double should encoding DIRECT", batch.ColumnId())
 		}
 		if cr.dataDecoder == nil {
-			cr.dataDecoder = &ieee754Double{}
+			cr.dataDecoder = &ieee754Double{values:make([]float64, cr.numberOfRows)}
 		}
 		return cr.readDoubles(batch.(*DoubleColumn))
 
@@ -331,10 +331,10 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (next bool, err error) {
 		}
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
 			if cr.dataDecoder == nil {
-				cr.dataDecoder = &base128VarInt{}
+				cr.dataDecoder = &base128VarInt{values:make([]int64, cr.numberOfRows)}
 			}
 			if cr.secondaryDecoder == nil {
-				cr.secondaryDecoder = &intRleV2{signed: false}
+				cr.secondaryDecoder = &intRleV2{signed: false, uliterals:make([]uint64, cr.numberOfRows)}
 			}
 			return cr.readDecimal64sV2(column)
 		}
@@ -354,10 +354,10 @@ func (sr *stripeReader) NextBatch(batch ColumnVector) (next bool, err error) {
 	case pb.Type_TIMESTAMP:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
 			if cr.dataDecoder == nil {
-				cr.dataDecoder = &intRleV2{signed: true}
+				cr.dataDecoder = &intRleV2{signed: true, literals:make([]int64, cr.numberOfRows)}
 			}
 			if cr.secondaryDecoder == nil {
-				cr.secondaryDecoder = &intRleV2{signed: false}
+				cr.secondaryDecoder = &intRleV2{signed: false, uliterals:make([]uint64, cr.numberOfRows)}
 			}
 			return cr.readTimestampsV2(batch.(*TimestampColumn))
 		}
@@ -847,18 +847,14 @@ func (cr *columnReader) readDecimal64sV2(column *Decimal64Column) (next bool, er
 		if err := secondary.readWhole(cr.opts, cr.f); err != nil {
 			return false, errors.WithStack(err)
 		}
-
 		sd.reset()
 		if err := sd.readValues(secondary.buf); err != nil {
 			return false, err
 		}
-		// toAssure:
-		column.Scale = uint16(sd.uliterals[0])
 
 		if err := data.readWhole(cr.opts, cr.f); err != nil {
 			return false, err
 		}
-
 		dd.reset()
 		if err := dd.readValues(data.buf); err != nil {
 			return false, err
@@ -873,14 +869,14 @@ func (cr *columnReader) readDecimal64sV2(column *Decimal64Column) (next bool, er
 			if column.nullable {
 				if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
 					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, dd.values[i])
+					column.Vector = append(column.Vector, Decimal64{dd.values[i], uint16(sd.uliterals[i])})
 					i++
 				} else {
 					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, 0)
+					column.Vector = append(column.Vector, Decimal64{})
 				}
 			} else { // no nulls
-				column.Vector = append(column.Vector, dd.values[i])
+				column.Vector = append(column.Vector, Decimal64{dd.values[i], uint16(sd.uliterals[i])})
 				i++
 			}
 			cr.readCursor++
