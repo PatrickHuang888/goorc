@@ -8,6 +8,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"io"
 	"math"
+	"sync"
 )
 
 const (
@@ -337,6 +338,26 @@ type intRleV2 struct {
 	bitsLeft      int  // used in r/w
 }
 
+var int64SlicePool= sync.Pool{}
+var uint64SlicePool= sync.Pool{}
+func NewIntRLV2(signed bool) Decoder {
+	dec:= &intRleV2{signed: true}
+	if signed {
+		ints:= int64SlicePool.Get().([]int64)
+		if ints==nil {
+			ints= make([]int64, DEFAULT_ROW_SIZE)
+		}
+		dec.literals= ints
+	}else {
+		uints:= uint64SlicePool.Get().([]uint64)
+		if uints==nil {
+			uints= make([]uint64, DEFAULT_ROW_SIZE)
+		}
+		dec.uliterals= uints
+	}
+	return dec
+}
+
 func (rle *intRleV2) reset() {
 	if rle.signed {
 		rle.literals = rle.literals[:0]
@@ -345,8 +366,8 @@ func (rle *intRleV2) reset() {
 	}
 	rle.sub = Encoding_UNSET
 	rle.consumedIndex = 0
-	//rle.lastByte = 0
-	//rle.bitsLeft = 0
+	rle.lastByte = 0
+	rle.bitsLeft = 0
 }
 
 func (rle *intRleV2) len() int {

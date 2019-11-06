@@ -124,7 +124,7 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 	case Type_DECIMAL:
 		c := &Decimal64Column{column: column{id: td.Id, nullable: false}}
 		if createVector {
-			c.Vector = make([]int64, rowSize)
+			c.Vector = make([]Decimal64, rowSize)
 		}
 		return c, nil
 
