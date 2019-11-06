@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/PatrickHuang888/goorc/orc"
-	"github.com/PatrickHuang888/goorc/pb/pb"
+	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/pb/pb"
 	"os"
 	"strconv"
 )
