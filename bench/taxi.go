@@ -181,9 +181,8 @@ func main() {
 
 				if f.ColumnId()==13 {
 					fmt.Printf("fare_amount: %d\n", f.Rows())
-					fmt.Printf("scale: %d\n", f.(*orc.Decimal64Column).Scale)
 					for j, v := range f.(*orc.Decimal64Column).Vector {
-						fmt.Printf("%d \n", v)
+						fmt.Printf("%s \n", v.String())
 						if j > 10 {
 							break
 						}
@@ -192,9 +191,8 @@ func main() {
 
 				if f.ColumnId()==14 {
 					fmt.Printf("extra: %d\n", f.Rows())
-					fmt.Printf("scale: %d\n", f.(*orc.Decimal64Column).Scale)
 					for j, v := range f.(*orc.Decimal64Column).Vector {
-						fmt.Printf("%d \n", v)
+						fmt.Printf("%s \n", v.String())
 						if j > 10 {
 							break
 						}
@@ -203,9 +201,8 @@ func main() {
 
 				if f.ColumnId()==15 {
 					fmt.Printf("mta_tax: %d\n", f.Rows())
-					fmt.Printf("scale: %d\n", f.(*orc.Decimal64Column).Scale)
 					for j, v := range f.(*orc.Decimal64Column).Vector {
-						fmt.Printf("%d \n", v)
+						fmt.Printf("%s \n", v.String())
 						if j > 10 {
 							break
 						}

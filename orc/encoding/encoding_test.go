@@ -1,4 +1,4 @@
-package orc
+package encoding
 
 import (
 	"bytes"
