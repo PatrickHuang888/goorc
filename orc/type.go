@@ -2,35 +2,86 @@ package orc
 
 import (
 	"fmt"
-	. "github.com/PatrickHuang888/goorc/pb/pb"
+
+	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 )
 
 type TypeDescription struct {
 	Id            uint32
-	Kind          Type_Kind
+	Kind          pb.Type_Kind
 	ChildrenNames []string
 	Children      []*TypeDescription
-	Encoding      ColumnEncoding_Kind
+	Encoding      pb.ColumnEncoding_Kind
+
+	HasNulls  bool // for writing
+	HasFather bool
 }
 
 func (td *TypeDescription) Print() {
-	fmt.Printf("Id %d, Kind %s\n", td.Id, td.Kind.String())
+	fmt.Printf("Id %d, Kind %stream\n", td.Id, td.Kind.String())
 	if td.ChildrenNames != nil && len(td.ChildrenNames) != 0 {
 		fmt.Println("ChildrenNames: ")
 	}
 	for i, cn := range td.ChildrenNames {
 
 		if i == len(td.ChildrenNames)-1 {
-			fmt.Printf("%s \n", cn)
+			fmt.Printf("%stream \n", cn)
 		} else {
-			fmt.Printf("%s, ", cn)
+			fmt.Printf("%stream, ", cn)
 		}
 	}
 	for _, n := range td.Children {
 		fmt.Printf("Children of %d:", td.Id)
 		n.Print()
 	}
+}
+
+func doId(node *TypeDescription) error {
+	nodeId++
+	node.Id = nodeId
+	return nil
+}
+
+func doFatherFlag(node *TypeDescription) error {
+	if node.HasNulls {
+		return errors.New("child node cannot has nulls")
+	}
+	node.HasFather = true
+	return nil
+}
+
+type action func(*TypeDescription) error
+
+// pre-order traverse
+func traverse(node *TypeDescription, do action) error {
+	if node.Kind == pb.Type_STRUCT || node.Kind == pb.Type_LIST {
+		for _, td := range node.Children {
+			if err := do(td); err != nil {
+				return err
+			}
+			if err := traverse(td, do); err != nil {
+				return err
+			}
+		}
+	} else if node.Kind == pb.Type_UNION || node.Kind == pb.Type_MAP {
+		return errors.New("type union or map no impl")
+	}
+	return nil
+}
+
+var nodeId uint32
+
+func normalizeSchema(root *TypeDescription) error {
+	nodeId = 0
+	if err := traverse(root, doId); err != nil {
+		return err
+	}
+
+	if err := traverse(root, doFatherFlag); err != nil {
+		return err
+	}
+	return nil
 }
 
 // set ids of schema, flat the schema tree to slice
@@ -48,23 +99,23 @@ func walkSchema(schemas *[]*TypeDescription, node *TypeDescription, id uint32) e
 	node.Id = id
 	*schemas = append(*schemas, node)
 
-	if node.Kind == Type_STRUCT || node.Kind == Type_LIST {
+	if node.Kind == pb.Type_STRUCT || node.Kind == pb.Type_LIST {
 		for _, td := range node.Children {
 			id++
 			if err := walkSchema(schemas, td, id); err != nil {
 				return errors.WithStack(err)
 			}
 		}
-	} else if node.Kind == Type_UNION || node.Kind == Type_MAP {
+	} else if node.Kind == pb.Type_UNION || node.Kind == pb.Type_MAP {
 		return errors.New("type union or map no impl")
 	}
 	return nil
 }
 
-func schemasToTypes(schemas []*TypeDescription) []*Type {
-	t := make([]*Type, len(schemas))
+func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
+	t := make([]*pb.Type, len(schemas))
 	for i, v := range schemas {
-		t[i] = &Type{Subtypes: make([]uint32, len(v.Children)),
+		t[i] = &pb.Type{Subtypes: make([]uint32, len(v.Children)),
 			FieldNames: make([]string, len(v.ChildrenNames))}
 		t[i].Kind = &v.Kind
 		copy(t[i].FieldNames, v.ChildrenNames)
@@ -75,122 +126,83 @@ func schemasToTypes(schemas []*TypeDescription) []*Type {
 	return t
 }
 
-func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (ColumnVector, error) {
-	return td.newColumn(opts.RowSize, false, true)
-}
-
-// vector provided by writer
-func (td *TypeDescription) CreateWriterBatch(opts *WriterOptions) (ColumnVector, error) {
-	return td.newColumn(opts.RowSize, false, false)
-}
-
-func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bool) (ColumnVector, error) {
+func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *ColumnVector) {
+	var vector interface{}
 	switch td.Kind {
-	case Type_BOOLEAN:
-		c := &BoolColumn{column: column{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]bool, rowSize)
-		}
-		return c, nil
+	case pb.Type_BOOLEAN:
+		vector = make([]bool, 0, opts.RowSize)
 
-	case Type_BYTE:
-		c := &TinyIntColumn{column: column{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]byte, rowSize)
-		}
-		return c, nil
+	case pb.Type_BYTE:
+		vector = make([]byte, 0, opts.RowSize)
 
-	case Type_SHORT:
+	case pb.Type_SHORT:
 		fallthrough
-	case Type_INT:
+	case pb.Type_INT:
 		fallthrough
-	case Type_LONG:
-		c := &LongColumn{column: column{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]int64, rowSize)
-		}
-		return c, nil
+	case pb.Type_LONG:
+		vector = make([]int64, 0, opts.RowSize)
 
-	case Type_FLOAT:
+	case pb.Type_FLOAT:
+		vector = make([]float32, 0, opts.RowSize)
+
+	case pb.Type_DOUBLE:
+		vector = make([]float64, 0, opts.RowSize)
+
+	case pb.Type_DECIMAL:
+		vector = make([]Decimal64, 0, opts.RowSize)
+
+	case pb.Type_DATE:
+		vector = make([]Date, 0, opts.RowSize)
+
+	case pb.Type_TIMESTAMP:
+		vector = make([]Timestamp, 0, opts.RowSize)
+
+	case pb.Type_BINARY:
+		vector = make([][]byte, 0, opts.RowSize)
+
+	case pb.Type_STRING:
+		fallthrough
+	case pb.Type_CHAR:
+		fallthrough
+	case pb.Type_VARCHAR:
+		vector = make([]string, 0, opts.RowSize)
+
+	case pb.Type_STRUCT:
+		var children []*ColumnVector
+		for _, v := range td.Children {
+			children = append(children, v.CreateReaderBatch(opts))
+		}
+		vector = children
+
+	case pb.Type_UNION:
+		//todo:
+		fallthrough
+	case pb.Type_MAP:
 		// todo:
-
-	case Type_DOUBLE:
-		c := &DoubleColumn{column: column{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]float64, rowSize)
-		}
-		return c, nil
-
-	case Type_DECIMAL:
-		c := &Decimal64Column{column: column{id: td.Id, nullable: false}}
-		if createVector {
-			c.Vector = make([]Decimal64, rowSize)
-		}
-		return c, nil
-
-	case Type_DATE:
-		c := &DateColumn{column: column{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]Date, rowSize)
-		}
-		return c, nil
-
-	case Type_TIMESTAMP:
-		c := &TimestampColumn{column: column{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]Timestamp, rowSize)
-		}
-		return c, nil
-
-	case Type_BINARY:
-		c := &BinaryColumn{column: column{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([][]byte, rowSize)
-		}
-		return c, nil
-
-	case Type_STRING:
 		fallthrough
-	case Type_CHAR:
-		fallthrough
-	case Type_VARCHAR:
-		c := &StringColumn{column: column{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]string, rowSize)
-		}
-		return c, nil
-
-	case Type_STRUCT:
-		f := make([]ColumnVector, len(td.Children))
-		for i, v := range td.Children {
-			var err error
-			f[i], err = v.newColumn(rowSize, true, createVector)
-			if err != nil {
-				return nil, errors.WithStack(err)
-			}
-		}
-		c := &StructColumn{column: column{id: td.Id, nullable: nullable}, Fields: f}
-		return c, nil
-
-	case Type_UNION:
+	case pb.Type_LIST:
 		// todo:
-		return nil, errors.New("not impl")
-
-	case Type_LIST:
-		assertx(len(td.Children) == 1)
-		c, err := td.Children[0].newColumn(rowSize, true, createVector)
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		lc := &ListColumn{column: column{id: td.Id, nullable: nullable}, Child: c}
-		return lc, nil
-
-	case Type_MAP:
-		// todo:
-		return nil, errors.New("not impl")
+		panic("not impl")
 
 	default:
-		return nil, errors.Errorf("unknown type %s", td.Kind.String())
+		panic("unknown type")
 	}
-	return nil, nil
+
+	batch = &ColumnVector{Id: td.Id, Vector: vector}
+	if td.HasNulls {
+		batch.Presents = make([]bool, 0, opts.RowSize)
+	}
+	return
+}
+
+// vector data provided by writer
+func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) (batch *ColumnVector) {
+	if td.Kind == pb.Type_STRUCT {
+		var vector []*ColumnVector
+		for _, v := range td.Children {
+			vector = append(vector, v.CreateWriterBatch(opts))
+		}
+		return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: vector}
+	}
+	return &ColumnVector{Id: td.Id, Kind: td.Kind}
 }

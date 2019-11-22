@@ -1,144 +1,65 @@
 package orc
 
 import (
-	"github.com/PatrickHuang888/goorc/pb/pb"
+	"fmt"
+	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"time"
 )
 
 const (
-	DEFAULT_ROW_SIZE = 1024*10
+	DEFAULT_ROW_SIZE = 1024 * 10
 )
 
-type ColumnVector interface {
-	T() pb.Type_Kind
-	ColumnId() uint32
-	Rows() int
-	HasNulls() bool
-	presents() []bool
-	// todo: Presents and Vector verify, length should be equal if has nulls
-	reset()
+type ColumnVector struct {
+	Id       uint32
+	Kind     pb.Type_Kind
+	Presents []bool
+	Vector   interface{}
 }
 
-type column struct {
-	id       uint32
-	nullable bool
-	setNulls bool
-	hasNulls bool
-	Nulls    []bool
-}
-
-func (c *column) ColumnId() uint32 {
-	return c.id
-}
-
-// call this function will not reflect Nulls change
-func (c *column) HasNulls() bool {
-	if !c.nullable {
-		return false
-	}
-	if c.setNulls {
-		return c.hasNulls
-	}
-	for _, b := range c.Nulls {
-		if b {
-			c.setNulls = true
-			c.hasNulls = true
+func (cv ColumnVector) check() error {
+	if cv.Kind == pb.Type_STRUCT && cv.Presents != nil {
+		var presentCounts int
+		for _, p := range cv.Presents {
+			if p {
+				presentCounts++
+			}
 		}
+		for i, childVector := range cv.Vector.([]*ColumnVector) {
+			switch childVector.Kind {
+			case pb.Type_INT:
+				fallthrough
+			case pb.Type_LONG:
+				vector := childVector.Vector.([]int64)
+				if len(vector) < presentCounts {
+					return errors.Errorf("column %d vector data less than presents data in struct column", childVector.Id)
+				}
+				if len(vector) > presentCounts {
+					log.Warnf("column %d vector data large than prensents in struct column, extra data will be discard", childVector.Id)
+					vector=vector[:presentCounts]
+					cv.Vector.([]*ColumnVector)[i].Vector= vector
+				}
+			}
+		}
+
 	}
-	c.setNulls = true
-	return false
-}
-
-func (c *column) presents() []bool {
-	bb := make([]bool, len(c.Nulls))
-	for i, b := range c.Nulls {
-		bb[i] = !b
-	}
-	return bb
-}
-
-func (c *column) reset() {
-	c.Nulls = c.Nulls[:0]
-	c.setNulls = false
-	c.hasNulls = false
-}
-
-type BoolColumn struct {
-	column
-	Vector []bool
-}
-
-func (*BoolColumn) T() pb.Type_Kind {
-	return pb.Type_BOOLEAN
-}
-
-func (bc *BoolColumn) reset() {
-	bc.Vector = bc.Vector[:0]
-	bc.column.reset()
-}
-
-func (bc *BoolColumn) Rows() int {
-	return len(bc.Vector)
-}
-
-type TinyIntColumn struct {
-	column
-	Vector []byte
-}
-
-func (*TinyIntColumn) T() pb.Type_Kind {
-	return pb.Type_BYTE
-}
-func (tic *TinyIntColumn) reset() {
-	tic.Vector = tic.Vector[:0]
-	tic.column.reset()
-}
-func (tic *TinyIntColumn) Rows() int {
-	return len(tic.Vector)
-}
-
-// nullable int column vector for all integer types
-type LongColumn struct {
-	column
-	Vector []int64
-}
-
-func (*LongColumn) T() pb.Type_Kind {
-	return pb.Type_LONG
-}
-
-func (lc *LongColumn) Rows() int {
-	return len(lc.Vector)
-}
-
-func (lc *LongColumn) reset() {
-	lc.column.reset()
-	lc.Vector = lc.Vector[:0]
-}
-
-type BinaryColumn struct {
-	column
-	Vector [][]byte
-}
-
-func (*BinaryColumn) T() pb.Type_Kind {
-	return pb.Type_BINARY
-}
-func (bc *BinaryColumn) reset() {
-	bc.Vector = bc.Vector[:0]
-	bc.column.reset()
-}
-func (bc *BinaryColumn) Rows() int {
-	return len(bc.Vector)
+	return nil
 }
 
 // hive 0.13 support 38 digits
 type Decimal64 struct {
 	Precision int64
-	Scale uint16
+	Scale     uint16
 }
-type Decimal64Column struct {
-	column
+
+func (d Decimal64) String() string {
+	return fmt.Sprintf("precision %d, scale %d", d.Precision, d.Scale)
+}
+
+/*type Decimal64Column struct {
+	col
 	Vector []Decimal64
 }
 
@@ -150,7 +71,7 @@ func (dc *Decimal64Column) Rows() int {
 }
 func (dc *Decimal64Column) reset() {
 	dc.Vector = dc.Vector[:0]
-}
+}*/
 
 type Date time.Time
 
@@ -174,31 +95,10 @@ func toDays(d Date) int64 {
 	return int64(s.Hours() / 24)
 }
 
-type DateColumn struct {
-	column
-	Vector []Date
-}
-
-func (*DateColumn) T() pb.Type_Kind {
-	return pb.Type_DATE
-}
-
-func (dc *DateColumn) Rows() int {
-	return len(dc.Vector)
-}
-
-func (dc *DateColumn) reset() {
-	dc.Vector = dc.Vector[:0]
-}
-
-// todo: local timezone
+// todo: timezone
 type Timestamp struct {
 	Seconds int64
 	Nanos   uint32
-}
-type TimestampColumn struct {
-	column
-	Vector []Timestamp
 }
 
 // return seconds from 2015, Jan, 1 and nano seconds
@@ -209,10 +109,10 @@ func GetTime(ts Timestamp) (t time.Time) {
 
 func GetTimestamp(t time.Time) Timestamp {
 	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	return Timestamp{t.Unix()-base, uint32(t.Nanosecond())}
+	return Timestamp{t.Unix() - base, uint32(t.Nanosecond())}
 }
 
-func (*TimestampColumn) T() pb.Type_Kind {
+/*func (*TimestampColumn) T() pb.Type_Kind {
 	return pb.Type_TIMESTAMP
 }
 
@@ -221,11 +121,12 @@ func (tc *TimestampColumn) Rows() int {
 }
 
 func (tc *TimestampColumn) reset() {
+	tc.col.reset()
 	tc.Vector = tc.Vector[:0]
-}
+}*/
 
-type FloatColumn struct {
-	column
+/*type FloatColumn struct {
+	col
 	Vector []float32
 }
 
@@ -233,6 +134,7 @@ func (*FloatColumn) T() pb.Type_Kind {
 	return pb.Type_FLOAT
 }
 func (fc *FloatColumn) reset() {
+	fc.col.reset()
 	fc.Vector = fc.Vector[:0]
 }
 func (fc *FloatColumn) Rows() int {
@@ -240,77 +142,63 @@ func (fc *FloatColumn) Rows() int {
 }
 
 type DoubleColumn struct {
-	column
+	col
 	Vector []float64
 }
 
-func (*DoubleColumn) T() pb.Type_Kind {
+func (DoubleColumn) T() pb.Type_Kind {
 	return pb.Type_DOUBLE
 }
-func (dc *DoubleColumn) reset() {
-	dc.Vector = dc.Vector[:0]
+
+func (c *DoubleColumn) reset() {
+	c.col.reset()
+	c.Vector = c.Vector[:0]
 }
-func (dc *DoubleColumn) Rows() int {
-	return len(dc.Vector)
+
+func (c DoubleColumn) Rows() int {
+	return len(c.Vector)
 }
 
 type StringColumn struct {
-	column
-	Vector []string
+	col
+	encoding string
+	Vector   []string
 }
 
-func (sc *StringColumn) Rows() int {
-	return len(sc.Vector)
+func (c StringColumn) Rows() int {
+	return len(c.Vector)
 }
 
-func (*StringColumn) T() pb.Type_Kind {
+func (StringColumn) T() pb.Type_Kind {
 	return pb.Type_STRING
 }
 
-func (sc *StringColumn) reset() {
-	sc.Vector = sc.Vector[:0]
-	sc.column.reset()
-}
+func (c *StringColumn) reset() {
+	c.col.reset()
+	c.Vector = c.Vector[:0]
+}*/
 
-type StructColumn struct {
-	column
-	Fields []ColumnVector
-}
+/*type Struct struct {
+	Presents []bool
+	Children []*ColumnVector
+}*/
 
-func (*StructColumn) T() pb.Type_Kind {
-	return pb.Type_STRUCT
-}
-
-func (sc *StructColumn) Rows() int {
-	// fixme:
-	return sc.Fields[0].Rows()
-}
-
-func (sc *StructColumn) reset() {
-	/*for _, c := range sc.Fields {
-		c.reset()
-	}*/
-}
-
-type ListColumn struct {
-	column
+/*type ListColumn struct {
+	col
 	Child ColumnVector
 }
 
-func (*ListColumn) T() pb.Type_Kind {
+func (ListColumn) T() pb.Type_Kind {
 	return pb.Type_LIST
-}
+}*/
 
-func (lc *ListColumn) Rows() int {
+/*func (lc *ListColumn) Rows() int {
 	return lc.Child.Rows()
-}
+}*/
 
-func (lc *ListColumn) reset() {
-	lc.Child.reset()
-}
-
+/*// todo:
 type MapColumn struct {
-	column
+	col
 	vector map[ColumnVector]ColumnVector
 }
 
@@ -318,12 +206,13 @@ func (*MapColumn) T() pb.Type_Kind {
 	return pb.Type_MAP
 }
 
+// todo:
 type UnionColumn struct {
-	column
+	col
 	tags   []int
 	fields []ColumnVector
 }
 
 func (*UnionColumn) T() pb.Type_Kind {
 	return pb.Type_UNION
-}
+}*/

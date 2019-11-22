@@ -4,17 +4,19 @@ import (
 	"bytes"
 	"compress/flate"
 	"fmt"
-	"github.com/PatrickHuang888/goorc/pb/pb"
-	"github.com/golang/protobuf/proto"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/golang/protobuf/proto"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/patrickhuang888/goorc/orc/encoding"
+	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
 const (
-	MAGIC                = "ORC"
 	MAGIC_LENGTH         = uint64(3)
 	DIRECTORY_SIZE_GUESS = 16 * 1024
 )
@@ -30,14 +32,23 @@ type ReaderOptions struct {
 	CompressionKind pb.CompressionKind
 	ChunkSize       uint64
 	RowSize         int
+	//HasNulls        bool
 }
 
 func DefaultReaderOptions() *ReaderOptions {
-	return &ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE}
+	return &ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE,
+		CompressionKind: pb.CompressionKind_ZLIB}
+}
+
+type File interface {
+	io.ReadSeeker
+	io.Closer
+	Size() (int64, error)
 }
 
 type reader struct {
-	f       *os.File
+	f File
+
 	schemas []*TypeDescription
 	opts    *ReaderOptions
 
@@ -45,12 +56,47 @@ type reader struct {
 	stripes []StripeReader
 }
 
-func NewReader(path string, opts *ReaderOptions) (r Reader, err error) {
+type fileReader struct {
+	f *os.File
+}
+
+func (fr fileReader) Size() (size int64, err error) {
+	fi, err := fr.f.Stat()
+	if err != nil {
+		return 0, errors.WithStack(err)
+	}
+	return fi.Size(), nil
+}
+
+func (fr fileReader) Read(p []byte) (n int, err error) {
+	n, err = fr.f.Read(p)
+	if err != nil {
+		return n, errors.WithStack(err)
+	}
+	return
+}
+
+func (fr fileReader) Seek(offset int64, whence int) (int64, error) {
+	return fr.f.Seek(offset, whence)
+}
+
+func (fr fileReader) Close() error {
+	if err := fr.f.Close(); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func NewFileReader(path string, opts *ReaderOptions) (r Reader, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "open file %s error", path)
+		return nil, errors.Wrapf(err, "open file %stream error", path)
 	}
+	fr := &fileReader{f: f}
+	return newReader(opts, fr)
+}
 
+func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
 	tail, err := extractFileTail(f)
 	if err != nil {
 		return nil, errors.Wrap(err, "read file tail error")
@@ -85,8 +131,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		}
 		if ps.GetCompression() != pb.CompressionKind_NONE {
 			ib := &bytes.Buffer{}
-			if err = decompressBuffer(ps.GetCompression(), ib, bytes.NewBuffer(indexBuf));
-				err != nil {
+			if err = decompressBuffer(ps.GetCompression(), ib, bytes.NewBuffer(indexBuf)); err != nil {
 				return nil, err
 			}
 			indexBuf = ib.Bytes()
@@ -107,8 +152,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		}
 		if ps.GetCompression() != pb.CompressionKind_NONE {
 			fb := &bytes.Buffer{}
-			if err = decompressBuffer(r.tail.GetPostscript().GetCompression(), fb, bytes.NewBuffer(footerBuf));
-				err != nil {
+			if err = decompressBuffer(r.tail.GetPostscript().GetCompression(), fb, bytes.NewBuffer(footerBuf)); err != nil {
 				return nil, err
 			}
 			footerBuf = fb.Bytes()
@@ -122,7 +166,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		if err := sr.prepare(); err != nil {
 			return ss, errors.WithStack(err)
 		}
-		log.Debugf("get stripe %d : %s", sr.idx, sr.info.String())
+		log.Debugf("get stripeR %d : %stream", sr.idx, sr.info.String())
 		ss = append(ss, sr)
 
 	}
@@ -131,102 +175,414 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 }
 
 func (r *reader) Close() error {
-	if err := r.f.Close(); err != nil {
-		return errors.WithStack(err)
-	}
-	return nil
+	return r.f.Close()
 }
 
 type StripeReader interface {
-	NextBatch(batch ColumnVector) (bool, error)
+	Next(batch *ColumnVector) error
 }
 
 type stripeReader struct {
-	f       *os.File
+	f File
+
 	schemas []*TypeDescription
 	opts    *ReaderOptions
 
 	info   *pb.StripeInformation
 	footer *pb.StripeFooter
 
-	columnReaders []*columnReader
+	columnReaders []columnReader
 	idx           int
 }
 
-type columnReader struct {
-	id           int
-	schema       *TypeDescription
-	encoding     *pb.ColumnEncoding
-	f            *os.File
-	numberOfRows uint64
-	opts         *ReaderOptions
-
-	streams map[pb.Stream_Kind]*streamReader
-
-	//indexStart  uint64 // index area start
-	//indexLength uint64
-
-	presents       []bool // present data, all in memory
-	presentDecoder Decoder
-	presentRead    bool // if present already read or no present
-
-	read             bool    // if streams read
-	dataDecoder      Decoder // data decoder
-	secondaryDecoder Decoder
-	lengthDecoder    Decoder
-	dictDecoder      Decoder
-	//lengthes         []uint64 // length data
-	//secondaries      []uint64
-
-	readCursor uint64
-}
-
-func (cr *columnReader) String() string {
-	sb := strings.Builder{}
-	fmt.Fprintf(&sb, "id %d, ", cr.id)
-	fmt.Fprintf(&sb, "kind %s, ", cr.schema.Kind.String())
-	fmt.Fprintf(&sb, "encoding %s, ", cr.encoding.String())
-	fmt.Fprintf(&sb, "read cursor %d", cr.readCursor)
-	return sb.String()
-}
-
 // stripe {index{},column{[present],data,[length]},footer}
-func (sr *stripeReader) prepare() error {
-	n := len(sr.schemas)
-	crs := make([]*columnReader, n)
-	for i := 0; i < len(sr.schemas); i++ {
-		cr := &columnReader{}
-		cr.id = i
-		cr.schema = sr.schemas[i]
-		cr.encoding = sr.footer.GetColumns()[i]
-		cr.streams = make(map[pb.Stream_Kind]*streamReader)
-		cr.f = sr.f
-		cr.numberOfRows = sr.info.GetNumberOfRows()
-		cr.opts = sr.opts
-		cr.presentDecoder = &boolRunLength{}
-		crs[i] = cr
-	}
+func (s *stripeReader) prepare() error {
 
-	indexStart := sr.info.GetOffset()
-	dataStart := indexStart + sr.info.GetIndexLength()
-	for _, si := range sr.footer.GetStreams() {
-		id := si.GetColumn()
-		k := si.GetKind()
-		length := si.GetLength()
-		buf := bytes.NewBuffer(make([]byte, sr.opts.ChunkSize))
-		buf.Reset()
-		var s *streamReader
-		if k == pb.Stream_ROW_INDEX {
-			s = &streamReader{start: indexStart, length: length, kind: k, buf: buf, f: sr.f, opts: sr.opts}
-			indexStart += length
-		} else {
-			s = &streamReader{start: dataStart, length: length, kind: k, buf: buf, f: sr.f, opts: sr.opts}
-			dataStart += length
+	//prepare column reader
+	s.columnReaders = make([]columnReader, len(s.schemas))
+	columns := make([]*crBase, len(s.schemas))
+	// id==i
+	for _, schema := range s.schemas {
+		schema.Encoding = s.footer.GetColumns()[schema.Id].GetKind()
+		c := &crBase{schema: schema}
+		columns[schema.Id] = c
+
+		switch c.schema.Kind {
+		case pb.Type_SHORT:
+			fallthrough
+		case pb.Type_INT:
+			fallthrough
+		case pb.Type_LONG:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				s.columnReaders[schema.Id] = &longV2Reader{crBase: c}
+				break
+			}
+			return errors.New("not impl")
+
+		case pb.Type_FLOAT:
+		// todo:
+
+		case pb.Type_DOUBLE:
+			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
+				return errors.New("column encoding error")
+			}
+			s.columnReaders[schema.Id] = &doubleReader{crBase: c}
+
+		case pb.Type_STRING:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				s.columnReaders[schema.Id] = &stringDirectV2Reader{crBase: c}
+				break
+			}
+			if c.schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
+				s.columnReaders[schema.Id] = &stringDictV2Reader{crBase: c}
+				break
+			}
+			return errors.New("column encoding error")
+
+		case pb.Type_BOOLEAN:
+			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
+				return errors.New("bool column encoding error")
+			}
+			s.columnReaders[schema.Id] = &boolReader{crBase: c, numberOfRows: s.info.GetNumberOfRows()}
+
+		case pb.Type_BYTE: // tinyint
+			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
+				return errors.New("tinyint column encoding error")
+			}
+			s.columnReaders[schema.Id] = &byteReader{crBase: c}
+
+		case pb.Type_BINARY:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				s.columnReaders[schema.Id] = &binaryV2Reader{crBase: c}
+				break
+			}
+			return errors.New("binary column encoding error")
+
+		case pb.Type_DECIMAL:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				s.columnReaders[schema.Id] = &decimal64DirectV2Reader{crBase: c}
+				break
+			}
+			return errors.New("column encoding error")
+
+		case pb.Type_DATE:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				s.columnReaders[schema.Id] = &dateV2Reader{crBase: c}
+				break
+			}
+			return errors.New("column encoding error")
+
+		case pb.Type_TIMESTAMP:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				s.columnReaders[schema.Id] = &timestampV2Reader{crBase: c}
+				break
+			}
+			return errors.New("column encoding error")
+
+		case pb.Type_STRUCT:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				s.columnReaders[schema.Id] = &structReader{crBase: c}
+				//children connecting at below
+				break
+			}
+			return errors.New("encoding error")
+
+		case pb.Type_LIST:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				// todo:
+				break
+			}
+			return errors.New("encoding error")
+
+		case pb.Type_MAP:
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				// todo:
+				break
+			}
+			return errors.New("encoding error")
+
+		case pb.Type_UNION:
+			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
+				return errors.New("column encoding error")
+			}
+		//todo:
+		// fixme: pb.Stream_DIRECT
+
+		default:
+			return errors.New("type unwkone")
 		}
-		crs[id].streams[k] = s
 	}
 
-	sr.columnReaders = crs
+	// finish struct
+	for _, schema := range s.schemas {
+		if schema.Kind == pb.Type_STRUCT {
+			var crs []columnReader
+			for _, childSchema := range schema.Children {
+				crs = append(crs, s.columnReaders[childSchema.Id])
+			}
+			s.columnReaders[schema.Id].(*structReader).children = crs
+		}
+	}
+
+	// setup streams
+	// streams has sequence
+	indexStart := s.info.GetOffset()
+	dataStart := indexStart + s.info.GetIndexLength()
+
+	for _, streamInfo := range s.footer.GetStreams() {
+
+		id := streamInfo.GetColumn()
+		streamKind := streamInfo.GetKind()
+		length := streamInfo.GetLength()
+
+		if streamKind == pb.Stream_ROW_INDEX {
+			// todo: init index streamReader
+			indexStart += length
+			continue
+		}
+
+		// all stream reader use one file?
+		//sr := &streamReader{start: dataStart, info: streamInfo, buf: &bytes.Buffer{}, in: s.f, opts: s.opts}
+
+		if streamKind == pb.Stream_PRESENT {
+			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.f)
+			continue
+		}
+
+		schema := s.schemas[id]
+		switch schema.Kind {
+		case pb.Type_SHORT:
+			fallthrough
+		case pb.Type_INT:
+			fallthrough
+		case pb.Type_LONG:
+			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				reader := s.columnReaders[id].(*longV2Reader)
+				if streamKind == pb.Stream_DATA {
+					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, true)
+					break
+				}
+				return errors.New("stream kind error")
+			}
+
+		case pb.Type_FLOAT:
+			reader := s.columnReaders[id].(*floatReader)
+			if streamKind == pb.Stream_DATA {
+				reader.data = newFloatStreamReader(s.opts, streamInfo, dataStart, s.f)
+				break
+			}
+			return errors.New("stream kind error")
+
+		case pb.Type_DOUBLE:
+			reader := s.columnReaders[id].(*doubleReader)
+			if streamKind == pb.Stream_DATA {
+				reader.data = newDoubleStreamReader(s.opts, streamInfo, dataStart, s.f)
+				break
+			}
+			return errors.New("stream kind error")
+
+		case pb.Type_STRING:
+			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				reader := s.columnReaders[id].(*stringDirectV2Reader)
+
+				if streamKind == pb.Stream_DATA {
+					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					break
+				}
+				if streamKind == pb.Stream_LENGTH {
+					reader.length = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					break
+				}
+				return errors.New("stream kind error")
+			}
+
+			if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
+				reader := s.columnReaders[id].(*stringDictV2Reader)
+				if streamKind == pb.Stream_DATA {
+					data := newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					reader.data = data
+					break
+				}
+				if streamKind == pb.Stream_DICTIONARY_DATA {
+					dictData := newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					reader.dictData = dictData
+					break
+				}
+				if streamKind == pb.Stream_LENGTH {
+					dictLength := newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					reader.dictLength = dictLength
+					break
+				}
+				return errors.New("stream kind error")
+			}
+
+		case pb.Type_BOOLEAN:
+			reader := s.columnReaders[id].(*boolReader)
+			if streamKind == pb.Stream_DATA {
+				reader.data = newBoolStreamReader(s.opts, streamInfo, dataStart, s.f)
+				break
+			}
+			return errors.New("stream kind error")
+
+		case pb.Type_BYTE: // tinyint
+			reader := s.columnReaders[id].(*byteReader)
+			if streamKind == pb.Stream_DATA {
+				reader.data = newByteStreamReader(s.opts, streamInfo, dataStart, s.f)
+				break
+			}
+			return errors.New("stream kind error")
+
+		case pb.Type_BINARY:
+			if schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				reader := s.columnReaders[id].(*binaryV2Reader)
+				if streamKind == pb.Stream_DATA {
+					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					break
+				}
+				if streamKind == pb.Stream_LENGTH {
+					reader.length = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					break
+				}
+				return errors.New("stream kind error")
+			}
+
+		case pb.Type_DECIMAL:
+			if schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				reader := s.columnReaders[id].(*decimal64DirectV2Reader)
+				if streamKind == pb.Stream_DATA {
+					reader.data = newVarIntStreamReader(s.opts, streamInfo, dataStart, s.f)
+					break
+				}
+				if streamKind == pb.Stream_SECONDARY {
+					reader.secondary = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					break
+				}
+				return errors.New("stream kind error")
+			}
+
+		case pb.Type_DATE:
+			if schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				reader := s.columnReaders[id].(*dateV2Reader)
+				if streamKind == pb.Stream_DATA {
+					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					break
+				}
+				return errors.New("stream kind error")
+			}
+
+		case pb.Type_TIMESTAMP:
+			if schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+
+			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				reader := s.columnReaders[id].(*timestampV2Reader)
+				if streamKind == pb.Stream_DATA {
+					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, true)
+					break
+				}
+				if streamKind == pb.Stream_SECONDARY {
+					reader.secondary = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					break
+				}
+				return errors.New("stream kind error")
+			}
+
+		case pb.Type_STRUCT:
+			//
+
+		case pb.Type_LIST:
+			if schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				if streamKind == pb.Stream_LENGTH {
+					// todo:
+					//decoder := &encoding.IntRleV2{}
+					//length := &longStream{r: r, decoder: decoder}
+
+				}
+				break
+			}
+			return errors.New("encoding error")
+
+		case pb.Type_MAP:
+			if schema.Encoding == pb.ColumnEncoding_DIRECT {
+				// todo:
+				return errors.New("not impl")
+				break
+			}
+			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+				if streamKind == pb.Stream_LENGTH {
+					//decoder := &encoding.IntRleV2{}
+					//length := &longStream{r: r, decoder: decoder}
+					// todo:
+				}
+			}
+
+		case pb.Type_UNION:
+			if schema.Encoding != pb.ColumnEncoding_DIRECT {
+				return errors.New("column encoding error")
+			}
+
+			// fixme: pb.Stream_DIRECT
+
+		}
+
+		dataStart += length
+	}
+
+	// todo: streamreader needed existing check
 
 	/*for _, v := range crs {
 		v.Print()
@@ -234,849 +590,866 @@ func (sr *stripeReader) prepare() error {
 	return nil
 }
 
-// a stripe is typically  ~200MB
-func (sr *stripeReader) NextBatch(batch ColumnVector) (next bool, err error) {
-	batch.reset()
+// entry of stripeR reader
+// a stripeR is typically  ~200MB
+func (s *stripeReader) Next(batch *ColumnVector) error {
 
-	cr := sr.columnReaders[batch.ColumnId()]
-	log.Debugf("column: %s reading", cr.String())
+	c := s.columnReaders[batch.Id]
 
-	if err = cr.readPresent(); err != nil {
-		return false, errors.WithStack(err)
+	return c.next(batch)
+}
+
+type columnReader interface {
+	next(batch *ColumnVector) error
+}
+
+type crBase struct {
+	schema *TypeDescription
+
+	//opts         *ReaderOptions
+
+	present *boolStreamReader
+
+	//numberOfRows uint64
+	cursor uint64
+}
+
+func (c *crBase) String() string {
+	sb := strings.Builder{}
+	fmt.Fprintf(&sb, "id %d, ", c.schema.Id)
+	fmt.Fprintf(&sb, "kind %stream, ", c.schema.Kind.String())
+	fmt.Fprintf(&sb, "encoding %stream, ", c.schema.Encoding.String())
+	fmt.Fprintf(&sb, "read cursor %d", c.cursor)
+	return sb.String()
+}
+
+func (c *crBase) nextPresents(batch *ColumnVector) (err error) {
+	if c.present != nil {
+		batch.Presents = batch.Presents[:0]
+		for i := 0; !c.present.finished() && i < cap(batch.Presents); i++ {
+			v, err := c.present.next()
+			if err != nil {
+				return err
+			}
+			batch.Presents = append(batch.Presents, v)
+		}
+		log.Debugf("column %d read %d presents values", c.schema.Id, len(batch.Presents))
+	}
+	return nil
+}
+
+type byteReader struct {
+	*crBase
+	data *byteStreamReader
+}
+
+func (c *byteReader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
 	}
 
-	encoding := cr.encoding.GetKind()
-	switch cr.schema.Kind {
-	case pb.Type_SHORT:
-		fallthrough
-	case pb.Type_INT:
-		fallthrough
-	case pb.Type_LONG:
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			if cr.dataDecoder == nil {
-				cr.dataDecoder = &intRleV2{signed: true, literals: make([]int64, cr.numberOfRows)}
-			}
-			return cr.readLongsV2(batch.(*LongColumn))
-		}
+	vector := batch.Vector.([]byte)
+	vector = vector[:0]
 
-		return false, errors.Errorf("encoding %s for int/long not impl", encoding)
-
-	case pb.Type_FLOAT:
-	// todo:
-
-	case pb.Type_DOUBLE:
-		if encoding != pb.ColumnEncoding_DIRECT {
-			return false, errors.Errorf("column %d double should encoding DIRECT", batch.ColumnId())
-		}
-		if cr.dataDecoder == nil {
-			cr.dataDecoder = &ieee754Double{values:make([]float64, cr.numberOfRows)}
-		}
-		return cr.readDoubles(batch.(*DoubleColumn))
-
-	case pb.Type_STRING:
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			if cr.dataDecoder == nil {
-				cr.dataDecoder = &bytesContent{}
-			}
-			if cr.lengthDecoder == nil {
-				cr.lengthDecoder = &intRleV2{signed: false}
-			}
-			return cr.readStringsV2(batch.(*StringColumn))
-		}
-
-		if encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-			if cr.dataDecoder == nil {
-				cr.dataDecoder = &intRleV2{signed: false}
-			}
-			if cr.dictDecoder == nil {
-				cr.dictDecoder = &bytesContent{}
-			}
-			if cr.lengthDecoder == nil {
-				cr.lengthDecoder = &intRleV2{signed: false}
-			}
-			return cr.readStringsDictV2(batch.(*StringColumn))
-		}
-
-		return false, errors.Errorf("column %d type %s encoding %s not impl", cr.id, cr.schema.Kind.String(), encoding)
-
-	case pb.Type_BOOLEAN:
-		if cr.dataDecoder == nil {
-			cr.dataDecoder = &boolRunLength{}
-		}
-		return cr.readBools(batch.(*BoolColumn))
-
-	case pb.Type_BYTE: // TinyInt
-		if cr.dataDecoder == nil {
-			cr.dataDecoder = &byteRunLength{}
-		}
-		return cr.readBytes(batch.(*TinyIntColumn))
-
-	case pb.Type_BINARY:
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			if cr.dataDecoder == nil {
-				cr.dataDecoder = &bytesContent{}
-			}
-			if cr.lengthDecoder == nil {
-				cr.lengthDecoder = &intRleV2{signed: false}
-			}
-			return cr.readBinaryV2(batch.(*BinaryColumn))
-		}
-
-		return false, errors.Errorf("encoding %s for binary not impl", encoding)
-
-	case pb.Type_DECIMAL:
-		column, ok := batch.(*Decimal64Column)
-		if !ok {
-			return false, errors.New("decimal column should be decimal64")
-		}
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			if cr.dataDecoder == nil {
-				cr.dataDecoder = &base128VarInt{values:make([]int64, cr.numberOfRows)}
-			}
-			if cr.secondaryDecoder == nil {
-				cr.secondaryDecoder = &intRleV2{signed: false, uliterals:make([]uint64, cr.numberOfRows)}
-			}
-			return cr.readDecimal64sV2(column)
-		}
-
-		return false, errors.Errorf("encoding %s for decimal not impl", encoding)
-
-	case pb.Type_DATE:
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			if cr.dataDecoder == nil {
-				cr.dataDecoder = &intRleV2{signed: true}
-			}
-			return cr.readDatesV2(batch.(*DateColumn))
-		}
-
-		return false, errors.Errorf("encoding %s  for date not impl", encoding)
-
-	case pb.Type_TIMESTAMP:
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			if cr.dataDecoder == nil {
-				cr.dataDecoder = &intRleV2{signed: true, literals:make([]int64, cr.numberOfRows)}
-			}
-			if cr.secondaryDecoder == nil {
-				cr.secondaryDecoder = &intRleV2{signed: false, uliterals:make([]uint64, cr.numberOfRows)}
-			}
-			return cr.readTimestampsV2(batch.(*TimestampColumn))
-		}
-
-		return false, errors.Errorf("encoding %s for timestamp not impl", encoding)
-
-	case pb.Type_STRUCT:
-		column := batch.(*StructColumn)
-		// reAssure: next value calculation
-		for _, f := range column.Fields {
-			n, err := sr.NextBatch(f)
+	i := 0
+	for ; i < cap(vector) && !c.data.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
 			if err != nil {
-				return false, err
+				return err
 			}
-			if n {
-				next = true
+			vector = append(vector, v)
+		} else {
+			vector = append(vector, 0)
+		}
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type dateV2Reader struct {
+	*crBase
+	data *longV2StreamReader
+}
+
+func (c *dateV2Reader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]Date)
+	vector = vector[:0]
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.nextInt64()
+			if err != nil {
+				return err
 			}
+			vector = append(vector, fromDays(v))
+		} else {
+			vector = append(vector, Date{})
+		}
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type timestampV2Reader struct {
+	*crBase
+
+	data      *longV2StreamReader
+	secondary *longV2StreamReader
+}
+
+func (c *timestampV2Reader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]Timestamp)
+	vector = vector[:0]
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			seconds, err := c.data.nextInt64()
+			if err != nil {
+				return err
+			}
+			nanos, err := c.secondary.nextUInt()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, Timestamp{seconds, uint32(nanos)})
+		} else {
+			vector = append(vector, Timestamp{})
+		}
+	}
+
+	if (c.data.finished() && !c.secondary.finished()) || (c.secondary.finished() && !c.data.finished()) {
+		return errors.New("read error")
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type boolReader struct {
+	*crBase
+	numberOfRows uint64
+	data         *boolStreamReader
+}
+
+func (c *boolReader) next(batch *ColumnVector) error {
+	vector := batch.Vector.([]bool)
+	vector = vector[:0]
+
+	// ??
+	// because bools extend to byte, may not know the real rows from read,
+	// so using number of rows
+	for i := 0; c.cursor < c.numberOfRows && i < cap(vector); i++ {
+		if len(batch.Presents) != 0 {
+			assertx(i <= len(batch.Presents))
 		}
 
-	case pb.Type_UNION:
-		// todo:
-
-	case pb.Type_LIST:
-		// todo:
-		/*if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// Why length ???
-			if err := columnReader.readLength(); err != nil {
-				return false, errors.WithStack(err)
-			}
-			column := batch.(*ListColumn)
-			next, err := sr.NextBatch(column.Child)
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
 			if err != nil {
-				return false, errors.WithStack(err)
+				return err
 			}
-			return next, nil
-		}*/
+			vector = append(vector, v)
+		} else {
+			vector = append(vector, false)
+		}
+		c.cursor++
+	}
 
-	default:
-		return false, errors.Errorf("type %s not impl", cr.schema.Kind.String())
+	batch.Vector = vector
+	return nil
+}
+
+type binaryV2Reader struct {
+	*crBase
+	length *longV2StreamReader
+	data   *stringContentsStreamReader
+}
+
+func (c *binaryV2Reader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([][]byte)
+	vector = vector[:0]
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			l, err := c.length.nextUInt()
+			if err != nil {
+				return err
+			}
+			v, err := c.data.nextBytes(l)
+			if err != nil {
+				return err
+			}
+			// default utf-8
+			vector = append(vector, v)
+		} else {
+			vector = append(vector, nil)
+		}
+	}
+
+	if (c.length.finished() && !c.data.finished()) || (c.data.finished() && !c.length.finished()) {
+		return errors.New("read error")
+	}
+
+	c.cursor = c.cursor + uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type stringDirectV2Reader struct {
+	*crBase
+	data   *stringContentsStreamReader
+	length *longV2StreamReader
+}
+
+func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]string)
+	vector = vector[:0]
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			l, err := c.length.nextUInt()
+			if err != nil {
+				return err
+			}
+			v, err := c.data.next(l)
+			if err != nil {
+				return err
+			}
+			// default utf-8
+			vector = append(vector, string(v))
+		} else {
+			vector = append(vector, "")
+		}
+	}
+
+	if (c.length.finished() && !c.data.finished()) || (c.data.finished() && !c.length.finished()) {
+		return errors.New("read error")
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type stringDictV2Reader struct {
+	*crBase
+
+	data       *longV2StreamReader
+	dictData   *stringContentsStreamReader
+	dictLength *longV2StreamReader
+}
+
+func (c *stringDictV2Reader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]string)
+	vector = vector[:0]
+
+	ls, err := c.dictLength.getAllUInts()
+	if err != nil {
+		return err
+	}
+
+	dict, err := c.dictData.getAll(ls)
+	if err != nil {
+		return err
+	}
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.nextUInt()
+			if err != nil {
+				return err
+			}
+			if v >= uint64(len(dict)) {
+				return errors.New("dict index error")
+			}
+			vector = append(vector, string(dict[v]))
+		} else {
+			vector = append(vector, "")
+		}
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type longV2Reader struct {
+	*crBase
+	data *longV2StreamReader
+}
+
+func (c *longV2Reader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]int64)
+	vector = vector[:0]
+	i := 0
+	for ; !c.data.finished() && i < cap(vector); i++ {
+		if len(batch.Presents) == 0 {
+			v, err := c.data.nextInt64()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, v)
+		} else {
+			if i >= len(batch.Presents) {
+				return errors.Errorf("no more present data")
+			}
+			if batch.Presents[i] {
+				v, err := c.data.nextInt64()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, 0)
+			}
+		}
+	}
+	log.Debugf("column %d read %d data values", c.schema.Id, len(vector))
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type decimal64DirectV2Reader struct {
+	*crBase
+	data      *varIntStreamReader
+	secondary *longV2StreamReader
+}
+
+func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]Decimal64)
+	vector = vector[:0]
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			precision, err := c.data.next()
+			if err != nil {
+				return err
+			}
+			scala, err := c.secondary.nextUInt()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, Decimal64{precision, uint16(scala)})
+		} else {
+			vector = append(vector, Decimal64{})
+		}
+	}
+
+	if (c.data.finished() && !c.secondary.finished()) || (c.secondary.finished() && !c.data.finished()) {
+		return errors.New("read error")
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type floatReader struct {
+	*crBase
+	data *floatStreamReader
+}
+
+func (c *floatReader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]float32)
+	vector = vector[:0]
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, v)
+		} else {
+			vector = append(vector, 0)
+		}
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type doubleReader struct {
+	*crBase
+	data *doubleStreamReader
+}
+
+func (c *doubleReader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]float64)
+	vector = vector[:0]
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, v)
+		} else {
+			vector = append(vector, 0)
+		}
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
+type structReader struct {
+	*crBase
+	children []columnReader
+}
+
+func (c *structReader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]*ColumnVector)
+
+	for i, child := range c.children {
+		// rethink: how to handle present ?
+		// todo: cursor
+		if err := child.next(vector[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type byteStreamReader struct {
+	stream *streamReader
+
+	values   []byte
+	consumed int
+
+	decoder *encoding.ByteRunLength
+}
+
+func newByteStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
+	in io.ReadSeeker) *byteStreamReader {
+	sr := &streamReader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}
+	return &byteStreamReader{stream: sr, decoder: &encoding.ByteRunLength{}}
+}
+
+func (r *byteStreamReader) next() (v byte, err error) {
+	if r.consumed == len(r.values) {
+		r.values = r.values[:0]
+		r.consumed = 0
+
+		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
+			return 0, err
+		}
+	}
+
+	v = r.values[r.consumed]
+	r.consumed++
+	return
+}
+
+func (r *byteStreamReader) finished() bool {
+	return r.stream.finished() && (r.consumed == len(r.values))
+}
+
+type stringContentsStreamReader struct {
+	stream  *streamReader
+	decoder *encoding.BytesContent
+}
+
+func newStringContentsStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *stringContentsStreamReader {
+	sr := &streamReader{opts: opts, info: info, buf: &bytes.Buffer{}, in: in, start: start}
+	return &stringContentsStreamReader{stream: sr, decoder: &encoding.BytesContent{}}
+}
+
+func (r *stringContentsStreamReader) nextBytes(byteLength uint64) (v []byte, err error) {
+	v, err = r.decoder.DecodeNext(r.stream, int(byteLength))
+	return
+}
+
+func (r *stringContentsStreamReader) next(byteLength uint64) (v string, err error) {
+	var bb []byte
+	bb, err = r.nextBytes(byteLength)
+	if err != nil {
+		return
+	}
+	return string(bb), err
+}
+
+func (r *stringContentsStreamReader) finished() bool {
+	return r.stream.finished()
+}
+
+// for read column using encoding like dict
+func (r *stringContentsStreamReader) getAll(byteLengths []uint64) (vs []string, err error) {
+	for !r.finished() {
+		// todo: data check
+		for _, l := range byteLengths {
+			var v string
+			v, err = r.next(l)
+			if err != nil {
+				return
+			}
+			vs = append(vs, v)
+		}
 	}
 	return
 }
 
-func (cr *columnReader) readDatesV2(column *DateColumn) (next bool, err error) {
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-	dd := cr.dataDecoder.(*intRleV2)
-
-	if !cr.read {
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, err
-		}
-
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	for i := dd.consumedIndex; i < dd.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
-					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, fromDays(dd.literals[i]))
-					i++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, fromDays(dd.literals[i]))
-				}
-			} else { // no nulls
-				column.Vector = append(column.Vector, fromDays(dd.literals[i]))
-				i++
-			}
-			cr.readCursor++
-		} else {
-			dd.consumedIndex = i
-			return true, nil
-		}
-	}
-
-	return false, nil
+type doubleStreamReader struct {
+	stream  *streamReader
+	decoder *encoding.Ieee754Double
 }
 
-func (cr *columnReader) readTimestampsV2(column *TimestampColumn) (next bool, err error) {
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-	secondary := cr.streams[pb.Stream_SECONDARY]
-	assertx(secondary != nil)
-	dd := cr.dataDecoder.(*intRleV2)
-	sd := cr.secondaryDecoder.(*intRleV2)
-
-	if !cr.read {
-
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, err
-		}
-		if err := secondary.readWhole(cr.opts, cr.f); err != nil {
-			return false, err
-		}
-
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		sd.reset()
-		if err := sd.readValues(secondary.buf); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		assertx(dd.len() == sd.len())
-
-		cr.read = true
-	}
-
-	i := dd.consumedIndex
-	j := sd.consumedIndex
-	for ; i < dd.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
-					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, Timestamp{dd.literals[i], uint32(sd.uliterals[j])})
-					i++
-					j++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, Timestamp{})
-				}
-			} else { // no nulls
-				column.Vector = append(column.Vector, Timestamp{dd.literals[i], uint32(sd.uliterals[j])})
-				i++
-				j++
-			}
-			cr.readCursor++
-		} else {
-			dd.consumedIndex = i
-			return true, nil
-		}
-	}
-	dd.consumedIndex = i
-	sd.consumedIndex = j
-
-	return false, nil
+func newDoubleStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
+	in io.ReadSeeker) *doubleStreamReader {
+	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, opts: opts}
+	return &doubleStreamReader{stream: sr, decoder: &encoding.Ieee754Double{}}
 }
 
-func (cr *columnReader) readBools(column *BoolColumn) (next bool, err error) {
-	dd := cr.dataDecoder.(*boolRunLength)
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-
-	if !cr.read {
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, err
-		}
-
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	// because bools extend to byte, may not know the real rows from read,
-	// so using number of rows
-	for cr.readCursor < cr.numberOfRows {
-		for i := dd.consumedIndex; i < dd.len(); {
-			l := len(column.Vector)
-			if l < cap(column.Vector) {
-				if column.nullable {
-					if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
-						column.Nulls = append(column.Nulls, false)
-						column.Vector = append(column.Vector, dd.bools[i])
-						i++
-					} else {
-						column.Nulls = append(column.Nulls, true)
-						column.Vector = append(column.Vector, false)
-					}
-				} else { // no nulls
-					column.Vector = append(column.Vector, dd.bools[i])
-					i++
-				}
-				cr.readCursor++
-			} else {
-				dd.consumedIndex = i
-				return true, nil
-			}
-		}
-	}
-
-	return false, nil
+func (r *doubleStreamReader) next() (v float64, err error) {
+	return r.decoder.Decode(r.stream)
 }
 
-func (cr *columnReader) readBinaryV2(column *BinaryColumn) (next bool, err error) {
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-	length := cr.streams[pb.Stream_LENGTH]
-	assertx(length != nil)
-	dd := cr.dataDecoder.(*bytesContent)
-	ld := cr.lengthDecoder.(*intRleV2)
-
-	if !cr.read {
-		if err := length.readWhole(cr.opts, cr.f); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		ld.reset()
-		if err := ld.readValues(length.buf); err != nil {
-			return false, err
-		}
-		dd.length = ld.uliterals
-
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	for i := dd.consumedIndex; i < dd.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
-					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, dd.content[i])
-					i++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, nil)
-				}
-			} else { // no nulls
-				column.Vector = append(column.Vector, dd.content[i])
-				i++
-			}
-			cr.readCursor++
-		} else {
-			// still not finished
-			dd.consumedIndex = i
-			return true, nil
-		}
-	}
-
-	return false, nil
+func (r *doubleStreamReader) finished() bool {
+	return r.stream.finished()
 }
 
-func (cr *columnReader) readStringsV2(column *StringColumn) (next bool, err error) {
-	dd := cr.dataDecoder.(*bytesContent)
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-	ld := cr.lengthDecoder.(*intRleV2)
-	length := cr.streams[pb.Stream_LENGTH]
-	assertx(length != nil)
-
-	if !cr.read {
-		// length read first
-		if err := length.readWhole(cr.opts, cr.f); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		ld.reset()
-		if err := ld.readValues(length.buf); err != nil {
-			return false, err
-		}
-		dd.length = ld.uliterals
-
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	for i := dd.consumedIndex; i < dd.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || cr.presents[l-1] {
-					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, string(dd.content[i]))
-					i++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, "")
-				}
-			} else { // no nulls
-				column.Vector = append(column.Vector, string(dd.content[i]))
-				i++
-			}
-			cr.readCursor++
-		} else {
-			dd.consumedIndex = i
-			return true, nil
-		}
-	}
-
-	return false, nil
+type floatStreamReader struct {
+	stream  *streamReader
+	decoder *encoding.Ieee754Float
 }
 
-func (cr *columnReader) readStringsDictV2(column *StringColumn) (next bool, err error) {
-	dd := cr.dataDecoder.(*intRleV2)
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-	dictDecoder := cr.dictDecoder.(*bytesContent)
-	dictData := cr.streams[pb.Stream_DICTIONARY_DATA]
-	assertx(dictData != nil)
-	ld := cr.lengthDecoder.(*intRleV2)
-	length := cr.streams[pb.Stream_LENGTH]
-	assertx(length != nil)
-
-	if !cr.read {
-
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, err
-		}
-
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		// length stream read first
-		if err := length.readWhole(cr.opts, cr.f); err != nil {
-			return false, err
-		}
-
-		ld.reset()
-		if err := ld.readValues(length.buf); err != nil {
-			return false, err
-		}
-		dictDecoder.length = ld.uliterals
-
-		if err := dictData.readWhole(cr.opts, cr.f); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		dictDecoder.reset()
-		if err := dictDecoder.readValues(dictData.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	for i := dd.consumedIndex; i < dd.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || cr.presents[l-1] {
-					column.Nulls = append(column.Nulls, false)
-					v := dictDecoder.content[dd.uliterals[i]]
-					column.Vector = append(column.Vector, string(v))
-					i++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, "")
-				}
-			} else { // no nulls
-				v := dictDecoder.content[dd.uliterals[i]]
-				column.Vector = append(column.Vector, string(v))
-				i++
-			}
-			cr.readCursor++
-		} else {
-			dd.consumedIndex = i
-			return true, nil
-		}
-	}
-
-	return false, nil
+func newFloatStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *floatStreamReader {
+	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, opts: opts}
+	return &floatStreamReader{stream: sr, decoder: &encoding.Ieee754Float{}}
 }
 
-func (cr *columnReader) readBytes(column *TinyIntColumn) (next bool, err error) {
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-	dd := cr.dataDecoder.(*byteRunLength)
-
-	if !cr.read {
-
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	for i := dd.consumedIndex; i < dd.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
-					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, dd.literals[i])
-					i++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, 0)
-				}
-			} else { // no nulls
-				column.Vector = append(column.Vector, dd.literals[i])
-				i++
-			}
-		} else {
-			dd.consumedIndex = i
-			return true, nil
-		}
-	}
-
-	return false, nil
+func (r *floatStreamReader) next() (v float32, err error) {
+	return r.decoder.Decode(r.stream)
 }
 
-func (cr *columnReader) readLongsV2(column *LongColumn) (next bool, err error) {
-	dataDecoder := cr.dataDecoder.(*intRleV2)
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-
-	if !cr.read {
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, err
-		}
-
-		dataDecoder.reset()
-		if err := dataDecoder.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	for i := dataDecoder.consumedIndex; i < dataDecoder.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || (cr.presents != nil && cr.presents[cr.readCursor]) {
-					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, dataDecoder.literals[i])
-					i++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, 0)
-				}
-			} else { // no nulls
-				column.Vector = append(column.Vector, dataDecoder.literals[i])
-				i++
-			}
-			cr.readCursor++
-		} else {
-			dataDecoder.consumedIndex = i
-			return true, nil
-		}
-	}
-
-	return false, nil
+func (r *floatStreamReader) finished() bool {
+	return r.stream.finished()
 }
 
-func (cr *columnReader) readDecimal64sV2(column *Decimal64Column) (next bool, err error) {
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-	secondary := cr.streams[pb.Stream_SECONDARY]
-	assertx(secondary != nil)
-	dd := cr.dataDecoder.(*base128VarInt)
-	sd := cr.secondaryDecoder.(*intRleV2)
+type varIntStreamReader struct {
+	stream *streamReader
 
-	if !cr.read {
-
-		if err := secondary.readWhole(cr.opts, cr.f); err != nil {
-			return false, errors.WithStack(err)
-		}
-		sd.reset()
-		if err := sd.readValues(secondary.buf); err != nil {
-			return false, err
-		}
-
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, err
-		}
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	for i := dd.consumedIndex; i < dd.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
-					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, Decimal64{dd.values[i], uint16(sd.uliterals[i])})
-					i++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, Decimal64{})
-				}
-			} else { // no nulls
-				column.Vector = append(column.Vector, Decimal64{dd.values[i], uint16(sd.uliterals[i])})
-				i++
-			}
-			cr.readCursor++
-		} else {
-			dd.consumedIndex = i
-			return true, nil
-		}
-	}
-
-	return false, nil
+	decoder *encoding.Base128VarInt
 }
 
-func (cr *columnReader) readDoubles(column *DoubleColumn) (next bool, err error) {
-	data := cr.streams[pb.Stream_DATA]
-	assertx(data != nil)
-	dd := cr.dataDecoder.(*ieee754Double)
-
-	if !cr.read {
-
-		if err := data.readWhole(cr.opts, cr.f); err != nil {
-			return false, errors.WithStack(err)
-		}
-
-		dd.reset()
-		if err := dd.readValues(data.buf); err != nil {
-			return false, err
-		}
-
-		cr.read = true
-	}
-
-	for i := dd.consumedIndex; i < dd.len(); {
-		l := len(column.Vector)
-		if l < cap(column.Vector) {
-			if column.nullable {
-				if cr.presents == nil || (cr.presents != nil && cr.presents[l-1]) {
-					column.Nulls = append(column.Nulls, false)
-					column.Vector = append(column.Vector, dd.values[i])
-					i++
-				} else {
-					column.Nulls = append(column.Nulls, true)
-					column.Vector = append(column.Vector, 0)
-				}
-			} else { // no nulls
-				column.Vector = append(column.Vector, dd.values[i])
-				i++
-			}
-			cr.readCursor++
-		} else {
-			dd.consumedIndex = i
-			return true, nil
-		}
-	}
-
-	return false, nil
+func newVarIntStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *varIntStreamReader {
+	sr := &streamReader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}
+	return &varIntStreamReader{stream: sr, decoder: &encoding.Base128VarInt{}}
 }
 
-// toAssure: read present stream all in memory
-func (cr *columnReader) readPresent() error {
-	if cr.presentRead {
-		return nil
-	}
-	present := cr.streams[pb.Stream_PRESENT]
-	if present == nil {
-		cr.presentRead = true
-		return nil
-	}
-	cr.presentDecoder.reset()
-	if err := present.readWhole(cr.opts, cr.f); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := cr.presentDecoder.readValues(present.buf); err != nil {
-		return err
-	}
-	cr.presents = cr.presentDecoder.(*boolRunLength).bools[0:cr.numberOfRows]
-	cr.presentRead = true
-	return nil
+func (r *varIntStreamReader) next() (v int64, err error) {
+		v,err = r.decoder.DecodeNext(r.stream)
+		return
 }
 
-type streamReader struct {
-	start      uint64
-	length     uint64
-	readLength uint64
-	kind       pb.Stream_Kind
-	buf        *bytes.Buffer
-
-	opts *ReaderOptions
-	f    *os.File
+func (r *varIntStreamReader) finished() bool {
+	return r.stream.finished()
 }
 
-func (stream *streamReader) String() string {
-	return fmt.Sprintf("start %d, length %d, kind %s, already read %d", stream.start, stream.length,
-		stream.kind.String(), stream.readLength)
+type longV2StreamReader struct {
+	stream *streamReader
+
+	values []uint64
+	pos    int
+
+	decoder *encoding.IntRleV2
 }
 
-// stream read one or more chunks a time when needed
-/*func (stream *streamReader) read(dec Decoder) error {
-	log.Debugf("stream %s reading", stream.String())
+func newLongV2StreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker, signed bool) *longV2StreamReader {
+	sr := &streamReader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}
+	return &longV2StreamReader{stream: sr, decoder: &encoding.IntRleV2{Signed: signed}}
+}
 
-	if _, err := f.Seek(int64(stream.start+stream.readLength), 0); err != nil {
-		return errors.WithStack(err)
-	}
-
-	//stream.buf.Reset()
-
-	//stream.buf.Truncate(stream.buf.Len())
-
-	fmt.Printf("read chunk %d \n", stream.readLength)
-	l, err := readAChunk(opts, f, stream.buf)
+func (r *longV2StreamReader) nextInt64() (v int64, err error) {
+	var uv uint64
+	uv, err = r.nextUInt()
 	if err != nil {
-		return err
+		return
 	}
-	stream.readLength += l
+	v = encoding.UnZigzag(uv)
+	return
+}
 
-	err := dec.readValues(stream)
-	if err != nil {
-		return errors.WithMessagef(err, "already decoding length %d", dec.len())
+func (r *longV2StreamReader) nextUInt() (v uint64, err error) {
+	if r.pos >= len(r.values) {
+		r.pos = 0
+		r.values = r.values[:0]
+
+		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
+			return
+		}
+
+		log.Debugf("decoded %d long values from chunk", len(r.values))
 	}
 
-	//}
+	v = r.values[r.pos]
+	r.pos++
+	return
+}
 
-	return nil
+// for small data like dict index, ignore stream.signed
+func (r *longV2StreamReader) getAllUInts() (vs []uint64, err error) {
+	for !r.stream.finished() {
+		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
+			return
+		}
+	}
+	return
+}
+
+func (r *longV2StreamReader) finished() bool {
+	return r.stream.finished() && (r.pos == len(r.values))
+}
+
+type boolStreamReader struct {
+	stream *streamReader
+
+	values []bool
+	pos    int
+
+	decoder *encoding.BoolRunLength
+}
+
+func newBoolStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *boolStreamReader {
+	sr := &streamReader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}
+	return &boolStreamReader{stream: sr, decoder: &encoding.BoolRunLength{&encoding.ByteRunLength{}}}
+}
+
+func (r *boolStreamReader) next() (v bool, err error) {
+	if r.pos >= len(r.values) {
+		r.pos = 0
+		r.values = r.values[:0]
+
+		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
+			return
+		}
+		log.Tracef("bool stream has read %d values", len(r.values))
+	}
+	v = r.values[r.pos]
+	r.pos++
+	return
+}
+
+func (r *boolStreamReader) finished() bool {
+	// fixme:
+	return r.stream.finished() && (r.pos == len(r.values))
+}
+
+/*type streamReader interface {
+	io.Reader
+	io.ByteReader
+	finished() bool
 }*/
 
-/*func (stream *streamReader) ReadByte() (byte, error) {
-	if stream.buf.Len() == 0 && !stream.finish() {
-		stream.buf.Reset()
+type streamReader struct {
+	info *pb.Stream
 
-		// Rethink: using 1 f in whole reader or 1 f per streaming ?
-		if _, err := stream.f.Seek(int64(stream.start+stream.readLength), 0); err != nil {
-			return 0, errors.WithStack(err)
-		}
+	start      uint64
+	readLength uint64
 
-		l, err := readAChunk(stream.opts, stream.f, stream.buf)
-		log.Debugf("stream %s readAChunk %d", stream.kind.String(), l)
+	buf *bytes.Buffer
+
+	opts *ReaderOptions
+
+	in io.ReadSeeker
+}
+
+/*func (stream streamReader) String() string {
+	return fmt.Sprintf("start %d, length %d, kind %stream, already read %d", stream.start, stream.length,
+		stream.kind.String(), stream.readLength)
+}*/
+
+func (s *streamReader) ReadByte() (b byte, err error) {
+	if s.buf.Len() >= 1 {
+		b, err = s.buf.ReadByte()
 		if err != nil {
+			return b, errors.WithStack(err)
+		}
+		return
+	}
+
+	if s.readLength < s.info.GetLength() {
+		if err = s.readAChunk(); err != nil {
 			return 0, err
 		}
-		stream.readLength += l
 	}
-	b, err := stream.buf.ReadByte()
+
+	b, err = s.buf.ReadByte()
 	if err != nil {
 		return b, errors.WithStack(err)
 	}
-	return b, nil
+	return
 }
 
-func (stream *streamReader) Read(p []byte) (n int, err error) {
-	if stream.buf.Len() == 0 && !stream.finish() {
-		stream.buf.Reset()
-
-		if _, err := stream.f.Seek(int64(stream.start+stream.readLength), 0); err != nil {
-			return 0, errors.WithStack(err)
-		}
-
-		l, err := readAChunk(stream.opts, stream.f, stream.buf)
-		log.Debugf("read %d", l)
+func (s *streamReader) Read(p []byte) (n int, err error) {
+	if s.buf.Len() >= len(p) {
+		n, err = s.buf.Read(p)
 		if err != nil {
+			return n, errors.WithStack(err)
+		}
+		return
+	}
+
+	for s.buf.Len() < len(p) && s.readLength < s.info.GetLength() {
+		if err = s.readAChunk(); err != nil {
 			return 0, err
 		}
-		stream.readLength += l
 	}
-	n, err = stream.buf.Read(p)
+
+	n, err = s.buf.Read(p)
 	if err != nil {
 		return n, errors.WithStack(err)
 	}
-	return n, nil
+	return
 }
 
-func (stream *streamReader) Len() int {
-	return stream.buf.Len()
-}*/
+// read a chunk to s.buf
+func (s *streamReader) readAChunk() error {
 
-// read whole stream into memory
-func (stream *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {
-	if _, err = f.Seek(int64(stream.start), 0); err != nil {
+	if _, err := s.in.Seek(int64(s.start+s.readLength), 0); err != nil {
 		return errors.WithStack(err)
 	}
-	stream.buf.Reset()
 
-	if opts.CompressionKind == pb.CompressionKind_NONE {
-		if _, err = io.CopyN(stream.buf, f, int64(stream.length)); err != nil {
+	if s.opts.CompressionKind == pb.CompressionKind_NONE { // no header
+		l := int64(DEFAULT_CHUNK_SIZE)
+		if int64(s.info.GetLength()) < l {
+			l = int64(s.info.GetLength())
+		}
+		log.Tracef("no compression copy %d from stream", l)
+		_, err := io.CopyN(s.buf, s.in, l)
+		if err != nil {
 			return errors.WithStack(err)
 		}
-		stream.readLength += stream.length
+		s.readLength += uint64(l)
 		return nil
 	}
 
-	for ; !stream.finish(); {
-		l, err := readAChunk(opts, f, stream.buf)
-		if err != nil {
-			return err
-		}
-		stream.readLength += l
+	head := make([]byte, 3)
+	if _, err := io.ReadFull(s.in, head); err != nil {
+		return errors.WithStack(err)
 	}
+	s.readLength += 3
+	original := (head[0] & 0x01) == 1
+	chunkLength := uint64(head[2])<<15 | uint64(head[1])<<7 | uint64(head[0])>>1
+
+	if chunkLength > s.opts.ChunkSize {
+		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, s.opts.ChunkSize)
+	}
+
+	if original {
+		log.Tracef("stream reading original chunkLength %d", chunkLength)
+		if _, err := io.CopyN(s.buf, s.in, int64(chunkLength)); err != nil {
+			return errors.WithStack(err)
+		}
+		s.readLength += chunkLength
+		return nil
+	}
+
+	log.Tracef("stream reading compressing kind %s chunkLength %d", s.opts.CompressionKind, chunkLength)
+	readBuf := bytes.NewBuffer(make([]byte, chunkLength))
+	readBuf.Reset()
+	if _, err := io.CopyN(readBuf, s.in, int64(chunkLength)); err != nil {
+		return errors.WithStack(err)
+	}
+
+	if _, err := decompressChunkData(s.opts.CompressionKind, s.buf, readBuf); err != nil {
+		return err
+	}
+
+	s.readLength += chunkLength
+
 	return nil
 }
 
-func (stream *streamReader) finish() bool {
-	return stream.readLength >= stream.length
+/*func (r *streamReader) ReadAChunk(valueBuf *bytes.Buffer) (n int, err error) {
+	if _, err := r.f.Seek(int64(r.start+r.readLength), 0); err != nil {
+		return 0, errors.WithStack(err)
+	}
+
+	l, err := readAChunk()
+	log.Debugf("read %d", n)
+	if err != nil {
+		return int(l), err
+	}
+	r.readLength += l
+	n = int(l)
+
+	return
+}*/
+
+/*// read whole streamR into memory
+func (stream *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {
+
+	for stream.readLength < stream.length {
+		err = stream.readAChunk()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}*/
+
+func (s streamReader) finished() bool {
+	return s.readLength >= s.info.GetLength() && s.buf.Len() == 0
 }
 
 func (r *reader) NumberOfRows() uint64 {
@@ -1100,27 +1473,6 @@ func unmarshallSchema(types []*pb.Type) (schemas []*TypeDescription) {
 	return
 }
 
-/*func unmarshallSchema(types []*pb.Type) (schema *TypeDescription) {
-	tds := make([]*TypeDescription, len(types))
-	for i, t := range types {
-		node := &TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
-		tds[i] = node
-	}
-	if len(tds) > 0 {
-		schema = tds[0]
-	}
-	for i, t := range types {
-		tds[i].Children = make([]*TypeDescription, len(t.Subtypes))
-		tds[i].ChildrenNames = make([]string, len(t.Subtypes))
-		for j, v := range t.Subtypes {
-			tds[i].ChildrenNames[j] = t.FieldNames[j]
-			tds[i].Children[j] = tds[v]
-		}
-	}
-	return
-}
-*/
-
 func marshallSchema(schema *TypeDescription) (types []*pb.Type) {
 	types = preOrderWalkSchema(schema)
 	return
@@ -1141,13 +1493,17 @@ func preOrderWalkSchema(node *TypeDescription) (types []*pb.Type) {
 	return
 }
 
-func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
+func extractFileTail(f File) (tail *pb.FileTail, err error) {
 
-	fi, err := f.Stat()
+	/*fi, err := f.Stat()
 	if err != nil {
 		return nil, errors.Wrapf(err, "get file status error")
 	}
-	size := fi.Size()
+	size := fi.Size()*/
+	size, err := f.Size()
+	if err != nil {
+		return nil, err
+	}
 	if size == 0 {
 		// Hive often creates empty files (including ORC) and has an
 		// optimization to create a 0 byte file as an empty ORC file.
@@ -1175,7 +1531,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	psOffset := readSize - 1 - psLen
 	ps, err := extractPostScript(buf[psOffset : psOffset+psLen])
 	if err != nil {
-		return nil, errors.Wrapf(err, "extract postscript error %s", f.Name())
+		return nil, err
 	}
 	footerSize := int64(ps.GetFooterLength()) // compressed footer length
 	metaSize := int64(ps.GetMetadataLength())
@@ -1211,7 +1567,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 
-	log.Debugf("Footer: %s\n", footer.String())
+	log.Debugf("Footer: %stream\n", footer.String())
 
 	fl := uint64(size)
 	psl := uint64(psLen)
@@ -1228,12 +1584,8 @@ func extractPostScript(buf []byte) (ps *pb.PostScript, err error) {
 		return nil, errors.Wrapf(err, "check orc version error")
 	}
 
-	// Check compression codec.
-	/*switch ps.GetCompression() {
-	  default:
-	  	return nil, errors.New("unknown compression")
-	  }*/
-	fmt.Printf("Postscript: %s\n", ps.String())
+	fmt.Printf("Postscript: %stream\n", ps.String())
+
 	return ps, err
 }
 
@@ -1244,9 +1596,9 @@ func checkOrcVersion(ps *pb.PostScript) error {
 
 func ensureOrcFooter(f *os.File, psLen int, buf []byte) error {
 	magicLength := len(MAGIC)
-	fullLength := magicLength + 1;
+	fullLength := magicLength + 1
 	if psLen < fullLength || len(buf) < fullLength {
-		return errors.Errorf("malformed ORC file %s, invalid postscript length %d", f.Name(), psLen)
+		return errors.Errorf("malformed ORC file %stream, invalid postscript length %d", f.Name(), psLen)
 	}
 	// now look for the magic string at the end of the postscript.
 	//if (!Text.decode(array, offset, magicLength).equals(OrcFile.MAGIC)) {
@@ -1257,7 +1609,7 @@ func ensureOrcFooter(f *os.File, psLen int, buf []byte) error {
 		// Read the first 3 bytes of the file to check for the header
 		// todo:
 
-		return errors.Errorf("malformed ORC file %s, invalid postscript", f.Name())
+		return errors.Errorf("malformed ORC file %stream, invalid postscript", f.Name())
 	}
 	return nil
 }
@@ -1287,33 +1639,6 @@ func assertx(condition bool) {
 	if !condition {
 		panic("assert error")
 	}
-}
-
-// read one chunk and decompressed to out, n is read count of f
-func readAChunk(opts *ReaderOptions, f *os.File, out *bytes.Buffer) (n uint64, err error) {
-	head := make([]byte, 3)
-	if _, err = io.ReadFull(f, head); err != nil {
-		return 0, errors.WithStack(err)
-	}
-	n += 3
-	original := (head[0] & 0x01) == 1
-	chunkLength := uint64(head[2])<<15 | uint64(head[1])<<7 | uint64(head[0])>>1
-	if uint64(chunkLength) > opts.ChunkSize {
-		return 0, errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, opts.ChunkSize)
-	}
-
-	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
-	buf.Reset()
-	if w, err := io.CopyN(buf, f, int64(chunkLength)); err != nil {
-		return uint64(3 + w), errors.WithStack(err)
-	}
-	n += chunkLength
-
-	if _, err := decompressChunkData(opts.CompressionKind, original, out, buf); err != nil {
-		return n, errors.WithStack(err)
-	}
-
-	return
 }
 
 func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSize int) (decompressed []byte, err error) {
@@ -1357,26 +1682,20 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 }
 
 // data should be compressed
-func decompressChunkData(kind pb.CompressionKind, original bool, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
-	assertx(kind != pb.CompressionKind_NONE)
-	if original {
-		if n, err = io.Copy(dst, src); err != nil {
+func decompressChunkData(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
+	switch kind {
+	case pb.CompressionKind_ZLIB:
+		r := flate.NewReader(src)
+		n, err = dst.ReadFrom(r)
+		r.Close()
+		if err != nil {
 			return 0, errors.WithStack(err)
 		}
-	} else {
-		switch kind {
-		case pb.CompressionKind_ZLIB:
-			r := flate.NewReader(src)
-			n, err = dst.ReadFrom(r)
-			r.Close()
-			if err != nil {
-				return 0, errors.Wrapf(err, "decompress chunk data error")
-			}
-			return n, nil
-		default:
-			return 0, errors.New("compression kind other than zlib not impl")
-		}
+		return n, nil
+	default:
+		return 0, errors.New("compression kind other than zlib not impl")
 	}
+
 	return
 }
 

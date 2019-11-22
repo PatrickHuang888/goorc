@@ -8,12 +8,12 @@ import (
 )
 
 func init() {
-	logrus.SetLevel(logrus.InfoLevel)
+	logrus.SetLevel(logrus.TraceLevel)
 }
 
 func TestNoCompression(t *testing.T) {
 	opts := DefaultReaderOptions()
-	reader, err := NewReader("../testing/basicLongNoCompression.orc", opts)
+	reader, err := NewFileReader("../testing/basicLongNoCompression.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -24,23 +24,27 @@ func TestNoCompression(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
+	batch := schema.CreateReaderBatch(opts)
 	for _, stripe := range stripes {
-		batch, err := schema.CreateReaderBatch(opts)
+
+		err = stripe.Next(batch)
 		if err != nil {
-			t.Errorf("create row batch error %+v", err)
+			t.Fatalf("%+v", err)
 		}
 
-		for next := true; next; {
-			next, err = stripe.NextBatch(batch)
-			if err != nil {
-				t.Fatalf("%+v", err)
-			}
+		values := batch.Vector.([]int64)
+		if len(values) == 0 {
+			break
+		}
+
+		for _, v := range values {
+			fmt.Println(v)
 		}
 	}
 }
 
-func TestPatchBaseNegativeMin(t *testing.T) {
-	inp := []int64{
+func TestPatchBaseNegativeMinNoCmp(t *testing.T) {
+	values := []int64{
 		20, 2, 3, 2, 1,
 		3, 17, 71, 35, 2,
 		1, 139, 2, 2, 3,
@@ -93,7 +97,7 @@ func TestPatchBaseNegativeMin(t *testing.T) {
 		16}
 
 	opts := DefaultReaderOptions()
-	reader, err := NewReader("../testing/patchBaseNegativeMin.orc", opts)
+	reader, err := NewFileReader("../testing/patchBaseNegativeMin.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -102,24 +106,20 @@ func TestPatchBaseNegativeMin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	stripe := stripes[0]
-	batch, err := schema.CreateReaderBatch(opts)
-	if err != nil {
-		t.Errorf("create row batch error %+v", err)
-	}
+	batch := schema.CreateReaderBatch(opts)
 
-	_, err = stripe.NextBatch(batch)
+	err = stripes[0].Next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	assert.Equal(t, inp, batch.(*LongColumn).Vector)
-
 	reader.Close()
+
+	assert.Equal(t, values, batch.Vector)
 }
 
-func TestPatchBaseNegativeMin2(t *testing.T) {
-	inp := []int64{
+func TestPatchBaseNegativeMin2NoCmp(t *testing.T) {
+	values := []int64{
 		20, 2, 3, 2, 1, 3, 17, 71, 35, 2, 1, 139, 2, 2,
 		3, 1783, 475, 2, 1, 1, 3, 1, 3, 2, 32, 1, 2, 3, 1, 8, 30, 1, 3, 414, 1,
 		1, 135, 3, 3, 1, 414, 2, 1, 2, 2, 594, 2, 5, 6, 4, 11, 1, 2, 2, 1, 1,
@@ -134,7 +134,7 @@ func TestPatchBaseNegativeMin2(t *testing.T) {
 		2, 16}
 
 	opts := DefaultReaderOptions()
-	reader, err := NewReader("../testing/patchBaseNegativeMin2.orc", opts)
+	reader, err := NewFileReader("../testing/patchBaseNegativeMin2.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -143,24 +143,23 @@ func TestPatchBaseNegativeMin2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	stripe := stripes[0]
-	batch, err := schema.CreateReaderBatch(opts)
+
+	batch := schema.CreateReaderBatch(opts)
 	if err != nil {
-		t.Errorf("create row batch error %+v", err)
+		t.Errorf("create row column error %+v", err)
 	}
 
-	_, err = stripe.NextBatch(batch)
+	err = stripes[0].Next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-
-	assert.Equal(t, inp, batch.(*LongColumn).Vector)
-
 	reader.Close()
+
+	assert.Equal(t, values, batch.Vector)
 }
 
 func TestPatchBaseNegativeMin3(t *testing.T) {
-	inp := []int64{
+	values := []int64{
 		20, 2, 3, 2, 1, 3, 17, 71, 35, 2, 1, 139, 2, 2,
 		3, 1783, 475, 2, 1, 1, 3, 1, 3, 2, 32, 1, 2, 3, 1, 8, 30, 1, 3, 414, 1,
 		1, 135, 3, 3, 1, 414, 2, 1, 2, 2, 594, 2, 5, 6, 4, 11, 1, 2, 2, 1, 1,
@@ -175,7 +174,7 @@ func TestPatchBaseNegativeMin3(t *testing.T) {
 		2, 16}
 
 	opts := DefaultReaderOptions()
-	reader, err := NewReader("../testing/patchBaseNegativeMin3.orc", opts)
+	reader, err := NewFileReader("../testing/patchBaseNegativeMin3.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -184,23 +183,20 @@ func TestPatchBaseNegativeMin3(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	stripe := stripes[0]
-	batch, err := schema.CreateReaderBatch(opts)
-	if err != nil {
-		t.Errorf("create row batch error %+v", err)
-	}
 
-	_, err = stripe.NextBatch(batch)
+	batch := schema.CreateReaderBatch(opts)
+
+	err = stripes[0].Next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	assert.Equal(t, inp, batch.(*LongColumn).Vector)
-
 	reader.Close()
+
+	assert.Equal(t, values, batch.Vector)
 }
 
-func BenchmarkReader(b *testing.B) {
+/*func BenchmarkReader(b *testing.B) {
 	path := "/u01/apache/orc/java/bench/data/generated/taxi/orc.gz"
 
 	ropts := DefaultReaderOptions()
@@ -217,24 +213,25 @@ func BenchmarkReader(b *testing.B) {
 	}
 
 	ropts.RowSize = 100000
-	batch, err := schema.CreateReaderBatch(ropts)
+	column, err := schema.CreateReaderBatch(ropts)
 	if err != nil {
-		b.Fatalf("create row batch error %+v", err)
+		b.Fatalf("create row column error %+v", err)
 	}
 
 	var rows int
 
 	i := 0
-	stripe := stripes[0]
+	stripeR := stripes[0]
 
 	for next := true; next; {
-		next, err = stripe.NextBatch(batch)
+		next, err = stripeR.NextBatch(column)
 		if err != nil {
 			b.Fatalf("%+v", err)
 		}
-		rows += batch.Rows()
-		fmt.Printf("current stripe %d, rows now: %d\n", i, rows)
+		rows += column.Rows()
+		fmt.Printf("current stripeR %d, rows now: %d\n", i, rows)
 	}
 
 	reader.Close()
 }
+*/
