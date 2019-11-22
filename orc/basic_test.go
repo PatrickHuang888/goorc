@@ -636,7 +636,6 @@ func TestColumnTimestampWithPresents(t *testing.T) {
 
 	ropts := DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
-
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
