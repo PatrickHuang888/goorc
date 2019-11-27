@@ -26,32 +26,32 @@ const (
 	BYTES = 8
 )
 
-type Decoder interface {
-	ReadValues(in BufferedReader) error
-	Reset()
-	Remaining() int
-	Pack()
-	NextValue() (v interface{})
+/*type Decoder interface {
+	ReadValues(in BufferedReader, values []interface{}) error
 }
-
+*/
 type Encoder interface {
 	WriteValues(out *bytes.Buffer) error
 }
 
-type decoder struct {
+/*type decoder struct {
 	consumedIndex int
 }
 
 func (d *decoder) reset() {
 	d.consumedIndex = 0
 }
+*/
 
-type byteRunLength struct {
-	decoder
-	literals []byte
+type BufferedReader interface {
+	io.ByteReader
+	io.Reader
 }
 
-func (brl *byteRunLength) ReadValues(in BufferedReader) error {
+type ByteRunLength struct {
+}
+
+func (brl *ByteRunLength) ReadValues(in BufferedReader, values []byte) (err error) {
 	control, err := in.ReadByte()
 	if err != nil {
 		return errors.WithStack(err)
@@ -63,7 +63,7 @@ func (brl *byteRunLength) ReadValues(in BufferedReader) error {
 			return errors.WithStack(err)
 		}
 		for i := 0; i < l; i++ {
-			brl.literals = append(brl.literals, v)
+			values = append(values, v)
 		}
 	} else { // literals
 		l := int(-int8(control))
@@ -72,30 +72,10 @@ func (brl *byteRunLength) ReadValues(in BufferedReader) error {
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			brl.literals = append(brl.literals, v)
+			values = append(values, v)
 		}
 	}
 	return nil
-}
-
-func (brl *byteRunLength) Reset() {
-	brl.literals = brl.literals[:0]
-	brl.decoder.reset()
-}
-
-func (brl *byteRunLength) Remaining() int {
-	return len(brl.literals) - brl.consumedIndex
-}
-
-func (brl *byteRunLength) Pack() {
-	brl.literals = brl.literals[brl.consumedIndex:len(brl.literals):cap(brl.literals)]
-	brl.reset()
-}
-
-func (brl *byteRunLength) NextValue() (v interface{}) {
-	v = brl.literals[brl.consumedIndex]
-	brl.consumedIndex++
-	return
 }
 
 func (brl *byteRunLength) writeValues(out *bytes.Buffer) error {
@@ -143,17 +123,17 @@ func (brl *byteRunLength) writeValues(out *bytes.Buffer) error {
 }
 
 // bool run length use byte run length encoding, but how to know the length of bools?
-type boolRunLength struct {
-	byteRunLength
+type BoolRunLength struct {
+	ByteRunLength
 }
 
-func (brl *boolRunLength) NextValue() (v interface{}) {
+/*func (brl *boolRunLength) NextValue() (v interface{}) {
 	pos := brl.consumedIndex / 8
 	off := brl.consumedIndex % 8
 	b := brl.literals[pos]
 	v = b>>byte(7-off) == 0x01
 	return
-}
+}*/
 
 func (brl *boolRunLength) WriteValues(out *bytes.Buffer) error {
 	var bs []byte
@@ -277,48 +257,26 @@ func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 }*/
 
 // string contents, decoding need length decoder
-type bytesContentV2 struct {
+/*type BytesContent struct {
 	decoder
 	content       [][]byte // utf-8 bytes
 	lengthDecoder Decoder
 	pos           int
 }
 
-// length and pos cannot be reset, used for next readValues
-func (bd *bytesContentV2) Reset() {
-	bd.content = bd.content[:0]
-	bd.lengthDecoder = nil
-	//bd.pos = 0
-	bd.reset()
-}
-
-func (bd *bytesContentV2) Remaining() int {
-	return len(bd.content) - bd.consumedIndex
-}
-
-func (bd *bytesContentV2) Pack() {
-	bd.content = bd.content[bd.consumedIndex:len(bd.content):cap(bd.content)]
-	bd.reset()
-}
 
 // decode bytes, but should have extracted length stream first by rle v2 as length field
-func (bd *bytesContentV2) ReadValues(in BufferedReader) error {
-	length := bd.lengthDecoder.NextValue().(uint64)
-	b := make([]byte, length)
-	// optimize: slice copy
-	if _, err := io.ReadFull(in, b); err != nil {
+func (bd *BytesContent) ReadValues(in BufferedReader, values []byte) (err error) {
+	if _, err= in.Read(values);err!=nil {
 		return errors.WithStack(err)
 	}
-	bd.content = append(bd.content, b)
-	bd.pos++
 	return nil
 }
 
-func (bd *bytesContent) NextValue() (v interface{}) {
-	v = bd.content[bd.consumedIndex]
-	bd.consumedIndex++
-	return
+func ()  {
+
 }
+
 
 // write out content do not base length field, just base on len of content
 func (bd *bytesContent) WriteValues(out *bytes.Buffer) error {
@@ -328,86 +286,44 @@ func (bd *bytesContent) WriteValues(out *bytes.Buffer) error {
 		}
 	}
 	return nil
-}
+}*/
 
 // int run length encoding v2
-type intRleV2 struct {
-	sub    byte // sub encoding
-	signed bool
-	//literals      []int64
-	uliterals     []uint64
-	consumedIndex int  // for read
+type IntRleV2 struct {
+	sub byte
 	lastByte      byte // different align when using read/writer, used in r/w
 	bitsLeft      int  // used in r/w
 }
 
-func (rle *intRleV2) Pack() {
-	rle.uliterals = rle.uliterals[rle.consumedIndex:len(rle.uliterals):cap(rle.uliterals)]
-	rle.consumedIndex = 0
-}
-
-func (rle *intRleV2) Reset() {
-	rle.signed = false
-	rle.uliterals = rle.uliterals[:0]
-	rle.sub = Encoding_UNSET
-	rle.consumedIndex = 0
-	rle.lastByte = 0
-	rle.bitsLeft = 0
-}
-
-// decoded remaining
-func (rle *intRleV2) len() int {
-	return len(rle.uliterals) - rle.consumedIndex
-}
-
-func (rle *intRleV2) nextInt64() (v int64, err error) {
-	if !rle.signed {
-		return 0, errors.New("signed error")
-	}
-	x, err := rle.nextUInt64()
-	return unZigzag(x), err
-}
-
-func (rle *intRleV2) nextUInt64() (v uint64, err error) {
-	if rle.consumedIndex == len(rle.uliterals) {
-		return 0, errors.New("no more values")
-	}
-	v = rle.uliterals[rle.consumedIndex]
-	rle.consumedIndex++
-	return
-}
-
 // decoding buffer all to u/literals
-func (rle *intRleV2) ReadValues(in BufferedReader) error {
-
-	for {
+func (rle *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (err error) {
 
 		// header from MSB to LSB
 		firstByte, err := in.ReadByte()
 		if err != nil {
 			return errors.WithStack(err)
 		}
+
 		rle.sub = firstByte >> 6
 		switch rle.sub {
 		case Encoding_SHORT_REPEAT:
 			header := firstByte
 			width := 1 + (header>>3)&0x07 // width 3bit at position 3
 			repeatCount := int(3 + (header & 0x07))
-			log.Tracef("decoding: int rl v2 Short Repeat of count %d, and len now is %d",
-				repeatCount, rle.len())
+			log.Tracef("decoding: int rl v2 Short Repeat of count %d", repeatCount)
 
-			var x uint64
+			var v uint64
 			for i := width; i > 0; { // big endian
 				i--
 				b, err := in.ReadByte()
 				if err != nil {
 					return errors.WithStack(err)
 				}
-				x |= uint64(b) << (8 * i)
+				v |= uint64(b) << (8 * i)
 			}
 
 			for i := 0; i < repeatCount; i++ {
-				rle.uliterals = append(rle.uliterals, x)
+				values = append(values, v)
 			}
 
 		case Encoding_DIRECT: // numbers encoding in big-endian
@@ -422,26 +338,24 @@ func (rle *intRleV2) ReadValues(in BufferedReader) error {
 				return errors.WithStack(err)
 			}
 			length := int(header&0x1FF + 1)
-			log.Tracef("decoding: int rl v2 Direct width %d length %d len now %d", width, length, rle.len())
+			log.Tracef("decoding: int rl v2 Direct width %d length %d", width, length)
 
 			for i := 0; i < length; i++ {
-				var x uint64
-				x, err := rle.readBits(in, int(width))
+				v, err := rle.readBits(in, int(width))
 				if err != nil {
 					return err
 				}
-
-				rle.uliterals = append(rle.uliterals, x)
+				values= append(values, v)
 			}
 			rle.forgetBits()
 
 		case Encoding_PATCHED_BASE:
-			// fixme: according to base value is a signed smallest value, patch should always signed?
-			if !rle.signed {
+			// rethink: according to base value is a signed smallest value, patch should always signed?
+			if signed {
 				return errors.New("decoding: int rl v2 patch signed setting should not false")
 			}
 
-			if err = rle.readPatched(firstByte, in); err != nil {
+			if err = rle.readPatched(in, firstByte, values); err != nil {
 				return err
 			}
 
@@ -459,11 +373,11 @@ func (rle *intRleV2) ReadValues(in BufferedReader) error {
 			}
 			length := int(header[0])&0x01<<8 | int(header[1]) + 1
 
-			log.Tracef("decoding: irl v2 Delta length %d, width %d, len now %d", length, width, rle.len())
+			log.Tracef("decoding: irl v2 Delta length %d, width %d", length, width)
 
 			var ubase uint64
 			var base int64
-			if rle.signed {
+			if signed {
 				base, err = binary.ReadVarint(in)
 				if err != nil {
 					return errors.WithStack(err)
@@ -475,33 +389,33 @@ func (rle *intRleV2) ReadValues(in BufferedReader) error {
 					return errors.WithStack(err)
 				}
 			}
-			rle.uliterals = append(rle.uliterals, ubase)
+			values = append(values, ubase)
 
 			deltaBase, err := binary.ReadVarint(in)
 			if err != nil {
 				return errors.WithStack(err)
 			}
 
-			if rle.signed {
-				rle.uliterals = append(rle.uliterals, zigzag(base+deltaBase))
+			if signed {
+				values = append(values, zigzag(base+deltaBase))
 			} else {
 				if deltaBase >= 0 {
-					rle.uliterals = append(rle.uliterals, ubase+uint64(deltaBase))
+					values = append(values, ubase+uint64(deltaBase))
 				} else {
-					rle.uliterals = append(rle.uliterals, ubase-uint64(-deltaBase))
+					values = append(values, ubase-uint64(-deltaBase))
 				}
 			}
 
 			// delta values: W * (L-2)
 			for i := 2; i < length; i++ {
 				if width == 0 { //fixed delta
-					if rle.signed {
-						rle.uliterals = append(rle.uliterals, zigzag(base+deltaBase))
+					if signed {
+						values = append(values, zigzag(base+deltaBase))
 					} else {
 						if deltaBase >= 0 {
-							rle.uliterals = append(rle.uliterals, ubase+uint64(deltaBase))
+							values = append(values, ubase+uint64(deltaBase))
 						} else {
-							rle.uliterals = append(rle.uliterals, ubase-uint64(-deltaBase))
+							values = append(values, ubase-uint64(-deltaBase))
 						}
 					}
 				} else {
@@ -509,19 +423,19 @@ func (rle *intRleV2) ReadValues(in BufferedReader) error {
 					if err != nil {
 						return err
 					}
-					if rle.signed {
-						prev := unZigzag(rle.uliterals[len(rle.uliterals)-1])
+					if signed {
+						prev := unZigzag(values[len(values)-1])
 						if deltaBase >= 0 {
-							rle.uliterals = append(rle.uliterals, zigzag(prev+int64(delta)))
+							values = append(values, zigzag(prev+int64(delta)))
 						} else {
-							rle.uliterals = append(rle.uliterals, zigzag(prev-int64(delta)))
+							values = append(values, zigzag(prev-int64(delta)))
 						}
 					} else {
-						prev := rle.uliterals[len(rle.uliterals)-1]
+						prev := values[len(values)-1]
 						if deltaBase >= 0 {
-							rle.uliterals = append(rle.uliterals, prev+delta)
+							values = append(values, prev+delta)
 						} else {
-							rle.uliterals = append(rle.uliterals, prev-delta)
+							values = append(values, prev-delta)
 						}
 					}
 				}
@@ -532,21 +446,15 @@ func (rle *intRleV2) ReadValues(in BufferedReader) error {
 			return errors.Errorf("decoding: int rl v2 encoding sub %d not recognized", rle.sub)
 		}
 
-		if in.Len() == 0 {
-			break
-		}
-
-	}
-
-	return nil
+	return
 }
 
-func (rle *intRleV2) readPatched(firstByte byte, in BufferedReader) (err error) {
+func (rle *IntRleV2) readPatched( in BufferedReader, firstByte byte, values[]uint64) (err error) {
 	/*var mark int
 	if len(rle.literals) != 0 {
 		mark = len(rle.literals)
 	}*/
-	mark := len(rle.uliterals)
+	mark := len(values)
 	header := make([]byte, 4) // 4 byte header
 	_, err = io.ReadFull(in, header[1:4])
 	if err != nil {
@@ -602,7 +510,7 @@ func (rle *intRleV2) readPatched(firstByte byte, in BufferedReader) (err error) 
 		if err != nil {
 			return err
 		}
-		rle.uliterals = append(rle.uliterals, zigzag(base+int64(delta)))
+		values = append(values, zigzag(base+int64(delta)))
 	}
 	rle.forgetBits()
 
@@ -625,18 +533,18 @@ func (rle *intRleV2) readPatched(firstByte byte, in BufferedReader) (err error) 
 		}
 
 		// patchValue should be at largest 63 bits?
-		v := unZigzag(rle.uliterals[mark])
+		v := unZigzag(values[mark])
 		v -= base // remove added base first
 		v |= int64(patchValue << width)
 		v += base // add base back
-		rle.uliterals[mark] = zigzag(v)
+		values[mark] = zigzag(v)
 	}
 	rle.forgetBits()
 
 	return nil
 }
 
-func (rle *intRleV2) readBits(in io.ByteReader, bits int) (value uint64, err error) {
+func (rle *IntRleV2) readBits(in io.ByteReader, bits int) (value uint64, err error) {
 	hasBits := rle.bitsLeft
 	data := uint64(rle.lastByte)
 	for ; hasBits < bits; hasBits += 8 {
@@ -660,7 +568,7 @@ func (rle *intRleV2) readBits(in io.ByteReader, bits int) (value uint64, err err
 	return
 }
 
-func (rle *intRleV2) forgetBits() {
+func (rle *IntRleV2) forgetBits() {
 	rle.bitsLeft = 0
 	rle.lastByte = 0
 }
@@ -1455,7 +1363,7 @@ func getAlignedWidth(x uint64) int {
 
 // get repeated count from position i, min return is 1 means no repeat
 // max return is 512 for fixed delta
-func (rle *intRleV2) getRepeat(i int) (count uint16) {
+func (rle *IntRleV2) getRepeat(i int) (count uint16) {
 	count = 1
 	for j := 1; j < 512 && i+j < rle.len(); j++ {
 		if rle.uliterals[i] == rle.uliterals[i+j] {
@@ -1467,7 +1375,7 @@ func (rle *intRleV2) getRepeat(i int) (count uint16) {
 	return
 }
 
-func (rle *intRleV2) writeShortRepeat(count uint16, x uint64, out *bytes.Buffer) error {
+func (rle *IntRleV2) writeShortRepeat(count uint16, x uint64, out *bytes.Buffer) error {
 	header := byte(count & 0x07)         // count
 	header |= Encoding_SHORT_REPEAT << 6 // encoding
 	var w byte
@@ -1494,12 +1402,10 @@ func (rle *intRleV2) writeShortRepeat(count uint16, x uint64, out *bytes.Buffer)
 	return nil
 }
 
-type base128VarInt struct {
-	decoder
-	values []int64
+type Base128VarInt struct {
 }
 
-func (enc *base128VarInt) writeValues(out *bytes.Buffer) error {
+func (enc *Base128VarInt) writeValues(out *bytes.Buffer) error {
 	bb := make([]byte, 10)
 	for _, v := range enc.values {
 		c := binary.PutVarint(bb, v)
@@ -1510,52 +1416,29 @@ func (enc *base128VarInt) writeValues(out *bytes.Buffer) error {
 	return nil
 }
 
-func (dec *base128VarInt) len() int {
-	return len(dec.values)
-}
-
-func (dec *base128VarInt) readValues(in BufferedReader) error {
-	for in.Len() > 0 {
-		v, err := binary.ReadVarint(in)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		dec.values = append(dec.values, v)
+func (dec *Base128VarInt) ReadValues(in BufferedReader, values []int64) (err error) {
+	v, err := binary.ReadVarint(in)
+	if err != nil {
+		return errors.WithStack(err)
 	}
-	return nil
+	values = append(values, v)
+	return
 }
 
-func (dec *base128VarInt) reset() {
-	dec.values = dec.values[:0]
-	dec.decoder.reset()
+
+type Ieee754Double struct {
 }
 
-type ieee754Double struct {
-	decoder
-	values []float64
-}
-
-func (dec *ieee754Double) readValues(in BufferedReader) error {
-	for in.Len() > 0 {
-		bb := make([]byte, 8)
-		if _, err := io.ReadFull(in, bb); err != nil {
-			return errors.WithStack(err)
-		}
-		//v := math.Float64frombits(binary.BigEndian.Uint64(bb))
-		// !!!
-		v := math.Float64frombits(binary.LittleEndian.Uint64(bb))
-		dec.values = append(dec.values, v)
+func (dec *Ieee754Double) ReadValues(in BufferedReader, values []float64) (err error) {
+	bb := make([]byte, 8)
+	if _, err := io.ReadFull(in, bb); err != nil {
+		return errors.WithStack(err)
 	}
-	return nil
-}
-
-func (dec *ieee754Double) len() int {
-	return len(dec.values)
-}
-
-func (dec *ieee754Double) reset() {
-	dec.values = dec.values[:0]
-	dec.decoder.reset()
+	//v := math.Float64frombits(binary.BigEndian.Uint64(bb))
+	// !!!
+	v := math.Float64frombits(binary.LittleEndian.Uint64(bb))
+	values = append(values, v)
+	return
 }
 
 func (enc *ieee754Double) writeValues(out *bytes.Buffer) error {
@@ -1669,11 +1552,11 @@ func widthDecoding(w byte, delta bool) (width byte, err error) {
 	return
 }
 
-func unZigzag(x uint64) int64 {
+func UnZigzag(x uint64) int64 {
 	return int64(x>>1) ^ -int64(x&1)
 }
 
-func zigzag(x int64) uint64 {
+func Zigzag(x int64) uint64 {
 	return uint64(x<<1) ^ uint64(x>>63)
 }
 

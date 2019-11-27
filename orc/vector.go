@@ -21,11 +21,11 @@ type ColumnVector interface {
 }
 
 type col struct {
-	id       uint32
+	id uint32
 	//nullable bool
 	//setNulls bool
 	//hasNulls bool
-	presents    []bool
+	presents []bool
 }
 
 func (c *col) ColumnId() uint32 {
@@ -140,8 +140,8 @@ func (bc *BinaryColumn) Rows() int {
 
 // hive 0.13 support 38 digits
 type Decimal64 struct {
-	Precision *int64
-	Scale     *uint16
+	Precision int64
+	Scale     uint16
 }
 
 func (d Decimal64) String() string {
@@ -149,7 +149,7 @@ func (d Decimal64) String() string {
 }
 
 type Decimal64Column struct {
-	ColumnVector
+	col
 	Vector []Decimal64
 }
 
@@ -272,7 +272,7 @@ func (dc *DoubleColumn) Rows() int {
 type StringColumn struct {
 	col
 	encoding string
-	Vector []string
+	Vector   []string
 }
 
 func (sc *StringColumn) Rows() int {

@@ -680,8 +680,7 @@ func (s *streamWriter) writeDoubles(values []float64) error {
 func (s *streamWriter) compress(cmpKind pb.CompressionKind, chunkSize uint64) error {
 	switch cmpKind {
 	case pb.CompressionKind_ZLIB:
-		if _, err := compressZlibTo(cmpKind, chunkSize, s.compressedBuf, s.buf);
-			err != nil {
+		if _, err := compressZlibTo(cmpKind, chunkSize, s.compressedBuf, s.buf); err != nil {
 			return errors.Wrap(err, "compress bool present stream error")
 		}
 	default:
