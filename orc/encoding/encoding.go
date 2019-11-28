@@ -297,7 +297,6 @@ type IntRleV2 struct {
 
 // decoding buffer all to u/literals
 func (rle *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (err error) {
-
 		// header from MSB to LSB
 		firstByte, err := in.ReadByte()
 		if err != nil {
@@ -351,7 +350,7 @@ func (rle *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64)
 
 		case Encoding_PATCHED_BASE:
 			// rethink: according to base value is a signed smallest value, patch should always signed?
-			if signed {
+			if !signed {
 				return errors.New("decoding: int rl v2 patch signed setting should not false")
 			}
 
@@ -382,7 +381,7 @@ func (rle *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64)
 				if err != nil {
 					return errors.WithStack(err)
 				}
-				ubase = zigzag(base)
+				ubase = Zigzag(base)
 			} else {
 				ubase, err = binary.ReadUvarint(in)
 				if err != nil {
@@ -397,7 +396,7 @@ func (rle *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64)
 			}
 
 			if signed {
-				values = append(values, zigzag(base+deltaBase))
+				values = append(values, Zigzag(base+deltaBase))
 			} else {
 				if deltaBase >= 0 {
 					values = append(values, ubase+uint64(deltaBase))
@@ -410,7 +409,7 @@ func (rle *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64)
 			for i := 2; i < length; i++ {
 				if width == 0 { //fixed delta
 					if signed {
-						values = append(values, zigzag(base+deltaBase))
+						values = append(values, Zigzag(base+deltaBase))
 					} else {
 						if deltaBase >= 0 {
 							values = append(values, ubase+uint64(deltaBase))
@@ -424,11 +423,11 @@ func (rle *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64)
 						return err
 					}
 					if signed {
-						prev := unZigzag(values[len(values)-1])
+						prev := UnZigzag(values[len(values)-1])
 						if deltaBase >= 0 {
-							values = append(values, zigzag(prev+int64(delta)))
+							values = append(values, Zigzag(prev+int64(delta)))
 						} else {
-							values = append(values, zigzag(prev-int64(delta)))
+							values = append(values, Zigzag(prev-int64(delta)))
 						}
 					} else {
 						prev := values[len(values)-1]
@@ -450,10 +449,6 @@ func (rle *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64)
 }
 
 func (rle *IntRleV2) readPatched( in BufferedReader, firstByte byte, values[]uint64) (err error) {
-	/*var mark int
-	if len(rle.literals) != 0 {
-		mark = len(rle.literals)
-	}*/
 	mark := len(values)
 	header := make([]byte, 4) // 4 byte header
 	_, err = io.ReadFull(in, header[1:4])
@@ -510,7 +505,7 @@ func (rle *IntRleV2) readPatched( in BufferedReader, firstByte byte, values[]uin
 		if err != nil {
 			return err
 		}
-		values = append(values, zigzag(base+int64(delta)))
+		values = append(values, Zigzag(base+int64(delta)))
 	}
 	rle.forgetBits()
 
@@ -533,11 +528,11 @@ func (rle *IntRleV2) readPatched( in BufferedReader, firstByte byte, values[]uin
 		}
 
 		// patchValue should be at largest 63 bits?
-		v := unZigzag(values[mark])
+		v := UnZigzag(values[mark])
 		v -= base // remove added base first
 		v |= int64(patchValue << width)
 		v += base // add base back
-		values[mark] = zigzag(v)
+		values[mark] = Zigzag(v)
 	}
 	rle.forgetBits()
 
@@ -574,7 +569,7 @@ func (rle *IntRleV2) forgetBits() {
 }
 
 // all bits align to msb
-func (rle *intRleV2) writeBits(out *bytes.Buffer, value uint64, bits int) (err error) {
+func (rle *IntRleV2) writeBits(out *bytes.Buffer, value uint64, bits int) (err error) {
 	totalBits := rle.bitsLeft + bits
 	if totalBits > 64 {
 		return errors.New("write bits > 64")
@@ -619,7 +614,7 @@ func (rle *intRleV2) writeBits(out *bytes.Buffer, value uint64, bits int) (err e
 }
 
 // write all literals to buffer
-func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
+func (rle *IntRleV2) writeValues(out *bytes.Buffer) error {
 
 	for idx := 0; idx < rle.len(); {
 		if (rle.len() - idx) <= MIN_REPEAT_SIZE {
@@ -724,7 +719,7 @@ func (rle *intRleV2) writeValues(out *bytes.Buffer) error {
 }
 
 // idx rle literals write start, length write length
-func (rle *intRleV2) writeDirect(out *bytes.Buffer, idx int, length int, widthAlign bool) error {
+func (rle *IntRleV2) writeDirect(out *bytes.Buffer, idx int, length int, widthAlign bool) error {
 	// refactor: reset these two fields
 	rle.bitsLeft = 0
 	rle.lastByte = 0
@@ -883,7 +878,7 @@ type deltaValues struct {
 // for monotonically increasing or decreasing sequences
 // run length should be at least 3
 // todo: fixed delta
-func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
+func (rle *IntRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
 	if idx+2 < rle.len() {
 		if rle.signed {
 			if rle.uliterals[idx] == rle.uliterals[idx+1] { // delta can not be same for first 2
@@ -974,7 +969,7 @@ func (rle *intRleV2) tryDeltaEncoding(idx int, dv *deltaValues) bool {
 }
 
 // direct encoding when constant bit width, length 1 to 512
-func (rle *intRleV2) tryDirectEncoding(idx int) bool {
+func (rle *IntRleV2) tryDirectEncoding(idx int) bool {
 	return false
 }
 
@@ -1069,7 +1064,7 @@ func writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 
 // analyze bit widths, if return encoding Patch then fill the patchValues, else return encoding Direct
 // todo: patch 0
-func (rle *intRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, err error) {
+func (rle *IntRleV2) bitsWidthAnalyze(idx int, pvs *patchedValues) (sub byte, err error) {
 	// toAssure: according to base value is a signed smallest value, patch should always signed?
 	if !rle.signed {
 		return Encoding_DIRECT, nil
@@ -1441,7 +1436,7 @@ func (dec *Ieee754Double) ReadValues(in BufferedReader, values []float64) (err e
 	return
 }
 
-func (enc *ieee754Double) writeValues(out *bytes.Buffer) error {
+func (enc *Ieee754Double) writeValues(out *bytes.Buffer) error {
 	bb := make([]byte, 8)
 	for _, v := range enc.values {
 		binary.BigEndian.PutUint64(bb, math.Float64bits(v))
