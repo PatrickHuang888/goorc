@@ -220,9 +220,9 @@ func (s *stripe) prepare() error {
 				fallthrough
 			case pb.Type_LONG:
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
-					if kind== pb.Stream_DATA {
-						decoder:= &encoding.IntRleV2{}
-						stream= &longSR{r:sr, signed:true, decoder:decoder}
+					if kind == pb.Stream_DATA {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r: sr, signed: true, decoder: decoder}
 					}
 					break
 				}
@@ -235,43 +235,112 @@ func (s *stripe) prepare() error {
 				if columnEncoding != pb.ColumnEncoding_DIRECT {
 					return errors.New("column encoding error")
 				}
-				if kind==pb.Stream_DATA {
-					decoder:= &encoding.Ieee754Double{}
-					stream= &ieeeFloatSR{r:sr, decoder:decoder}
+				if kind == pb.Stream_DATA {
+					decoder := &encoding.Ieee754Double{}
+					stream = &ieeeFloatSR{r: sr, decoder: decoder}
 				}
 
 			case pb.Type_STRING:
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
-					if kind== pb.Stream_DATA {
-						stream= &bytesContentSR{r:sr}
+					if kind == pb.Stream_DATA {
+						stream = &bytesContentSR{r: sr}
 						break
 					}
-					if kind==pb.Stream_LENGTH {
-						decoder:= &encoding.IntRleV2{}
-						stream= &longSR{r:sr, signed:false, decoder:decoder}
+					if kind == pb.Stream_LENGTH {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r: sr, signed: false, decoder: decoder}
 						break
 					}
 				}
 				if columnEncoding == pb.ColumnEncoding_DICTIONARY_V2 {
-					if kind== pb.Stream_DATA {
-						stream= &bytesContentSR{r:sr}
+					if kind == pb.Stream_DATA {
+						stream = &bytesContentSR{r: sr}
 						break
 					}
-					if kind==pb.Stream_LENGTH {
-						decoder:= &encoding.IntRleV2{}
-						stream= &longSR{r:sr, signed:false, decoder:decoder}
+					if kind == pb.Stream_LENGTH {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r: sr, signed: false, decoder: decoder}
 						break
 					}
-					if kind==pb.Stream_DICTIONARY_DATA {
-						stream= &bytesContentSR{r:sr}
+					if kind == pb.Stream_DICTIONARY_DATA {
+						stream = &bytesContentSR{r: sr}
 						break
 					}
 				}
 				return errors.New("column encoding error")
+
+			case pb.Type_BOOLEAN:
+				if columnEncoding!=pb.ColumnEncoding_DIRECT {
+					return errors.New("bool column encoding error")
+				}
+
+				if kind == pb.Stream_DATA {
+					decoder := &encoding.BoolRunLength{}
+					stream = &boolSR{r:sr, decoder:decoder}
+				}
+
+			case pb.Type_BYTE:  // tinyint
+				if columnEncoding!=pb.ColumnEncoding_DIRECT {
+					return errors.New("tinyint column encoding error")
+				}
+
+				if kind == pb.Stream_DATA {
+					decoder := &encoding.ByteRunLength{}
+					stream = &byteSR{r:sr, decoder:decoder}
+				}
+
+			case pb.Type_BINARY:
+				if columnEncoding == pb.ColumnEncoding_DIRECT {
+					// todo:
+					return errors.New("not impl")
+					break
+				}
+				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
+					if kind == pb.Stream_DATA {
+						stream = &bytesContentSR{r:sr}
+						break
+					}
+					if kind == pb.Stream_LENGTH {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r:sr, signed:false, decoder:decoder}
+						break
+					}
+				}
+				return errors.New("binary column encoding error")
+
+			case pb.Type_DECIMAL:
+				if columnEncoding ==  pb.ColumnEncoding_DIRECT {
+					// todo:
+					return errors.New("not impl")
+					break
+				}
+				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
+					if kind == pb.Stream_DATA {
+						decoder := &encoding.Base128VarInt{}
+						// fixme: only int64 var int
+						stream = &int64VarIntSR{r:sr, decoder:decoder}
+						break
+					}
+					if kind == pb.Stream_SECONDARY {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r:sr, signed:false, decoder:decoder}
+						break
+					}
+				}
+				return errors.New("column encoding error")
+
+			case pb.Type_DATE:
+				if columnEncoding == pb.ColumnEncoding_DIRECT {
+					// todo:
+					return errors.New("not impl")
+				}
+				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
+					if kind == pb.Stream_DATA {
+
+					}
+				}
+
 			}
-
-
-
 
 			dataStart += length
 		}
@@ -320,8 +389,6 @@ func (sr *stripe) NextBatch(batch ColumnVector) (next bool, err error) {
 		if encoding == pb.ColumnEncoding_DICTIONARY_V2 {
 			return c.nextStringsDictV2(batch.(*StringColumn))
 		}
-
-		return false, errors.Errorf("column %d type %s encoding %s not impl", c.id, c.schema.Kind.String(), encoding)
 
 	case pb.Type_BOOLEAN:
 		return c.nextBools(batch.(*BoolColumn))
