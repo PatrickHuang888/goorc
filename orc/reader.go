@@ -161,7 +161,7 @@ type column struct {
 	numberOfRows uint64
 	opts         *ReaderOptions
 
-	streams map[pb.Stream_Kind]streamReader
+	streams map[pb.Stream_Kind]stream
 
 	cursor uint64
 }
@@ -270,23 +270,23 @@ func (s *stripe) prepare() error {
 				return errors.New("column encoding error")
 
 			case pb.Type_BOOLEAN:
-				if columnEncoding!=pb.ColumnEncoding_DIRECT {
+				if columnEncoding != pb.ColumnEncoding_DIRECT {
 					return errors.New("bool column encoding error")
 				}
 
 				if kind == pb.Stream_DATA {
 					decoder := &encoding.BoolRunLength{}
-					stream = &boolSR{r:sr, decoder:decoder}
+					stream = &boolSR{r: sr, decoder: decoder}
 				}
 
-			case pb.Type_BYTE:  // tinyint
-				if columnEncoding!=pb.ColumnEncoding_DIRECT {
+			case pb.Type_BYTE: // tinyint
+				if columnEncoding != pb.ColumnEncoding_DIRECT {
 					return errors.New("tinyint column encoding error")
 				}
 
 				if kind == pb.Stream_DATA {
 					decoder := &encoding.ByteRunLength{}
-					stream = &byteSR{r:sr, decoder:decoder}
+					stream = &byteSR{r: sr, decoder: decoder}
 				}
 
 			case pb.Type_BINARY:
@@ -297,19 +297,19 @@ func (s *stripe) prepare() error {
 				}
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
-						stream = &bytesContentSR{r:sr}
+						stream = &bytesContentSR{r: sr}
 						break
 					}
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r:sr, signed:false, decoder:decoder}
+						stream = &longSR{r: sr, signed: false, decoder: decoder}
 						break
 					}
 				}
 				return errors.New("binary column encoding error")
 
 			case pb.Type_DECIMAL:
-				if columnEncoding ==  pb.ColumnEncoding_DIRECT {
+				if columnEncoding == pb.ColumnEncoding_DIRECT {
 					// todo:
 					return errors.New("not impl")
 					break
@@ -318,12 +318,12 @@ func (s *stripe) prepare() error {
 					if kind == pb.Stream_DATA {
 						decoder := &encoding.Base128VarInt{}
 						// fixme: only int64 var int
-						stream = &int64VarIntSR{r:sr, decoder:decoder}
+						stream = &int64VarIntSR{r: sr, decoder: decoder}
 						break
 					}
 					if kind == pb.Stream_SECONDARY {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r:sr, signed:false, decoder:decoder}
+						stream = &longSR{r: sr, signed: false, decoder: decoder}
 						break
 					}
 				}
@@ -333,12 +333,73 @@ func (s *stripe) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT {
 					// todo:
 					return errors.New("not impl")
+					break
 				}
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
-
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r: sr, signed: true, decoder: decoder}
+						break
 					}
 				}
+				return errors.New("column encoding error")
+
+			case pb.Type_TIMESTAMP:
+				if columnEncoding == pb.ColumnEncoding_DIRECT {
+					// todo:
+					return errors.New("not impl")
+					break
+				}
+				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
+					if kind == pb.Stream_DATA {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r: sr, signed: true, decoder: decoder}
+						break
+					}
+					if kind == pb.Stream_SECONDARY {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						break
+					}
+				}
+				return errors.New("column encoding error")
+
+			case pb.Type_STRUCT:
+
+			case pb.Type_LIST:
+				if columnEncoding == pb.ColumnEncoding_DIRECT {
+					// todo:
+					return errors.New("not impl")
+					break
+				}
+				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
+					if kind == pb.Stream_LENGTH {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						break
+					}
+				}
+
+			case pb.Type_MAP:
+				if columnEncoding == pb.ColumnEncoding_DIRECT {
+					// todo:
+					return errors.New("not impl")
+					break
+				}
+				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
+					if kind == pb.Stream_LENGTH {
+						decoder := &encoding.IntRleV2{}
+						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						break
+					}
+				}
+
+			case pb.Type_UNION:
+				if columnEncoding != pb.ColumnEncoding_DIRECT {
+					return errors.New("column encoding error")
+				}
+
+				// fixme: pb.Stream_DIRECT
 
 			}
 
@@ -348,6 +409,8 @@ func (s *stripe) prepare() error {
 	}
 
 	s.columns = columns
+
+	// todo: stream check
 
 	/*for _, v := range crs {
 		v.Print()
