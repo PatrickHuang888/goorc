@@ -165,7 +165,7 @@ func (stripe *stripeWriter) shouldFlush() bool {
 
 // should not change columnVector when write started!
 func (stripe *stripeWriter) write(cv ColumnVector) error {
-	id := cv.ColumnId()
+	id := cv.Id()
 	encoding := stripe.schemas[id].Encoding
 
 	streams := stripe.streams[id]
@@ -176,12 +176,16 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 	present := stripe.streams[id][0]
 	data := stripe.streams[id][1]
 
-	if cv.HasNulls() {
+	if cv.Presents()!=nil {
+		if len(column.presents)!= len(column.Vector) {
+			return errors.New("")
+		}
+
 		if present == nil {
 			present = newPresentStream(id)
 			stripe.streams[id][0] = present
 		}
-		if err := present.writeBools(cv.presents()); err != nil {
+		if err := present.writeBools(cv.Presents()); err != nil {
 			return errors.WithStack(err)
 		}
 	}
@@ -194,9 +198,9 @@ func (stripe *stripeWriter) write(cv ColumnVector) error {
 			stripe.streams[id][1] = data
 		}
 		var vector []bool
-		if column.HasNulls() {
+		if column.presents!=nil {
 			for i, v := range column.Vector {
-				if !column.Nulls[i] {
+				if column.presents[i] {
 					vector = append(vector, v)
 				}
 			}

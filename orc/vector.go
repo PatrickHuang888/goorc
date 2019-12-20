@@ -13,10 +13,9 @@ const (
 
 type ColumnVector interface {
 	T() pb.Type_Kind
-	ColumnId() uint32
+	Id() uint32
 	Rows() int
 	Presents() []bool
-	// todo: Presents and Vector verify, length should be equal if has nulls
 	reset()
 }
 
@@ -28,7 +27,7 @@ type col struct {
 	presents []bool
 }
 
-func (c *col) ColumnId() uint32 {
+func (c col) Id() uint32 {
 	return c.id
 }
 
@@ -50,18 +49,14 @@ func (c *col) ColumnId() uint32 {
 	return false
 }*/
 
-/*func (c *col) presents() []bool {
-	bb := make([]bool, len(c.Nulls))
-	for i, b := range c.Nulls {
-		bb[i] = !b
-	}
-	return bb
-}*/
-
-func (c *col) Presents() []bool {
+func (c col) Presents() []bool {
 	return c.presents
 }
 
+/*func (c *col) Presents() []bool {
+	return c.presents
+}
+*/
 func (c *col) reset() {
 	c.presents = c.presents[:0]
 	/*c.setNulls = false
@@ -74,7 +69,7 @@ type BoolColumn struct {
 	Vector []bool
 }
 
-func (*BoolColumn) T() pb.Type_Kind {
+func (BoolColumn) T() pb.Type_Kind {
 	return pb.Type_BOOLEAN
 }
 
@@ -83,8 +78,8 @@ func (bc *BoolColumn) reset() {
 	bc.col.reset()
 }
 
-func (bc *BoolColumn) Rows() int {
-	return len(bc.Vector)
+func (c BoolColumn) Rows() int {
+	return len(c.Vector)
 }
 
 type TinyIntColumn struct {
@@ -118,8 +113,8 @@ func (lc *LongColumn) Rows() int {
 }
 
 func (lc *LongColumn) reset() {
-	lc.col.reset()
 	lc.Vector = lc.Vector[:0]
+	lc.col.reset()
 }
 
 type BinaryColumn struct {
@@ -258,15 +253,17 @@ type DoubleColumn struct {
 	Vector []float64
 }
 
-func (*DoubleColumn) T() pb.Type_Kind {
+func (DoubleColumn) T() pb.Type_Kind {
 	return pb.Type_DOUBLE
 }
-func (dc *DoubleColumn) reset() {
-	dc.col.reset()
-	dc.Vector = dc.Vector[:0]
+
+func (c *DoubleColumn) reset() {
+	c.col.reset()
+	c.Vector = c.Vector[:0]
 }
-func (dc *DoubleColumn) Rows() int {
-	return len(dc.Vector)
+
+func (c DoubleColumn) Rows() int {
+	return len(c.Vector)
 }
 
 type StringColumn struct {
@@ -275,17 +272,17 @@ type StringColumn struct {
 	Vector   []string
 }
 
-func (sc *StringColumn) Rows() int {
-	return len(sc.Vector)
+func (c StringColumn) Rows() int {
+	return len(c.Vector)
 }
 
-func (*StringColumn) T() pb.Type_Kind {
+func (StringColumn) T() pb.Type_Kind {
 	return pb.Type_STRING
 }
 
-func (sc *StringColumn) reset() {
-	sc.col.reset()
-	sc.Vector = sc.Vector[:0]
+func (c *StringColumn) reset() {
+	c.col.reset()
+	c.Vector = c.Vector[:0]
 }
 
 type StructColumn struct {
@@ -293,39 +290,27 @@ type StructColumn struct {
 	Fields []ColumnVector
 }
 
-func (*StructColumn) T() pb.Type_Kind {
+func (StructColumn) T() pb.Type_Kind {
 	return pb.Type_STRUCT
 }
 
-func (sc *StructColumn) Rows() int {
+/*func (c StructColumn) Rows() int {
 	// fixme:
-	return sc.Fields[0].Rows()
-}
-
-// rethink:
-func (sc *StructColumn) reset() {
-	/*for _, c := range sc.Fields {
-		c.reset()
-	}*/
-}
+	return c.Fields[0].Rows()
+}*/
 
 type ListColumn struct {
 	col
 	Child ColumnVector
 }
 
-func (*ListColumn) T() pb.Type_Kind {
+func (ListColumn) T() pb.Type_Kind {
 	return pb.Type_LIST
 }
 
-func (lc *ListColumn) Rows() int {
+/*func (lc *ListColumn) Rows() int {
 	return lc.Child.Rows()
-}
-
-// rethink:
-func (lc *ListColumn) reset() {
-	lc.Child.reset()
-}
+}*/
 
 // todo:
 type MapColumn struct {

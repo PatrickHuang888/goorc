@@ -87,7 +87,7 @@ func (td *TypeDescription) CreateWriterBatch(opts *WriterOptions) (ColumnVector,
 func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bool) (ColumnVector, error) {
 	switch td.Kind {
 	case Type_BOOLEAN:
-		c := &BoolColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &BoolColumn{col:col{Id:td.Id}}
 		if createVector {
 			c.Vector = make([]bool, rowSize)
 		}

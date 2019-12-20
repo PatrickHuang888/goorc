@@ -208,7 +208,7 @@ func (s *stripe) prepare() error {
 			sr := &sr{start: dataStart, length: length, kind: kind, buf: buf, f: s.f, opts: s.opts}
 
 			if kind== pb.Stream_PRESENT {
-				decoder := &encoding.BoolRunLength{}
+				decoder := &encoding.ByteRunLength{}
 				stream = &boolSR{r: sr, decoder: decoder}
 			}
 
@@ -222,7 +222,7 @@ func (s *stripe) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: true, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 					}
 					break
 				}
@@ -248,7 +248,7 @@ func (s *stripe) prepare() error {
 					}
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
@@ -259,7 +259,7 @@ func (s *stripe) prepare() error {
 					}
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 					if kind == pb.Stream_DICTIONARY_DATA {
@@ -275,7 +275,7 @@ func (s *stripe) prepare() error {
 				}
 
 				if kind == pb.Stream_DATA {
-					decoder := &encoding.BoolRunLength{}
+					decoder := &encoding.ByteRunLength{}
 					stream = &boolSR{r: sr, decoder: decoder}
 				}
 
@@ -302,7 +302,7 @@ func (s *stripe) prepare() error {
 					}
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
@@ -323,7 +323,7 @@ func (s *stripe) prepare() error {
 					}
 					if kind == pb.Stream_SECONDARY {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
@@ -338,7 +338,7 @@ func (s *stripe) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: true, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
@@ -353,12 +353,12 @@ func (s *stripe) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: true, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 					if kind == pb.Stream_SECONDARY {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
@@ -375,7 +375,7 @@ func (s *stripe) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
@@ -389,7 +389,7 @@ func (s *stripe) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, signed: false, decoder: decoder}
+						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
@@ -422,10 +422,10 @@ func (s *stripe) prepare() error {
 // a stripe is typically  ~200MB
 func (sr *stripe) NextBatch(batch ColumnVector) (next bool, err error) {
 
-	c := sr.columns[batch.ColumnId()]
-	log.Debugf("column: %s reading", c.String())
-
 	batch.reset()
+
+	c := sr.columns[batch.Id()]
+	log.Debugf("batch: %s reading", c.String())
 
 	encoding := c.encoding.GetKind()
 	switch c.schema.Kind {
@@ -510,8 +510,8 @@ func (sr *stripe) NextBatch(batch ColumnVector) (next bool, err error) {
 			if err := columnReader.readLength(); err != nil {
 				return false, errors.WithStack(err)
 			}
-			column := batch.(*ListColumn)
-			next, err := sr.NextBatch(column.Child)
+			batch := batch.(*ListColumn)
+			next, err := sr.NextBatch(batch.Child)
 			if err != nil {
 				return false, errors.WithStack(err)
 			}
@@ -870,9 +870,9 @@ type sr struct {
 	f *os.File
 }
 
-func (stream *sr) String() string {
-	return fmt.Sprintf("start %d, length %d, kind %s, already read %d", stream.start, stream.length,
-		stream.kind.String(), stream.readLength)
+func (r sr) String() string {
+	return fmt.Sprintf("start %d, length %d, kind %r, already read %d", r.start, r.length,
+		r.kind.String(), r.readLength)
 }
 
 type byteSR struct {
@@ -889,7 +889,7 @@ func (s *byteSR) next() (v byte, err error) {
 		s.values = s.values[:0]
 		s.consumed = 0
 
-		if err = s.decoder.ReadValues(s.r, s.values); err != nil {
+		if s.values, err = s.decoder.ReadValues(s.r, s.values); err != nil {
 			return 0, err
 		}
 	}
@@ -953,29 +953,15 @@ func (s *bytesContentSR) getAll(lengthAll []uint64) (vs [][]byte, err error) {
 type ieeeFloatSR struct {
 	r *sr
 
-	values []float64
-	pos    int
-
 	decoder *encoding.Ieee754Double
 }
 
 func (s *ieeeFloatSR) next() (v float64, err error) {
-	if s.pos >= len(s.values) {
-		s.pos = 0
-		s.values = s.values[:0]
-
-		if err = s.decoder.ReadValues(s.r, s.values); err != nil {
-			return 0, err
-		}
-	}
-
-	v = s.values[s.pos]
-	s.pos++
-	return
+		return s.decoder.ReadValue(s.r)
 }
 
 func (s *ieeeFloatSR) finished() bool {
-	return s.r.readFinished() && (s.pos == len(s.values))
+	return s.r.readFinished()
 }
 
 type int64VarIntSR struct {
@@ -1009,7 +995,6 @@ func (s *int64VarIntSR) finished() bool {
 type longSR struct {
 	r *sr
 
-	signed bool
 	values []uint64
 	pos    int
 
@@ -1017,9 +1002,6 @@ type longSR struct {
 }
 
 func (s *longSR) nextInt() (v int64, err error) {
-	if !s.signed {
-		return 0, errors.New("signed error")
-	}
 	x, err := s.nextUInt()
 	if err != nil {
 		return
@@ -1033,7 +1015,7 @@ func (s *longSR) nextUInt() (v uint64, err error) {
 		s.pos = 0
 		s.values = s.values[:0]
 
-		if err = s.decoder.ReadValues(s.r, s.signed, s.values); err != nil {
+		if s.values, err = s.decoder.ReadValues(s.r, false, s.values); err != nil {
 			return
 		}
 	}
@@ -1046,7 +1028,7 @@ func (s *longSR) nextUInt() (v uint64, err error) {
 // for small data like dict index, ignore s.signed
 func (s *longSR) getAllUInts() (vs []uint64, err error) {
 	for !s.r.readFinished() {
-		if err = s.decoder.ReadValues(s.r, false, vs); err != nil {
+		if s.values, err = s.decoder.ReadValues(s.r, false, s.values); err != nil {
 			return
 		}
 	}
@@ -1064,7 +1046,7 @@ type boolSR struct {
 	pos     int
 	bytePos int
 
-	decoder *encoding.BoolRunLength
+	decoder *encoding.ByteRunLength
 }
 
 func (s *boolSR) next() (v bool, err error) {
@@ -1072,7 +1054,7 @@ func (s *boolSR) next() (v bool, err error) {
 		s.pos = 0
 		s.values = s.values[:0]
 
-		if err=s.decoder.ReadValues(s.r, s.values);err!=nil {
+		if s.values, err=s.decoder.ReadValues(s.r, s.values);err!=nil {
 			return
 		}
 	}
