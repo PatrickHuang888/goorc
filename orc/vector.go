@@ -3,33 +3,35 @@ package orc
 import (
 	"fmt"
 	"time"
-
-	"github.com/PatrickHuang888/goorc/pb/pb"
 )
 
 const (
 	DEFAULT_ROW_SIZE = 1024 * 10
 )
 
-type ColumnVector interface {
+/*type ColumnVector interface {
 	T() pb.Type_Kind
 	Id() uint32
 	Rows() int
 	Presents() []bool
 	reset()
-}
+}*/
 
-type col struct {
-	id uint32
+type ColumnVector struct {
+	Id uint32
+	//T pb.Type_Kind
 	//nullable bool
 	//setNulls bool
 	//hasNulls bool
-	presents []bool
+	Size int
+
+	Presents []bool
+	Vector interface{}
 }
 
-func (c col) Id() uint32 {
+/*func (c col) Id() uint32 {
 	return c.id
-}
+}*/
 
 // call this function will not reflect Nulls change
 /*func (c *col) HasNulls() bool {
@@ -49,22 +51,22 @@ func (c col) Id() uint32 {
 	return false
 }*/
 
-func (c col) Presents() []bool {
+/*func (c col) Presents() []bool {
 	return c.presents
-}
+}*/
 
 /*func (c *col) Presents() []bool {
 	return c.presents
 }
 */
-func (c *col) reset() {
+/*func (c *col) reset() {
 	c.presents = c.presents[:0]
-	/*c.setNulls = false
-	c.hasNulls = false*/
+	c.setNulls = false
+	c.hasNulls = false
 	//c.nullable= false
-}
+}*/
 
-type BoolColumn struct {
+/*type BoolColumn struct {
 	col
 	Vector []bool
 }
@@ -98,9 +100,9 @@ func (tic *TinyIntColumn) Rows() int {
 	return len(tic.Vector)
 }
 
-// nullable int column vector for all integer types
+// nullable int batch vector for all integer types
 type LongColumn struct {
-	col
+	ColumnVector
 	Vector []int64
 }
 
@@ -131,7 +133,7 @@ func (bc *BinaryColumn) reset() {
 }
 func (bc *BinaryColumn) Rows() int {
 	return len(bc.Vector)
-}
+}*/
 
 // hive 0.13 support 38 digits
 type Decimal64 struct {
@@ -143,7 +145,7 @@ func (d Decimal64) String() string {
 	return fmt.Sprintf("precision %d, scale %d", d.Precision, d.Scale)
 }
 
-type Decimal64Column struct {
+/*type Decimal64Column struct {
 	col
 	Vector []Decimal64
 }
@@ -156,7 +158,7 @@ func (dc *Decimal64Column) Rows() int {
 }
 func (dc *Decimal64Column) reset() {
 	dc.Vector = dc.Vector[:0]
-}
+}*/
 
 type Date time.Time
 
@@ -180,7 +182,7 @@ func toDays(d Date) int64 {
 	return int64(s.Hours() / 24)
 }
 
-type DateColumn struct {
+/*type DateColumn struct {
 	col
 	Vector []Date
 }
@@ -196,17 +198,17 @@ func (dc *DateColumn) Rows() int {
 func (dc *DateColumn) reset() {
 	dc.col.reset()
 	dc.Vector = dc.Vector[:0]
-}
+}*/
 
 // todo: local timezone
 type Timestamp struct {
 	Seconds int64
 	Nanos   uint32
 }
-type TimestampColumn struct {
+/*type TimestampColumn struct {
 	col
 	Vector []Timestamp
-}
+}*/
 
 // return seconds from 2015, Jan, 1 and nano seconds
 func GetTime(ts Timestamp) (t time.Time) {
@@ -219,7 +221,7 @@ func GetTimestamp(t time.Time) Timestamp {
 	return Timestamp{t.Unix() - base, uint32(t.Nanosecond())}
 }
 
-func (*TimestampColumn) T() pb.Type_Kind {
+/*func (*TimestampColumn) T() pb.Type_Kind {
 	return pb.Type_TIMESTAMP
 }
 
@@ -230,9 +232,9 @@ func (tc *TimestampColumn) Rows() int {
 func (tc *TimestampColumn) reset() {
 	tc.col.reset()
 	tc.Vector = tc.Vector[:0]
-}
+}*/
 
-type FloatColumn struct {
+/*type FloatColumn struct {
 	col
 	Vector []float32
 }
@@ -283,36 +285,36 @@ func (StringColumn) T() pb.Type_Kind {
 func (c *StringColumn) reset() {
 	c.col.reset()
 	c.Vector = c.Vector[:0]
-}
+}*/
 
-type StructColumn struct {
-	col
+/*type StructColumn struct {
+	ColumnVector
 	Fields []ColumnVector
 }
 
 func (StructColumn) T() pb.Type_Kind {
 	return pb.Type_STRUCT
-}
+}*/
 
 /*func (c StructColumn) Rows() int {
 	// fixme:
 	return c.Fields[0].Rows()
 }*/
 
-type ListColumn struct {
+/*type ListColumn struct {
 	col
 	Child ColumnVector
 }
 
 func (ListColumn) T() pb.Type_Kind {
 	return pb.Type_LIST
-}
+}*/
 
 /*func (lc *ListColumn) Rows() int {
 	return lc.Child.Rows()
 }*/
 
-// todo:
+/*// todo:
 type MapColumn struct {
 	col
 	vector map[ColumnVector]ColumnVector
@@ -331,4 +333,4 @@ type UnionColumn struct {
 
 func (*UnionColumn) T() pb.Type_Kind {
 	return pb.Type_UNION
-}
+}*/

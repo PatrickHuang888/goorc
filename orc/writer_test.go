@@ -23,11 +23,6 @@ func TestDecimalWriter(t *testing.T) {
 		t.Fatalf("create writer error %+v", err)
 	}
 
-	batch, err := schema.CreateWriterBatch(wopts)
-	if err != nil {
-		t.Fatalf("got error when create row batch %v+", err)
-	}
-
 	vector := make([]Decimal64, 19)
 	vector[0] = Decimal64{1, 3}
 	for i := 1; i < 18; i++ {
@@ -35,8 +30,8 @@ func TestDecimalWriter(t *testing.T) {
 	}
 	vector[18] = Decimal64{-2000, 3}
 
-	column := batch.(*StructColumn).Fields[0].(*Decimal64Column)
-	column.Vector = vector
+	batch := schema.CreateWriterBatch(wopts)
+	batch.Vector = vector
 
 	if err := writer.Write(batch); err != nil {
 		t.Fatalf("%+v", err)
@@ -57,20 +52,17 @@ func TestDecimalWriter(t *testing.T) {
 	}
 
 	for _, stripe := range stripes {
-		batch, err := schema.CreateReaderBatch(ropts)
-		if err != nil {
-			t.Fatalf("create row batch error %+v", err)
-		}
+		batch := schema.CreateReaderBatch(ropts)
 
-		_, err = stripe.NextBatch(batch)
+		err = stripe.NextBatch(batch)
 		if err != nil {
 			t.Fatalf("%+v", err)
 		}
 
-		assert.Equal(t, 19, batch.Rows())
-		x := batch.(*StructColumn).Fields[0].(*Decimal64Column)
-		assert.Equal(t, 3, int(x.Vector[0].Scale))
-		assert.Equal(t, 1, int(x.Vector[0].Precision), "row 0")
+		values:= batch.Vector.([]*ColumnVector)[0].([]Decimal64)
+		assert.Equal(t, 19, len(values))
+		assert.Equal(t, 3, int(values[0].Scale))
+		assert.Equal(t, 1, int(values[0].Precision), "row 0")
 		for i := 1; i < 18; i++ {
 			assert.Equal(t, 10*int64(i-1), x.Vector[i].Precision)
 		}

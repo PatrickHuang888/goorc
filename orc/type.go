@@ -2,16 +2,18 @@ package orc
 
 import (
 	"fmt"
-	. "github.com/PatrickHuang888/goorc/pb/pb"
+	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 )
 
 type TypeDescription struct {
 	Id            uint32
-	Kind          Type_Kind
+	Kind          pb.Type_Kind
 	ChildrenNames []string
 	Children      []*TypeDescription
-	Encoding      ColumnEncoding_Kind
+	Encoding      pb.ColumnEncoding_Kind
+
+	HasNulls bool  // for writing
 }
 
 func (td *TypeDescription) Print() {
@@ -75,26 +77,33 @@ func schemasToTypes(schemas []*TypeDescription) []*Type {
 	return t
 }
 
-func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (ColumnVector, error) {
-	return td.newColumn(opts.RowSize, false, true)
+func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *ColumnVector) {
+	return &ColumnVector{Id:td.Id, Size:opts.RowSize}
 }
 
 // vector provided by writer
-func (td *TypeDescription) CreateWriterBatch(opts *WriterOptions) (ColumnVector, error) {
-	return td.newColumn(opts.RowSize, false, false)
+func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) (batch *ColumnVector) {
+	var vector []*ColumnVector
+	if td.Kind == pb.Type_STRUCT {
+		for _, v := range td.Children {
+			vector= append(vector, v.CreateWriterBatch(opts))
+		}
+	}
+	return &ColumnVector{Id:td.Id, Size:opts.RowSize}
 }
 
-func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bool) (ColumnVector, error) {
+/*func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bool) (batch *ColumnVector, err error) {
+	batch = &ColumnVector{Id:td.Id, Size:rowSize}
 	switch td.Kind {
 	case Type_BOOLEAN:
-		c := &BoolColumn{col:col{Id:td.Id}}
+		c := &Column{col:col{Id:td.Id}}
 		if createVector {
 			c.Vector = make([]bool, rowSize)
 		}
 		return c, nil
 
 	case Type_BYTE:
-		c := &TinyIntColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &TinyIntColumn{batch: batch{id: td.Id, nullable: nullable}}
 		if createVector {
 			c.Vector = make([]byte, rowSize)
 		}
@@ -105,7 +114,7 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 	case Type_INT:
 		fallthrough
 	case Type_LONG:
-		c := &LongColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &LongColumn{batch: batch{id: td.Id, nullable: nullable}}
 		if createVector {
 			c.Vector = make([]int64, rowSize)
 		}
@@ -115,35 +124,35 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 		// todo:
 
 	case Type_DOUBLE:
-		c := &DoubleColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &DoubleColumn{batch: batch{id: td.Id, nullable: nullable}}
 		if createVector {
 			c.Vector = make([]float64, rowSize)
 		}
 		return c, nil
 
 	case Type_DECIMAL:
-		c := &Decimal64Column{column: column{id: td.Id, nullable: false}}
+		c := &Decimal64Column{batch: batch{id: td.Id, nullable: false}}
 		if createVector {
 			c.Vector = make([]Decimal64, rowSize)
 		}
 		return c, nil
 
 	case Type_DATE:
-		c := &DateColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &DateColumn{batch: batch{id: td.Id, nullable: nullable}}
 		if createVector {
 			c.Vector = make([]Date, rowSize)
 		}
 		return c, nil
 
 	case Type_TIMESTAMP:
-		c := &TimestampColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &TimestampColumn{batch: batch{id: td.Id, nullable: nullable}}
 		if createVector {
 			c.Vector = make([]Timestamp, rowSize)
 		}
 		return c, nil
 
 	case Type_BINARY:
-		c := &BinaryColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &BinaryColumn{batch: batch{id: td.Id, nullable: nullable}}
 		if createVector {
 			c.Vector = make([][]byte, rowSize)
 		}
@@ -154,7 +163,7 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 	case Type_CHAR:
 		fallthrough
 	case Type_VARCHAR:
-		c := &StringColumn{column: column{id: td.Id, nullable: nullable}}
+		c := &StringColumn{batch: batch{id: td.Id, nullable: nullable}}
 		if createVector {
 			c.Vector = make([]string, rowSize)
 		}
@@ -169,7 +178,7 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 				return nil, errors.WithStack(err)
 			}
 		}
-		c := &StructColumn{column: column{id: td.Id, nullable: nullable}, Fields: f}
+		c := &StructColumn{batch: batch{id: td.Id, nullable: nullable}, Fields: f}
 		return c, nil
 
 	case Type_UNION:
@@ -182,7 +191,7 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-		lc := &ListColumn{column: column{id: td.Id, nullable: nullable}, Child: c}
+		lc := &ListColumn{batch: batch{id: td.Id, nullable: nullable}, Child: c}
 		return lc, nil
 
 	case Type_MAP:
@@ -194,3 +203,4 @@ func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bo
 	}
 	return nil, nil
 }
+*/

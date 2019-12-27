@@ -28,11 +28,11 @@ const (
 
 /*type Decoder interface {
 	ReadValues(in BufferedReader, values interface{}) error
-}
+}*/
 
 type Encoder interface {
-	WriteValues(values interface{}, out *bytes.Buffer) error
-}*/
+	WriteValues(out *bytes.Buffer, values interface{}) error
+}
 
 /*type decoder struct {
 	consumedIndex int
@@ -78,7 +78,8 @@ func (d *ByteRunLength) ReadValues(in BufferedReader, values []byte) ([]byte, er
 	return values, nil
 }
 
-func (e *ByteRunLength) WriteValues(out *bytes.Buffer, values []byte) error {
+func (e *ByteRunLength) WriteValues(out *bytes.Buffer, v interface{}) error {
+	values := v.([]byte)
 
 	for i := 0; i < len(values); {
 		l := len(values) - i
@@ -142,7 +143,8 @@ type BoolRunLength struct {
 	return
 }*/
 
-func (e *BoolRunLength) WriteValues(values []bool, out *bytes.Buffer) (err error) {
+func (e *BoolRunLength) WriteValues(out *bytes.Buffer, vs interface{}) error {
+	values := vs.([]bool)
 	for i := 0; i < len(values); {
 		var b byte
 		for j := 0; j <= 7 && (i < len(values)); j++ {
@@ -151,11 +153,11 @@ func (e *BoolRunLength) WriteValues(values []bool, out *bytes.Buffer) (err error
 			}
 			i++
 		}
-		if err = out.WriteByte(b); err != nil {
+		if err := out.WriteByte(b); err != nil {
 			return errors.WithStack(err)
 		}
 	}
-	return
+	return nil
 }
 
 /*type intRunLengthV1 struct {
@@ -259,41 +261,38 @@ func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
 }*/
 
 // string contents, decoding need length decoder
-/*type BytesContent struct {
-	decoder
-	content       [][]byte // utf-8 bytes
-	lengthDecoder Decoder
-	pos           int
+type BytesContent struct {
+	/*	decoder
+		content       [][]byte // utf-8 bytes
+		lengthDecoder Decoder
+		pos           int*/
 }
 
-
 // decode bytes, but should have extracted length stream first by rle v2 as length field
-func (bd *BytesContent) ReadValues(in BufferedReader, values []byte) (err error) {
+/*func (bd *BytesContent) ReadValues(in BufferedReader, values []byte) (err error) {
 	if _, err= in.Read(values);err!=nil {
 		return errors.WithStack(err)
 	}
 	return nil
-}
-
-func ()  {
-
-}
-
+}*/
 
 // write out content do not base length field, just base on len of content
-func (bd *bytesContent) WriteValues(out *bytes.Buffer) error {
-	for _, c := range bd.content {
-		if _, err := out.Write(c); err != nil {
+func (e *BytesContent) WriteValues(out *bytes.Buffer, vs interface{}) error {
+	values := vs.([][]byte)
+	for _, v := range values {
+		if _, err := out.Write(v); err != nil {
 			return errors.WithStack(err)
 		}
 	}
 	return nil
-}*/
+}
 
 // int run length encoding v2
 type IntRleV2 struct {
 	lastByte byte // different align when using read/writer, used in r/w
 	bitsLeft int  // used in r/w
+
+	Signed bool // for encoder
 }
 
 // decoding buffer all to u/literals
@@ -348,7 +347,6 @@ func (d *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (
 			}
 			values = append(values, v)
 		}
-
 
 	case Encoding_PATCHED_BASE:
 		// rethink: according to base value is a signed smallest value, patch should always signed?
@@ -453,7 +451,7 @@ func (d *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (
 func (d *IntRleV2) readPatched(in BufferedReader, firstByte byte, values []uint64) ([]uint64, error) {
 	mark := len(values)
 	header := make([]byte, 4) // 4 byte header
-	if _, err := io.ReadFull(in, header[1:4]); err!=nil {
+	if _, err := io.ReadFull(in, header[1:4]); err != nil {
 		return values, errors.WithStack(err)
 	}
 	header[0] = firstByte
@@ -614,7 +612,12 @@ func (e *IntRleV2) writeBits(value uint64, bits int, out *bytes.Buffer) (err err
 	return
 }
 
-func (e *IntRleV2) WriteValues(out *bytes.Buffer,  signed bool, values []uint64) (err error) {
+func (e *IntRleV2) WriteValues(out *bytes.Buffer, vs interface{}) error {
+	values := vs.([]uint64)
+	return e.write(out, values)
+}
+
+func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 	if len(values) <= MIN_REPEAT_SIZE {
 		return e.writeDirect(out, true, values)
 	}
@@ -628,7 +631,7 @@ func (e *IntRleV2) WriteValues(out *bytes.Buffer,  signed bool, values []uint64)
 			if repeat <= 10 {
 				//e.sub = Encoding_SHORT_REPEAT
 				var v uint64
-				if signed {
+				if e.Signed {
 					log.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
 						repeat, UnZigzag(values[i]), i)
 				} else {
@@ -647,7 +650,7 @@ func (e *IntRleV2) WriteValues(out *bytes.Buffer,  signed bool, values []uint64)
 			//e.sub = Encoding_DELTA
 			b := make([]byte, 8)
 			var n int
-			if signed {
+			if e.Signed {
 				n = binary.PutVarint(b, UnZigzag(values[i]))
 			} else {
 				n = binary.PutUvarint(b, values[i])
@@ -662,10 +665,10 @@ func (e *IntRleV2) WriteValues(out *bytes.Buffer,  signed bool, values []uint64)
 
 		// delta, need width should be stable?
 		dv := &deltaValues{}
-		if e.tryDeltaEncoding(values[i:], signed, dv) {
+		if e.tryDeltaEncoding(values[i:], dv) {
 			b := make([]byte, 8)
 			var n int
-			if signed {
+			if e.Signed {
 				n = binary.PutVarint(b, UnZigzag(values[i]))
 			} else {
 				n = binary.PutUvarint(b, values[i])
@@ -679,7 +682,7 @@ func (e *IntRleV2) WriteValues(out *bytes.Buffer,  signed bool, values []uint64)
 
 		var sub byte
 		var pvs patchedValues
-		if signed {
+		if e.Signed {
 			// try patch
 			sub, err = bitsWidthAnalyze(values[i:], &pvs)
 			if err != nil {
@@ -724,7 +727,7 @@ func (e *IntRleV2) WriteValues(out *bytes.Buffer,  signed bool, values []uint64)
 	return
 }
 
-func (e *IntRleV2) writeDirect(out *bytes.Buffer,  widthAlign bool, values []uint64) error {
+func (e *IntRleV2) writeDirect(out *bytes.Buffer, widthAlign bool, values []uint64) error {
 	//e.forgetBits()
 
 	header := make([]byte, 2)
@@ -781,7 +784,7 @@ type deltaValues struct {
 
 // for monotonically increasing or decreasing sequences
 // run length should be at least 3
-func (e *IntRleV2) tryDeltaEncoding(values []uint64, signed bool, dv *deltaValues) bool {
+func (e *IntRleV2) tryDeltaEncoding(values []uint64, dv *deltaValues) bool {
 	if len(values) <= 2 {
 		return false
 	}
@@ -790,7 +793,7 @@ func (e *IntRleV2) tryDeltaEncoding(values []uint64, signed bool, dv *deltaValue
 		return false
 	}
 
-	if signed {
+	if e.Signed {
 		dv.base = UnZigzag(values[1]) - UnZigzag(values[0])
 
 		v2 := UnZigzag(values[2])
@@ -834,7 +837,7 @@ func (e *IntRleV2) tryDeltaEncoding(values []uint64, signed bool, dv *deltaValue
 	dv.length = 3
 
 	for i := 3; i < len(values) && dv.length < 512; i++ {
-		if signed {
+		if e.Signed {
 			vi := UnZigzag(values[i])
 			vi_1 := UnZigzag(values[i-1])
 			if dv.base >= 0 {
@@ -1333,7 +1336,8 @@ func (e *IntRleV2) writeShortRepeat(count uint16, x uint64, out *bytes.Buffer) e
 type Base128VarInt struct {
 }
 
-func (e *Base128VarInt) WriteValues(values []int64, out *bytes.Buffer) error {
+func (e *Base128VarInt) WriteValues(out *bytes.Buffer, vs interface{}) error {
+	values := vs.([]int64)
 	bb := make([]byte, 10)
 	for _, v := range values {
 		c := binary.PutVarint(bb, v)
@@ -1367,7 +1371,8 @@ func (d *Ieee754Double) ReadValue(in BufferedReader) (float64, error) {
 	return v, nil
 }
 
-func (e *Ieee754Double) WriteValues(out *bytes.Buffer, values []float64) error {
+func (e *Ieee754Double) WriteValues(out *bytes.Buffer, vs interface{}) error {
+	values := vs.([]float64)
 	bb := make([]byte, 8)
 	for _, v := range values {
 		binary.BigEndian.PutUint64(bb, math.Float64bits(v))
