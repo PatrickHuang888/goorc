@@ -2,6 +2,7 @@ package orc
 
 import (
 	"fmt"
+
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 )
@@ -50,23 +51,23 @@ func walkSchema(schemas *[]*TypeDescription, node *TypeDescription, id uint32) e
 	node.Id = id
 	*schemas = append(*schemas, node)
 
-	if node.Kind == Type_STRUCT || node.Kind == Type_LIST {
+	if node.Kind == pb.Type_STRUCT || node.Kind == pb.Type_LIST {
 		for _, td := range node.Children {
 			id++
 			if err := walkSchema(schemas, td, id); err != nil {
 				return errors.WithStack(err)
 			}
 		}
-	} else if node.Kind == Type_UNION || node.Kind == Type_MAP {
+	} else if node.Kind == pb.Type_UNION || node.Kind == pb.Type_MAP {
 		return errors.New("type union or map no impl")
 	}
 	return nil
 }
 
-func schemasToTypes(schemas []*TypeDescription) []*Type {
-	t := make([]*Type, len(schemas))
+func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
+	t := make([]*pb.Type, len(schemas))
 	for i, v := range schemas {
-		t[i] = &Type{Subtypes: make([]uint32, len(v.Children)),
+		t[i] = &pb.Type{Subtypes: make([]uint32, len(v.Children)),
 			FieldNames: make([]string, len(v.ChildrenNames))}
 		t[i].Kind = &v.Kind
 		copy(t[i].FieldNames, v.ChildrenNames)
@@ -78,6 +79,13 @@ func schemasToTypes(schemas []*TypeDescription) []*Type {
 }
 
 func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *ColumnVector) {
+	var vector []*ColumnVector
+	if td.Kind == pb.Type_STRUCT {
+		for _, v := range td.Children {
+			vector= append(vector, v.CreateReaderBatch(opts))
+		}
+	}
+
 	return &ColumnVector{Id:td.Id, Size:opts.RowSize}
 }
 

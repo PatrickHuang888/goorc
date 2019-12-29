@@ -1,11 +1,12 @@
 package orc
 
 import (
-	"github.com/PatrickHuang888/goorc/pb/pb"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/stretchr/testify/assert"
 )
 
 var workDir = os.TempDir() + string(os.PathSeparator)
@@ -31,7 +32,7 @@ func TestDecimalWriter(t *testing.T) {
 	vector[18] = Decimal64{-2000, 3}
 
 	batch := schema.CreateWriterBatch(wopts)
-	batch.Vector = vector
+	batch.Vector.([]*ColumnVector)[0].Vector = vector
 
 	if err := writer.Write(batch); err != nil {
 		t.Fatalf("%+v", err)
@@ -51,24 +52,21 @@ func TestDecimalWriter(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	for _, stripe := range stripes {
-		batch := schema.CreateReaderBatch(ropts)
+	rbatch := schema.CreateReaderBatch(ropts)
 
-		err = stripe.NextBatch(batch)
-		if err != nil {
-			t.Fatalf("%+v", err)
-		}
-
-		values:= batch.Vector.([]*ColumnVector)[0].([]Decimal64)
-		assert.Equal(t, 19, len(values))
-		assert.Equal(t, 3, int(values[0].Scale))
-		assert.Equal(t, 1, int(values[0].Precision), "row 0")
-		for i := 1; i < 18; i++ {
-			assert.Equal(t, 10*int64(i-1), x.Vector[i].Precision)
-		}
-
-		assert.Equal(t, -2000, int(x.Vector[18].Precision))
+	err = stripes[0].NextBatch(rbatch)
+	if err != nil {
+		t.Fatalf("%+v", err)
 	}
+
+	values := batch.Vector.([]*ColumnVector)[0].Vector.([]Decimal64)
+	assert.Equal(t, 19, len(values))
+	assert.Equal(t, 3, int(values[0].Scale))
+	assert.Equal(t, 1, int(values[0].Precision), "row 0")
+	for i := 1; i < 18; i++ {
+		assert.Equal(t, 10*int64(i-1), values[i].Precision)
+	}
+	assert.Equal(t, -2000, int(values[18].Precision))
 
 	reader.Close()
 }

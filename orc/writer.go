@@ -3,12 +3,14 @@ package orc
 import (
 	"bytes"
 	"compress/flate"
-	"github.com/PatrickHuang888/goorc/pb/pb"
+	"os"
+
 	"github.com/gogo/protobuf/proto"
+	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/pkg/errors"
+
 	log "github.com/sirupsen/logrus"
-	"os"
 )
 
 const (
