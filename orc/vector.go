@@ -100,7 +100,7 @@ func (tic *TinyIntColumn) Rows() int {
 	return len(tic.Vector)
 }
 
-// nullable int batch vector for all integer types
+// nullable int column vector for all integer types
 type LongColumn struct {
 	ColumnVector
 	Vector []int64

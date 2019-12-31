@@ -25,8 +25,8 @@ func TestByteRunLength(t *testing.T) {
 	}
 
 	assert.Equal(t, 100, len(values))
-	assert.Equal(t, byte(0), values)
-	assert.Equal(t, byte(0), values)
+	assert.Equal(t, byte(0), values[0])
+	assert.Equal(t, byte(0), values[99])
 
 	values=values[:0]
 	t2 := bytes.NewBuffer([]byte{0xfe, 0x44, 0x45})
@@ -155,14 +155,14 @@ func TestDouble(test *testing.T) {
 func TestIntRunLengthV2_Delta(t *testing.T) {
 	var err error
 	irl := &IntRleV2{}
+	irl.Signed = false
 
-	signed := false
 	uvs := []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
 	bs := []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}
 	var uvalues []uint64
 	buf := bytes.NewBuffer(bs)
 
-	uvalues, err = irl.ReadValues(buf, signed, uvalues)
+	uvalues, err = irl.ReadValues(buf, uvalues)
 	if err!=nil {
 		t.Fatal(err)
 	}
@@ -170,25 +170,25 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	assert.EqualValues(t, uvs, uvalues)
 
 	buf.Reset()
-	err = irl.WriteValues(buf, signed, uvs)
+	err = irl.WriteValues(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, buf.Bytes())
 
 
 	vs := []int64{-2, -3, -5, -7, -11, -13, -17, -19, -23, -29}
-	signed = true
+	irl.Signed = true
 	uvs= uvs[:0]
 	for _, v := range vs{
 		uvs= append(uvs, Zigzag(v))
 	}
 
 	buf.Reset()
-	err = irl.WriteValues(buf, signed, uvs)
+	err = irl.WriteValues(buf, uvs)
 	assert.Nil(t, err)
 
 	var values []int64
 	uvs= uvs[:0]
-	uvs, err = irl.ReadValues(buf, signed, uvs)
+	uvs, err = irl.ReadValues(buf, uvs)
 	for _, v :=range uvs {
 		values= append(values, UnZigzag(v))
 	}
@@ -197,18 +197,18 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 
 	// fixed delta 0
 	vs = []int64{-2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2}
-	signed = true
+	irl.Signed = true
 
 	uvs= uvs[:0]
 	for _, v := range vs {
 		uvs= append(uvs, Zigzag(v))
 	}
 	buf.Reset()
-	err = irl.WriteValues(buf, signed, uvs)
+	err = irl.WriteValues(buf, uvs)
 	assert.Nil(t, err)
 
 	uvs= uvs[:0]
-	uvs, err = irl.ReadValues(buf, signed, uvs)
+	uvs, err = irl.ReadValues(buf, uvs)
 	assert.Nil(t, err)
 	values= values[:0]
 	for _, v := range uvs {
@@ -221,15 +221,15 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		uvs = append(uvs, uint64(i))
 	}
-	signed = false
+	irl.Signed = false
 
 	buf.Reset()
-	err = irl.WriteValues(buf, signed, uvs)
+	err = irl.WriteValues(buf, uvs)
 	assert.Nil(t, err)
 
 	uvs= uvs[:0]
 	for buf.Len()!=0 {
-		uvs, err = irl.ReadValues(buf, signed, uvs)
+		uvs, err = irl.ReadValues(buf,  uvs)
 		assert.Nil(t, err)
 	}
 	assert.Equal(t, 1000, len(uvs))
@@ -241,15 +241,15 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	for i := 0; i < 1500; i++ {
 		uvs = append(uvs, Zigzag(int64(1000 - i)))
 	}
-	signed = true
+	irl.Signed = true
 
 	buf.Reset()
-	err = irl.WriteValues(buf, signed, uvs)
+	err = irl.WriteValues(buf, uvs)
 	assert.Nil(t, err)
 
 	uvs=uvs[:0]
 	for buf.Len()!=0 {
-		uvs, err = irl.ReadValues(buf, signed, uvs)
+		uvs, err = irl.ReadValues(buf, uvs)
 		assert.Nil(t, err)
 	}
 	vs= vs[:0]
@@ -268,24 +268,24 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	//uint
 	uvs := []uint64{23713, 57005, 43806, 48879}
 	encoded := []byte{0x5e, 0x03, 0x5c, 0xa1, 0xde, 0xad, 0xab, 0x1e, 0xbe, 0xef}
-	signed := false
+	irl.Signed = false
 
-	err := irl.WriteValues(buf, signed, uvs)
+	err := irl.WriteValues(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, encoded, buf.Bytes())
 
 	var uvalues []uint64
-	uvalues, err = irl.ReadValues(buf, signed, uvalues)
+	uvalues, err = irl.ReadValues(buf, uvalues)
 	assert.Equal(t, uvs, uvalues)
 
 	uvs = []uint64{999, 900203003, 688888888, 857340643}
 
 	buf.Reset()
-	err = irl.WriteValues(buf, signed, uvs)
+	err = irl.WriteValues(buf, uvs)
 	assert.Nil(t, err)
 
 	uvalues= uvalues[:0]
-	uvalues, err = irl.ReadValues(buf, signed, uvalues)
+	uvalues, err = irl.ReadValues(buf, uvalues)
 	assert.Nil(t, err)
 	assert.Equal(t, uvs, uvalues)
 
@@ -295,14 +295,14 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	uvs= uvs[:0]
-	uvs, err = irl.ReadValues(buf, false, uvs)
+	uvs, err = irl.ReadValues(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, uvalues, uvs)
 
 
 
 	// int
-	signed = true
+	irl.Signed = true
 	values := []int64{1, 1, 2,2,2,2,2} // width 2
 	uvs= uvs[:0]
 	for _, v:= range values {
@@ -314,7 +314,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	}
 
 	uvs= uvs[:0]
-	uvs, err = irl.ReadValues(buf, signed, uvs)
+	uvs, err = irl.ReadValues(buf, uvs)
 	assert.Nil(t, err)
 	var vs []int64
 	for _, v :=range uvs {
@@ -332,7 +332,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	uvs= uvs[:0]
-	uvs, err = irl.ReadValues(buf, false, uvs)
+	uvs, err = irl.ReadValues(buf,  uvs)
 	assert.Nil(t, err)
 	vs= vs[:0]
 	for _, v := range uvs {
@@ -374,7 +374,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 
 func TestIntRunLengthV2Patch(t *testing.T) {
 	irl := &IntRleV2{}
-	signed := true
+	irl.Signed = true
 
 	values := []int64{2030, 2000, 2020, 1000000, 2040, 2050, 2060, 2070, 2080, 2090, 2100, 2110, 2120, 2130,
 		2140, 2150, 2160, 2170, 2180, 2190}
@@ -384,7 +384,7 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 	var uvs []uint64
 	var vs []int64
 
-	uvs, err := irl.ReadValues(bytes.NewBuffer(bs), signed, uvs)
+	uvs, err := irl.ReadValues(bytes.NewBuffer(bs), uvs)
 	assert.Nil(t, err)
 	for _, v := range uvs {
 		vs= append(vs, UnZigzag(v))
@@ -422,14 +422,14 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 }
 
 func TestIntRunLengthV2(t *testing.T) {
-	rle := &IntRleV2{}
+	irl := &IntRleV2{}
 	//short repeat
-	signed := false
+	irl.Signed = false
 	bs := []byte{0x0a, 0x27, 0x10}
 	buf := bytes.NewBuffer(bs)
 
 	var uvs []uint64
-	uvs, err := rle.ReadValues(buf, signed, uvs)
+	uvs, err := irl.ReadValues(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, 5, len(uvs))
 	assert.Equal(t, 10000, int(uvs[0]))
@@ -437,11 +437,11 @@ func TestIntRunLengthV2(t *testing.T) {
 
 
 	buf.Reset()
-	err = rle.WriteValues(buf, signed, uvs)
+	err = irl.WriteValues(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, buf.Bytes())
 
-	signed = true
+	irl.Signed = true
 	values := make([]int64, 10)
 	for i := 0; i < 10; i++ {
 		values[i] = -1
@@ -451,11 +451,11 @@ func TestIntRunLengthV2(t *testing.T) {
 	for _, v := range values {
 		uvs= append(uvs, Zigzag(v))
 	}
-	err = rle.WriteValues(buf, signed, uvs) //encoding
+	err = irl.WriteValues(buf, uvs) //encoding
 	assert.Nil(t, err)
 
 	uvs= uvs[:0]
-	uvs, err = rle.ReadValues(buf, signed, uvs)
+	uvs, err = irl.ReadValues(buf, uvs)
 	assert.Nil(t, err)
 	var vs []int64
 	for _, v := range uvs {
@@ -467,7 +467,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	uvalues := []uint64{23713, 43806, 57005, 48879}
 	buf = bytes.NewBuffer([]byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef})
 	uvs= uvs[:0]
-	uvs, err = rle.ReadValues(buf, false, uvs)
+	uvs, err = irl.ReadValues(buf,  uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, uvalues, uvs)
 }

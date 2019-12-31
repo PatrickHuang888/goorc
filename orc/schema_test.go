@@ -2,7 +2,7 @@ package orc
 
 import (
 	"fmt"
-	"github.com/PatrickHuang888/goorc/pb/pb"
+	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/golang/protobuf/jsonpb"
 	"testing"
 )

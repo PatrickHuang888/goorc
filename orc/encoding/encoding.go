@@ -296,7 +296,7 @@ type IntRleV2 struct {
 }
 
 // decoding buffer all to u/literals
-func (d *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) ([]uint64, error) {
+func (d *IntRleV2) ReadValues(in BufferedReader, values []uint64) ([]uint64, error) {
 	// header from MSB to LSB
 	firstByte, err := in.ReadByte()
 	if err != nil {
@@ -350,7 +350,7 @@ func (d *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (
 
 	case Encoding_PATCHED_BASE:
 		// rethink: according to base value is a signed smallest value, patch should always signed?
-		if !signed {
+		if !d.Signed {
 			return values, errors.New("decoding: int rl v2 patch signed setting should not false")
 		}
 
@@ -376,7 +376,7 @@ func (d *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (
 
 		var ubase uint64
 		var base int64
-		if signed {
+		if d.Signed {
 			base, err = binary.ReadVarint(in)
 			if err != nil {
 				return values, errors.WithStack(err)
@@ -395,7 +395,7 @@ func (d *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (
 			return values, errors.WithStack(err)
 		}
 
-		if signed {
+		if d.Signed {
 			values = append(values, Zigzag(base+deltaBase))
 		} else {
 			if deltaBase >= 0 {
@@ -409,7 +409,7 @@ func (d *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (
 		d.forgetBits()
 		for i := 2; i < length; i++ {
 			if width == 0 { //fixed delta
-				if signed {
+				if d.Signed {
 					values = append(values, Zigzag(base+deltaBase))
 				} else {
 					if deltaBase >= 0 {
@@ -423,7 +423,7 @@ func (d *IntRleV2) ReadValues(in BufferedReader, signed bool, values []uint64) (
 				if err != nil {
 					return values, err
 				}
-				if signed {
+				if d.Signed {
 					prev := UnZigzag(values[len(values)-1])
 					if deltaBase >= 0 {
 						values = append(values, Zigzag(prev+int64(delta)))

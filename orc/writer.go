@@ -262,14 +262,14 @@ func (w *writer) flushStripe(force bool) error {
 		if err := w.stripe.flush(w.f); err != nil {
 			return errors.WithStack(err)
 		}
-		// todo: update batch stats
+		// todo: update column stats
 		// reset current currentStripe
 		w.offset += w.stripe.info.GetOffset() + w.stripe.info.GetIndexLength() + w.stripe.info.GetDataLength()
 		w.stripeInfos = append(w.stripeInfos, w.stripe.info)
 		log.Debugf("flushed currentStripe %v", w.stripe.info)
 
 		// todo:
-		w.stripe.reset()
+		//w.stripe.reset()
 	}
 	return nil
 }
@@ -289,12 +289,11 @@ func (s *stripeW) shouldFlush() bool {
 func (s *stripeW) write(batch *ColumnVector) error {
 
 	var rows int
-	var err error
 
 	// presents
 	if s.schemas[batch.Id].HasNulls {
 		if len(batch.Presents) == 0 {
-			return errors.New("column has nulls, but batch present length 0")
+			return errors.New("column has nulls, but column present length 0")
 		}
 		present := s.streams[batch.Id][0]
 		written, err := present.writeValues(batch.Presents)
@@ -661,7 +660,7 @@ func getColumnEncoding(opts *WriterOptions, kind pb.Type_Kind) pb.ColumnEncoding
 		return pb.ColumnEncoding_DIRECT
 
 	default:
-		panic("batch type unknown")
+		panic("column type unknown")
 	}
 }
 
@@ -684,7 +683,7 @@ func (s *stripeW) flush(f *os.File) error {
 	for _, schema := range s.schemas {
 		for _, stream := range s.streams[schema.Id] {
 			if stream != nil {
-				log.Tracef("flush stream %s of batch %d length %d", stream.info.GetKind().String(),
+				log.Tracef("flush stream %s of column %d length %d", stream.info.GetKind().String(),
 					stream.info.GetColumn(), stream.info.GetLength())
 				if _, err := stream.compressedBuf.WriteTo(f); err != nil {
 					return errors.WithStack(err)

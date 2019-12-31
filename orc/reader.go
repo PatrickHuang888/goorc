@@ -8,9 +8,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/PatrickHuang888/goorc/pb/pb"
-	"github.com/golang/protobuf/proto"
 	"github.com/patrickhuang888/goorc/orc/encoding"
+	"github.com/patrickhuang888/goorc/pb/pb"
+
+	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -24,7 +25,7 @@ const (
 type Reader interface {
 	GetSchema() *TypeDescription
 	NumberOfRows() uint64
-	Stripes() ([]Stripe, error)
+	Stripes() ([]StripeReader, error)
 	Close() error
 }
 
@@ -44,7 +45,7 @@ type reader struct {
 	opts    *ReaderOptions
 
 	tail    *pb.FileTail
-	stripes []Stripe
+	stripes []StripeReader
 }
 
 func NewReader(path string, opts *ReaderOptions) (r Reader, err error) {
@@ -69,7 +70,7 @@ func (r *reader) GetSchema() *TypeDescription {
 	return r.schemas[0]
 }
 
-func (r *reader) Stripes() (ss []Stripe, err error) {
+func (r *reader) Stripes() (ss []StripeReader, err error) {
 	for i, stripeInfo := range r.tail.Footer.Stripes {
 		offset := stripeInfo.GetOffset()
 		indexLength := stripeInfo.GetIndexLength()
@@ -137,7 +138,7 @@ func (r *reader) Close() error {
 	return nil
 }
 
-type Stripe interface {
+type StripeReader interface {
 	NextBatch(batch *ColumnVector) error
 }
 
@@ -149,11 +150,11 @@ type stripeR struct {
 	info   *pb.StripeInformation
 	footer *pb.StripeFooter
 
-	columns []*batch
+	columns []*column
 	idx     int
 }
 
-type batch struct {
+type column struct {
 	id           int
 	schema       *TypeDescription
 	encoding     *pb.ColumnEncoding
@@ -166,7 +167,7 @@ type batch struct {
 	cursor uint64
 }
 
-func (c *batch) String() string {
+func (c *column) String() string {
 	sb := strings.Builder{}
 	fmt.Fprintf(&sb, "id %d, ", c.id)
 	fmt.Fprintf(&sb, "kind %s, ", c.schema.Kind.String())
@@ -175,12 +176,12 @@ func (c *batch) String() string {
 	return sb.String()
 }
 
-// stripeR {index{},batch{[present],data,[length]},footer}
+// stripeR {index{},column{[present],data,[length]},footer}
 func (s *stripeR) prepare() error {
 	columnSize := len(s.schemas)
-	columns := make([]*batch, columnSize)
+	columns := make([]*column, columnSize)
 	for i := 0; i < len(s.schemas); i++ {
-		c := &batch{}
+		c := &column{}
 		c.id = i
 		c.schema = s.schemas[i]
 		c.encoding = s.footer.GetColumns()[i]
@@ -221,7 +222,7 @@ func (s *stripeR) prepare() error {
 			case pb.Type_LONG:
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
-						decoder := &encoding.IntRleV2{}
+						decoder := &encoding.IntRleV2{Signed: true}
 						stream = &longSR{r: sr, decoder: decoder}
 					}
 					break
@@ -233,7 +234,7 @@ func (s *stripeR) prepare() error {
 
 			case pb.Type_DOUBLE:
 				if columnEncoding != pb.ColumnEncoding_DIRECT {
-					return errors.New("batch encoding error")
+					return errors.New("column encoding error")
 				}
 				if kind == pb.Stream_DATA {
 					decoder := &encoding.Ieee754Double{}
@@ -247,31 +248,31 @@ func (s *stripeR) prepare() error {
 						break
 					}
 					if kind == pb.Stream_LENGTH {
-						decoder := &encoding.IntRleV2{}
+						decoder := &encoding.IntRleV2{Signed: false}
 						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
 				if columnEncoding == pb.ColumnEncoding_DICTIONARY_V2 {
 					if kind == pb.Stream_DATA {
-						stream = &bytesContentSR{r: sr}
-						break
-					}
-					if kind == pb.Stream_LENGTH {
-						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: sr, decoder: &encoding.IntRleV2{Signed: false}}
 						break
 					}
 					if kind == pb.Stream_DICTIONARY_DATA {
 						stream = &bytesContentSR{r: sr}
 						break
 					}
+					if kind == pb.Stream_LENGTH {
+						decoder := &encoding.IntRleV2{Signed: false}
+						stream = &longSR{r: sr, decoder: decoder}
+						break
+					}
 				}
-				return errors.New("batch encoding error")
+				return errors.New("column encoding error")
 
 			case pb.Type_BOOLEAN:
 				if columnEncoding != pb.ColumnEncoding_DIRECT {
-					return errors.New("bool batch encoding error")
+					return errors.New("bool column encoding error")
 				}
 
 				if kind == pb.Stream_DATA {
@@ -281,7 +282,7 @@ func (s *stripeR) prepare() error {
 
 			case pb.Type_BYTE: // tinyint
 				if columnEncoding != pb.ColumnEncoding_DIRECT {
-					return errors.New("tinyint batch encoding error")
+					return errors.New("tinyint column encoding error")
 				}
 
 				if kind == pb.Stream_DATA {
@@ -301,12 +302,12 @@ func (s *stripeR) prepare() error {
 						break
 					}
 					if kind == pb.Stream_LENGTH {
-						decoder := &encoding.IntRleV2{}
+						decoder := &encoding.IntRleV2{Signed: false}
 						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
-				return errors.New("binary batch encoding error")
+				return errors.New("binary column encoding error")
 
 			case pb.Type_DECIMAL:
 				if columnEncoding == pb.ColumnEncoding_DIRECT {
@@ -322,12 +323,12 @@ func (s *stripeR) prepare() error {
 						break
 					}
 					if kind == pb.Stream_SECONDARY {
-						decoder := &encoding.IntRleV2{}
+						decoder := &encoding.IntRleV2{Signed: false}
 						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
-				return errors.New("batch encoding error")
+				return errors.New("column encoding error")
 
 			case pb.Type_DATE:
 				if columnEncoding == pb.ColumnEncoding_DIRECT {
@@ -337,12 +338,12 @@ func (s *stripeR) prepare() error {
 				}
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
-						decoder := &encoding.IntRleV2{}
+						decoder := &encoding.IntRleV2{Signed: true}
 						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
-				return errors.New("batch encoding error")
+				return errors.New("column encoding error")
 
 			case pb.Type_TIMESTAMP:
 				if columnEncoding == pb.ColumnEncoding_DIRECT {
@@ -352,17 +353,17 @@ func (s *stripeR) prepare() error {
 				}
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
-						decoder := &encoding.IntRleV2{}
+						decoder := &encoding.IntRleV2{Signed: true}
 						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 					if kind == pb.Stream_SECONDARY {
-						decoder := &encoding.IntRleV2{}
+						decoder := &encoding.IntRleV2{Signed: false}
 						stream = &longSR{r: sr, decoder: decoder}
 						break
 					}
 				}
-				return errors.New("batch encoding error")
+				return errors.New("column encoding error")
 
 			case pb.Type_STRUCT:
 
@@ -396,7 +397,7 @@ func (s *stripeR) prepare() error {
 
 			case pb.Type_UNION:
 				if columnEncoding != pb.ColumnEncoding_DIRECT {
-					return errors.New("batch encoding error")
+					return errors.New("column encoding error")
 				}
 
 				// fixme: pb.Stream_DIRECT
@@ -423,7 +424,7 @@ func (s *stripeR) prepare() error {
 func (sr *stripeR) NextBatch(batch *ColumnVector) error {
 
 	c := sr.columns[batch.Id]
-	log.Debugf("batch: %s reading", c.String())
+	log.Debugf("column: %s reading", c.String())
 
 	if err := c.nextPresents(batch); err != nil {
 		return err
@@ -509,8 +510,8 @@ func (sr *stripeR) NextBatch(batch *ColumnVector) error {
 			if err := columnReader.readLength(); err != nil {
 				return false, errors.WithStack(err)
 			}
-			batch := batch.(*ListColumn)
-			next, err := sr.NextBatch(batch.Child)
+			column := column.(*ListColumn)
+			next, err := sr.NextBatch(column.Child)
 			if err != nil {
 				return false, errors.WithStack(err)
 			}
@@ -524,13 +525,13 @@ func (sr *stripeR) NextBatch(batch *ColumnVector) error {
 	return nil
 }
 
-func (c *batch) nextDatesV2(batch *ColumnVector) error {
+func (c *column) nextDatesV2(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([]Date)
-	if cap(vector)==0 {
-		vector= make([]Date, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([]Date)
+	if cap(vector) == 0 {
+		vector = make([]Date, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	data := c.streams[pb.Stream_DATA].(*longSR)
@@ -551,18 +552,18 @@ func (c *batch) nextDatesV2(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextTimestampsV2(batch *ColumnVector) error {
+func (c *column) nextTimestampsV2(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([]Timestamp)
-	if cap(vector)==0 {
-		vector= make([]Timestamp, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([]Timestamp)
+	if cap(vector) == 0 {
+		vector = make([]Timestamp, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	data := c.streams[pb.Stream_DATA].(*longSR)
@@ -580,9 +581,9 @@ func (c *batch) nextTimestampsV2(batch *ColumnVector) error {
 				return err
 			}
 			// opti:
-			batch.Vector = append(vector, Timestamp{seconds, uint32(nanos)})
+			vector = append(vector, Timestamp{seconds, uint32(nanos)})
 		} else {
-			batch.Vector = append(vector, Timestamp{})
+			vector = append(vector, Timestamp{})
 		}
 	}
 
@@ -592,18 +593,18 @@ func (c *batch) nextTimestampsV2(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextBools(batch *ColumnVector) error {
+func (c *column) nextBools(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([]bool)
-	if cap(vector)==0 {
-		vector= make([]bool, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([]bool)
+	if cap(vector) == 0 {
+		vector = make([]bool, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	data := c.streams[pb.Stream_DATA].(*boolSR)
@@ -621,25 +622,25 @@ func (c *batch) nextBools(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			batch.Vector = append(vector, v)
+			vector = append(vector, v)
 		} else {
-			batch.Vector = append(vector, false)
+			vector = append(vector, false)
 		}
 		c.cursor++
 	}
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextBinaryV2(batch *ColumnVector) error {
+func (c *column) nextBinaryV2(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([][]byte)
-	if cap(vector)==0 {
-		vector= make([][]byte, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([][]byte)
+	if cap(vector) == 0 {
+		vector = make([][]byte, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	length := c.streams[pb.Stream_LENGTH]
@@ -660,26 +661,26 @@ func (c *batch) nextBinaryV2(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			batch.Vector = append(vector, v)
+			vector = append(vector, v)
 		} else {
-			batch.Vector = append(vector, []byte{})
+			vector = append(vector, []byte{})
 		}
 	}
 
 	c.cursor = c.cursor + uint64(i)
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextStringsV2(batch *ColumnVector) error {
+func (c *column) nextStringsV2(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([]string)
-	if cap(vector)==0 {
-		vector= make([]string, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([]string)
+	if cap(vector) == 0 {
+		vector = make([]string, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	length := c.streams[pb.Stream_LENGTH]
@@ -697,9 +698,9 @@ func (c *batch) nextStringsV2(batch *ColumnVector) error {
 				return err
 			}
 			// default utf-8
-			batch.Vector = append(vector, string(v))
+			vector = append(vector, string(v))
 		} else {
-			batch.Vector = append(vector, "")
+			vector = append(vector, "")
 		}
 	}
 
@@ -709,18 +710,18 @@ func (c *batch) nextStringsV2(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextStringsDictV2(batch *ColumnVector) error {
+func (c *column) nextStringsDictV2(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([]string)
-	if cap(vector)==0 {
-		vector=make([]string, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([]string)
+	if cap(vector) == 0 {
+		vector = make([]string, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	data := c.streams[pb.Stream_DATA].(*longSR)
@@ -732,7 +733,7 @@ func (c *batch) nextStringsDictV2(batch *ColumnVector) error {
 		return err
 	}
 
-	ds, err := dictData.getAll(ls)
+	dict, err := dictData.getAll(ls)
 	if err != nil {
 		return err
 	}
@@ -742,31 +743,31 @@ func (c *batch) nextStringsDictV2(batch *ColumnVector) error {
 		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
 			v, err := data.nextUInt()
 			if err != nil {
-				return  err
+				return err
 			}
-			if v >= uint64(len(ds)) {
+			if v >= uint64(len(dict)) {
 				return errors.New("dict index error")
 			}
-			batch.Vector = append(vector, string(ds[v]))
+			vector = append(vector, string(dict[v]))
 		} else {
-			batch.Vector = append(vector, "")
+			vector = append(vector, "")
 		}
 	}
 
 	c.cursor += uint64(i)
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextBytes(batch *ColumnVector) error {
+func (c *column) nextBytes(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([]byte)
-	if cap(vector)==0 {
-		vector= make([]byte, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([]byte)
+	if cap(vector) == 0 {
+		vector = make([]byte, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	data := c.streams[pb.Stream_DATA].(*byteSR)
@@ -778,20 +779,20 @@ func (c *batch) nextBytes(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			batch.Vector = append(vector, v)
+			vector = append(vector, v)
 		} else {
-			batch.Vector = append(vector, 0)
+			vector = append(vector, 0)
 		}
 	}
 
 	c.cursor += uint64(i)
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextLongsV2(batch *ColumnVector) error {
+func (c *column) nextLongsV2(batch *ColumnVector) error {
 
 	vector := batch.Vector.([]int64)
 	if cap(vector) == 0 {
@@ -803,7 +804,7 @@ func (c *batch) nextLongsV2(batch *ColumnVector) error {
 	// rethink: assert data!=nil
 	data := c.streams[pb.Stream_DATA].(*longSR)
 
-	i :=0
+	i := 0
 	for ; !data.finished() && i < cap(vector); i++ {
 		// rethink: i and present index check
 
@@ -812,26 +813,26 @@ func (c *batch) nextLongsV2(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			batch.Vector = append(vector, v)
+			vector = append(vector, v)
 		} else {
-			batch.Vector = append(vector, 0)
+			vector = append(vector, 0)
 		}
 	}
 
 	c.cursor += uint64(i)
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextDecimal64sV2(batch *ColumnVector) error {
+func (c *column) nextDecimal64sV2(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([]Decimal64)
-	if cap(vector)==0 {
-		vector= make([]Decimal64, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([]Decimal64)
+	if cap(vector) == 0 {
+		vector = make([]Decimal64, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	data := c.streams[pb.Stream_DATA].(*int64VarIntSR)
@@ -848,9 +849,9 @@ func (c *batch) nextDecimal64sV2(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			batch.Vector = append(vector, Decimal64{precision, uint16(scala)})
+			vector = append(vector, Decimal64{precision, uint16(scala)})
 		} else {
-			batch.Vector = append(vector, Decimal64{})
+			vector = append(vector, Decimal64{})
 		}
 	}
 
@@ -860,18 +861,18 @@ func (c *batch) nextDecimal64sV2(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 
-	batch.Vector= vector
+	batch.Vector = vector
 
 	return nil
 }
 
-func (c *batch) nextDoubles(batch *ColumnVector) error {
+func (c *column) nextDoubles(batch *ColumnVector) error {
 
-	vector:= batch.Vector.([]float64)
-	if cap(vector)==0 {
-		vector= make([]float64, 0, batch.Size)
-	}else {
-		vector= vector[:0]
+	vector := batch.Vector.([]float64)
+	if cap(vector) == 0 {
+		vector = make([]float64, 0, batch.Size)
+	} else {
+		vector = vector[:0]
 	}
 
 	data := c.streams[pb.Stream_DATA].(*ieeeFloatSR)
@@ -883,9 +884,9 @@ func (c *batch) nextDoubles(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			batch.Vector = append(vector, v)
+			vector = append(vector, v)
 		} else {
-			batch.Vector = append(vector, 0)
+			vector = append(vector, 0)
 		}
 	}
 
@@ -894,16 +895,16 @@ func (c *batch) nextDoubles(batch *ColumnVector) error {
 	return nil
 }
 
-func (c *batch) nextPresents(batch *ColumnVector) (err error) {
+func (c *column) nextPresents(batch *ColumnVector) (err error) {
 	ps := c.streams[pb.Stream_PRESENT]
 	if ps != nil {
-		if cap(batch.Presents)==0 {
-			batch.Presents= make([]bool, 0, batch.Size)
-		}else {
-			batch.Presents= batch.Presents[:0]
+		if cap(batch.Presents) == 0 {
+			batch.Presents = make([]bool, 0, batch.Size)
+		} else {
+			batch.Presents = batch.Presents[:0]
 		}
 
-		for i:=0; !ps.finished() && i < cap(batch.Presents); i++ {
+		for i := 0; !ps.finished() && i < cap(batch.Presents); i++ {
 			v, err := ps.(*boolSR).next()
 			if err != nil {
 				return err
@@ -936,7 +937,7 @@ type sr struct {
 }
 
 func (r sr) String() string {
-	return fmt.Sprintf("start %d, length %d, kind %r, already read %d", r.start, r.length,
+	return fmt.Sprintf("start %d, length %d, kind %s, already read %d", r.start, r.length,
 		r.kind.String(), r.readLength)
 }
 
@@ -968,48 +969,53 @@ func (s *byteSR) finished() bool {
 	return s.r.readFinished() && (s.consumed == len(s.values))
 }
 
+// rethink: not using decoder, just read directly using sr
 type bytesContentSR struct {
 	r *sr
-
-	values []byte
-	pos    int
 }
 
 func (s *bytesContentSR) next(length uint64) (v []byte, err error) {
-	if s.pos+int(length) > len(s.values) {
-		s.values = s.values[s.pos:]
-		s.pos = 0
-		buf := bytes.NewBuffer(s.values)
 
-		if _, err = s.r.ReadAChunk(buf); err != nil {
+	if s.r.buf.Len() < int(length) && !s.finished() {
+		s.r.buf.Truncate(s.r.buf.Len())
+		if err := s.r.readAChunk(); err != nil {
 			return nil, err
 		}
 	}
 
-	v = s.values[s.pos : s.pos+int(length)]
-	s.pos += int(length)
+	v = make([]byte, length)
+	n, err := s.r.buf.Read(v)
+	if err != nil {
+		return nil, err
+	}
+	if n < int(length) {
+		return nil, errors.New("no enough bytes")
+	}
 	return
 }
 
 func (s *bytesContentSR) finished() bool {
-	return s.r.readFinished() && (s.pos == len(s.values))
+	return s.r.readFinished() && (s.r.buf.Len() == 0)
 }
 
 // for streamR like dict
 func (s *bytesContentSR) getAll(lengthAll []uint64) (vs [][]byte, err error) {
-	buf := bytes.NewBuffer(s.values)
 	for !s.r.readFinished() {
-		if _, err = s.r.ReadAChunk(buf); err != nil {
+		if err = s.r.readAChunk(); err != nil {
 			return nil, err
 		}
 	}
 
 	for _, l := range lengthAll {
-		if s.pos+int(l) > len(s.values) {
-			return nil, errors.New("read data error")
+		v := make([]byte, l)
+		n, err := s.r.buf.Read(v)
+		if err != nil {
+			return vs, err
 		}
-		vs = append(vs, s.values[s.pos:s.pos+int(l)])
-		s.pos += int(l)
+		if n < int(l) {
+			return vs, errors.New("no enough bytes")
+		}
+		vs = append(vs, v)
 	}
 
 	return
@@ -1080,7 +1086,7 @@ func (s *longSR) nextUInt() (v uint64, err error) {
 		s.pos = 0
 		s.values = s.values[:0]
 
-		if s.values, err = s.decoder.ReadValues(s.r, false, s.values); err != nil {
+		if s.values, err = s.decoder.ReadValues(s.r, s.values); err != nil {
 			return
 		}
 	}
@@ -1093,7 +1099,7 @@ func (s *longSR) nextUInt() (v uint64, err error) {
 // for small data like dict index, ignore s.signed
 func (s *longSR) getAllUInts() (vs []uint64, err error) {
 	for !s.r.readFinished() {
-		if s.values, err = s.decoder.ReadValues(s.r, false, s.values); err != nil {
+		if s.values, err = s.decoder.ReadValues(s.r, s.values); err != nil {
 			return
 		}
 	}
@@ -1138,35 +1144,6 @@ func (s *boolSR) finished() bool {
 	return s.r.readFinished() && (s.pos == len(s.values))
 }
 
-// streamR read one or more chunks a time when needed
-/*func (streamR *streamReader) read(dec Decoder) error {
-	log.Debugf("streamR %s reading", streamR.String())
-
-	if _, err := f.Seek(int64(streamR.start+streamR.readLength), 0); err != nil {
-		return errors.WithStack(err)
-	}
-
-	//streamR.buf.Reset()
-
-	//streamR.buf.Truncate(streamR.buf.Len())
-
-	fmt.Printf("read chunk %d \n", streamR.readLength)
-	l, err := readAChunk(opts, f, streamR.buf)
-	if err != nil {
-		return err
-	}
-	streamR.readLength += l
-
-	err := dec.readValues(streamR)
-	if err != nil {
-		return errors.WithMessagef(err, "already decoding length %d", dec.len())
-	}
-
-	//}
-
-	return nil
-}*/
-
 func (stream *sr) ReadByte() (byte, error) {
 	b, err := stream.buf.ReadByte()
 	if err != nil {
@@ -1177,12 +1154,10 @@ func (stream *sr) ReadByte() (byte, error) {
 				return 0, errors.WithStack(err)
 			}
 
-			l, err := readAChunk(stream.opts, stream.f, stream.buf)
-			log.Debugf("streamR %s readAChunk %d", stream.kind.String(), l)
+			err = stream.readAChunk()
 			if err != nil {
 				return 0, err
 			}
-			stream.readLength += l
 			return stream.buf.ReadByte()
 
 		} else {
@@ -1201,12 +1176,10 @@ func (stream *sr) Read(p []byte) (n int, err error) {
 				return 0, errors.WithStack(err)
 			}
 
-			l, err := readAChunk(stream.opts, stream.f, stream.buf)
-			log.Debugf("read %d", l)
+			err = stream.readAChunk()
 			if err != nil {
 				return 0, err
 			}
-			stream.readLength += l
 			return stream.buf.Read(p)
 
 		} else {
@@ -1216,12 +1189,12 @@ func (stream *sr) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-func (r *sr) ReadAChunk(buf *bytes.Buffer) (n int, err error) {
+/*func (r *sr) ReadAChunk(buf *bytes.Buffer) (n int, err error) {
 	if _, err := r.f.Seek(int64(r.start+r.readLength), 0); err != nil {
 		return 0, errors.WithStack(err)
 	}
 
-	l, err := readAChunk(r.opts, r.f, buf)
+	l, err := readAChunk()
 	log.Debugf("read %d", n)
 	if err != nil {
 		return int(l), err
@@ -1230,12 +1203,8 @@ func (r *sr) ReadAChunk(buf *bytes.Buffer) (n int, err error) {
 	n = int(l)
 
 	return
-}
+}*/
 
-/*func (streamR *streamReader) Len() int {
-	return streamR.buf.Len()
-}
-*/
 // read whole streamR into memory
 func (stream *sr) readWhole(opts *ReaderOptions, f *os.File) (err error) {
 	if _, err = f.Seek(int64(stream.start), 0); err != nil {
@@ -1252,17 +1221,16 @@ func (stream *sr) readWhole(opts *ReaderOptions, f *os.File) (err error) {
 	}
 
 	for !stream.readFinished() {
-		l, err := readAChunk(opts, f, stream.buf)
+		err = stream.readAChunk()
 		if err != nil {
 			return err
 		}
-		stream.readLength += l
 	}
 	return nil
 }
 
 func (stream *sr) readFinished() bool {
-	return stream.readLength >= stream.length
+	return stream.readLength >= stream.length && stream.buf.Len() == 0
 }
 
 func (r *reader) NumberOfRows() uint64 {
@@ -1285,27 +1253,6 @@ func unmarshallSchema(types []*pb.Type) (schemas []*TypeDescription) {
 	}
 	return
 }
-
-/*func unmarshallSchema(types []*pb.Type) (schema *TypeDescription) {
-	tds := make([]*TypeDescription, len(types))
-	for i, t := range types {
-		node := &TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
-		tds[i] = node
-	}
-	if len(tds) > 0 {
-		schema = tds[0]
-	}
-	for i, t := range types {
-		tds[i].Children = make([]*TypeDescription, len(t.Subtypes))
-		tds[i].ChildrenNames = make([]string, len(t.Subtypes))
-		for j, v := range t.Subtypes {
-			tds[i].ChildrenNames[j] = t.FieldNames[j]
-			tds[i].Children[j] = tds[v]
-		}
-	}
-	return
-}
-*/
 
 func marshallSchema(schema *TypeDescription) (types []*pb.Type) {
 	types = preOrderWalkSchema(schema)
@@ -1475,31 +1422,53 @@ func assertx(condition bool) {
 	}
 }
 
-// read one chunk and decompressed to out, n is read count of f
-func readAChunk(opts *ReaderOptions, f *os.File, out *bytes.Buffer) (n uint64, err error) {
-	head := make([]byte, 3)
-	if _, err = io.ReadFull(f, head); err != nil {
-		return 0, errors.WithStack(err)
+// read one chunk and decompressed to out
+func (s *sr) readAChunk() error {
+	if s.opts.CompressionKind == pb.CompressionKind_NONE { // no header
+		l := int64(DEFAULT_CHUNK_SIZE)
+		if int64(s.length) < l {
+			l = int64(s.length)
+		}
+		n, err := io.CopyN(s.buf, s.f, l)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		s.readLength += uint64(n)
+		return nil
 	}
-	n += 3
+
+	head := make([]byte, 3)
+	if _, err := io.ReadFull(s.f, head); err != nil {
+		return errors.WithStack(err)
+	}
+	s.readLength += 3
 	original := (head[0] & 0x01) == 1
 	chunkLength := uint64(head[2])<<15 | uint64(head[1])<<7 | uint64(head[0])>>1
-	if uint64(chunkLength) > opts.ChunkSize {
-		return 0, errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, opts.ChunkSize)
+
+	if chunkLength > s.opts.ChunkSize {
+		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, s.opts.ChunkSize)
 	}
 
-	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
-	buf.Reset()
-	if w, err := io.CopyN(buf, f, int64(chunkLength)); err != nil {
-		return uint64(3 + w), errors.WithStack(err)
-	}
-	n += chunkLength
-
-	if _, err := decompressChunkData(opts.CompressionKind, original, out, buf); err != nil {
-		return n, errors.WithStack(err)
+	if original {
+		if _, err := io.CopyN(s.buf, s.f, int64(chunkLength)); err != nil {
+			return errors.WithStack(err)
+		}
+		s.readLength += chunkLength
+		return nil
 	}
 
-	return
+	readBuf := bytes.NewBuffer(make([]byte, chunkLength))
+	if _, err := io.CopyN(readBuf, s.f, int64(chunkLength)); err != nil {
+		return errors.WithStack(err)
+	}
+
+	if _, err := decompressChunkData(s.opts.CompressionKind, s.buf, readBuf); err != nil {
+		return err
+	}
+
+	s.readLength += chunkLength
+
+	return nil
 }
 
 func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSize int) (decompressed []byte, err error) {
@@ -1543,27 +1512,21 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 }
 
 // data should be compressed
-func decompressChunkData(kind pb.CompressionKind, original bool, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
+func decompressChunkData(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
 	assertx(kind != pb.CompressionKind_NONE)
-	if original {
-		// opti:
-		if n, err = io.Copy(dst, src); err != nil {
-			return 0, errors.WithStack(err)
+	switch kind {
+	case pb.CompressionKind_ZLIB:
+		r := flate.NewReader(src)
+		n, err = dst.ReadFrom(r)
+		r.Close()
+		if err != nil {
+			return 0, errors.Wrapf(err, "decompress chunk data error")
 		}
-	} else {
-		switch kind {
-		case pb.CompressionKind_ZLIB:
-			r := flate.NewReader(src)
-			n, err = dst.ReadFrom(r)
-			r.Close()
-			if err != nil {
-				return 0, errors.Wrapf(err, "decompress chunk data error")
-			}
-			return n, nil
-		default:
-			return 0, errors.New("compression kind other than zlib not impl")
-		}
+		return n, nil
+	default:
+		return 0, errors.New("compression kind other than zlib not impl")
 	}
+
 	return
 }
 

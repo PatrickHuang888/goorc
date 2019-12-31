@@ -14,7 +14,7 @@ type TypeDescription struct {
 	Children      []*TypeDescription
 	Encoding      pb.ColumnEncoding_Kind
 
-	HasNulls bool  // for writing
+	HasNulls bool // for writing
 }
 
 func (td *TypeDescription) Print() {
@@ -79,136 +79,78 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 }
 
 func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *ColumnVector) {
-	var vector []*ColumnVector
-	if td.Kind == pb.Type_STRUCT {
+	var vector interface{}
+	switch td.Kind {
+	case pb.Type_BOOLEAN:
+		vector = make([]bool, 0, opts.RowSize)
+
+	case pb.Type_BYTE:
+		vector = make([]byte, 0, opts.RowSize)
+
+	case pb.Type_SHORT:
+		fallthrough
+	case pb.Type_INT:
+		fallthrough
+	case pb.Type_LONG:
+		vector = make([]int64, 0, opts.RowSize)
+
+	case pb.Type_FLOAT:
+		// todo:
+
+	case pb.Type_DOUBLE:
+		vector = make([]float64, 0, opts.RowSize)
+
+	case pb.Type_DECIMAL:
+		vector = make([]Decimal64, 0, opts.RowSize)
+
+	case pb.Type_DATE:
+		vector = make([]Date, 0, opts.RowSize)
+
+	case pb.Type_TIMESTAMP:
+		vector = make([]Timestamp, 0, opts.RowSize)
+
+	case pb.Type_BINARY:
+		vector = make([][]byte, 0, opts.RowSize)
+
+	case pb.Type_STRING:
+		fallthrough
+	case pb.Type_CHAR:
+		fallthrough
+	case pb.Type_VARCHAR:
+		vector = make([]string, 0, opts.RowSize)
+
+	case pb.Type_STRUCT:
+		var children []*ColumnVector
 		for _, v := range td.Children {
-			vector= append(vector, v.CreateReaderBatch(opts))
+			children = append(children, v.CreateReaderBatch(opts))
 		}
+		vector = children
+
+	case pb.Type_UNION:
+		//todo:
+		fallthrough
+	case pb.Type_MAP:
+		// todo:
+		fallthrough
+	case pb.Type_LIST:
+		// todo:
+		panic("not impl")
+
+	default:
+		panic("unknown type")
 	}
 
-	return &ColumnVector{Id:td.Id, Size:opts.RowSize}
+	return &ColumnVector{Id: td.Id, Size: opts.RowSize, Vector: vector}
 }
 
 // vector provided by writer
 func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) (batch *ColumnVector) {
-	var vector []*ColumnVector
 	if td.Kind == pb.Type_STRUCT {
+		var vector []*ColumnVector
 		for _, v := range td.Children {
-			vector= append(vector, v.CreateWriterBatch(opts))
+			vector = append(vector, v.CreateWriterBatch(opts))
 		}
+		return &ColumnVector{Id: td.Id, Size: opts.RowSize, Vector: vector}
 	}
-	return &ColumnVector{Id:td.Id, Size:opts.RowSize}
+	return &ColumnVector{Id: td.Id, Size: opts.RowSize}
 }
-
-/*func (td *TypeDescription) newColumn(rowSize int, nullable bool, createVector bool) (batch *ColumnVector, err error) {
-	batch = &ColumnVector{Id:td.Id, Size:rowSize}
-	switch td.Kind {
-	case Type_BOOLEAN:
-		c := &Column{col:col{Id:td.Id}}
-		if createVector {
-			c.Vector = make([]bool, rowSize)
-		}
-		return c, nil
-
-	case Type_BYTE:
-		c := &TinyIntColumn{batch: batch{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]byte, rowSize)
-		}
-		return c, nil
-
-	case Type_SHORT:
-		fallthrough
-	case Type_INT:
-		fallthrough
-	case Type_LONG:
-		c := &LongColumn{batch: batch{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]int64, rowSize)
-		}
-		return c, nil
-
-	case Type_FLOAT:
-		// todo:
-
-	case Type_DOUBLE:
-		c := &DoubleColumn{batch: batch{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]float64, rowSize)
-		}
-		return c, nil
-
-	case Type_DECIMAL:
-		c := &Decimal64Column{batch: batch{id: td.Id, nullable: false}}
-		if createVector {
-			c.Vector = make([]Decimal64, rowSize)
-		}
-		return c, nil
-
-	case Type_DATE:
-		c := &DateColumn{batch: batch{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]Date, rowSize)
-		}
-		return c, nil
-
-	case Type_TIMESTAMP:
-		c := &TimestampColumn{batch: batch{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]Timestamp, rowSize)
-		}
-		return c, nil
-
-	case Type_BINARY:
-		c := &BinaryColumn{batch: batch{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([][]byte, rowSize)
-		}
-		return c, nil
-
-	case Type_STRING:
-		fallthrough
-	case Type_CHAR:
-		fallthrough
-	case Type_VARCHAR:
-		c := &StringColumn{batch: batch{id: td.Id, nullable: nullable}}
-		if createVector {
-			c.Vector = make([]string, rowSize)
-		}
-		return c, nil
-
-	case Type_STRUCT:
-		f := make([]ColumnVector, len(td.Children))
-		for i, v := range td.Children {
-			var err error
-			f[i], err = v.newColumn(rowSize, true, createVector)
-			if err != nil {
-				return nil, errors.WithStack(err)
-			}
-		}
-		c := &StructColumn{batch: batch{id: td.Id, nullable: nullable}, Fields: f}
-		return c, nil
-
-	case Type_UNION:
-		// todo:
-		return nil, errors.New("not impl")
-
-	case Type_LIST:
-		assertx(len(td.Children) == 1)
-		c, err := td.Children[0].newColumn(rowSize, true, createVector)
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		lc := &ListColumn{batch: batch{id: td.Id, nullable: nullable}, Child: c}
-		return lc, nil
-
-	case Type_MAP:
-		// todo:
-		return nil, errors.New("not impl")
-
-	default:
-		return nil, errors.Errorf("unknown type %s", td.Kind.String())
-	}
-	return nil, nil
-}
-*/
