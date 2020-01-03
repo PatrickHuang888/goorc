@@ -203,10 +203,10 @@ func (s *stripeR) prepare() error {
 		buf.Reset()
 		var stream streamR
 		if kind == pb.Stream_ROW_INDEX {
-			// todo: init index sr
+			// todo: init index streamReader
 			indexStart += length
 		} else {
-			sr := &sr{start: dataStart, length: length, kind: kind, buf: buf, f: s.f, opts: s.opts}
+			sr := &streamReader{start: dataStart, length: length, kind: kind, buf: buf, f: s.f, opts: s.opts}
 
 			if kind == pb.Stream_PRESENT {
 				decoder := &encoding.ByteRunLength{}
@@ -421,9 +421,9 @@ func (s *stripeR) prepare() error {
 
 // entry of stripeR reader
 // a stripeR is typically  ~200MB
-func (sr *stripeR) NextBatch(batch *ColumnVector) error {
+func (s *stripeR) NextBatch(batch *ColumnVector) error {
 
-	c := sr.columns[batch.Id]
+	c := s.columns[batch.Id]
 	log.Debugf("column: %s reading", c.String())
 
 	if err := c.nextPresents(batch); err != nil {
@@ -494,7 +494,7 @@ func (sr *stripeR) NextBatch(batch *ColumnVector) error {
 		fields := batch.Vector.([]*ColumnVector)
 		// reAssure: next value calculation
 		for _, f := range fields {
-			err := sr.NextBatch(f)
+			err := s.NextBatch(f)
 			if err != nil {
 				return err
 			}
@@ -511,7 +511,7 @@ func (sr *stripeR) NextBatch(batch *ColumnVector) error {
 				return false, errors.WithStack(err)
 			}
 			column := column.(*ListColumn)
-			next, err := sr.NextBatch(column.Child)
+			next, err := streamReader.NextBatch(column.Child)
 			if err != nil {
 				return false, errors.WithStack(err)
 			}
@@ -801,7 +801,6 @@ func (c *column) nextLongsV2(batch *ColumnVector) error {
 		vector = vector[:0]
 	}
 
-	// rethink: assert data!=nil
 	data := c.streams[pb.Stream_DATA].(*longSR)
 
 	i := 0
@@ -924,25 +923,8 @@ type streamR interface {
 	finished() bool
 }
 
-type sr struct {
-	start      uint64
-	length     uint64
-	readLength uint64
-	kind       pb.Stream_Kind
-	buf        *bytes.Buffer
-
-	opts *ReaderOptions
-
-	f *os.File
-}
-
-func (r sr) String() string {
-	return fmt.Sprintf("start %d, length %d, kind %s, already read %d", r.start, r.length,
-		r.kind.String(), r.readLength)
-}
-
 type byteSR struct {
-	r *sr
+	r *streamReader
 
 	values   []byte
 	consumed int
@@ -969,9 +951,9 @@ func (s *byteSR) finished() bool {
 	return s.r.readFinished() && (s.consumed == len(s.values))
 }
 
-// rethink: not using decoder, just read directly using sr
+// rethink: not using decoder, just read directly using streamReader
 type bytesContentSR struct {
-	r *sr
+	r *streamReader
 }
 
 func (s *bytesContentSR) next(length uint64) (v []byte, err error) {
@@ -1022,7 +1004,7 @@ func (s *bytesContentSR) getAll(lengthAll []uint64) (vs [][]byte, err error) {
 }
 
 type ieeeFloatSR struct {
-	r *sr
+	r *streamReader
 
 	decoder *encoding.Ieee754Double
 }
@@ -1036,7 +1018,7 @@ func (s *ieeeFloatSR) finished() bool {
 }
 
 type int64VarIntSR struct {
-	r *sr
+	r *streamReader
 
 	values []int64
 	pos    int
@@ -1064,7 +1046,7 @@ func (s *int64VarIntSR) finished() bool {
 }
 
 type longSR struct {
-	r *sr
+	r *streamReader
 
 	values []uint64
 	pos    int
@@ -1089,6 +1071,8 @@ func (s *longSR) nextUInt() (v uint64, err error) {
 		if s.values, err = s.decoder.ReadValues(s.r, s.values); err != nil {
 			return
 		}
+
+		log.Debugf("decoded %d long values from chunk", len(s.values))
 	}
 
 	v = s.values[s.pos]
@@ -1111,7 +1095,7 @@ func (s *longSR) finished() bool {
 }
 
 type boolSR struct {
-	r *sr
+	r *streamReader
 
 	values  []byte
 	pos     int
@@ -1144,43 +1128,51 @@ func (s *boolSR) finished() bool {
 	return s.r.readFinished() && (s.pos == len(s.values))
 }
 
-func (stream *sr) ReadByte() (byte, error) {
-	b, err := stream.buf.ReadByte()
-	if err != nil {
-		if err == io.EOF && !stream.readFinished() {
+type streamReader struct {
+	start      uint64
+	length     uint64
+	readLength uint64
+	kind       pb.Stream_Kind
+	buf        *bytes.Buffer
 
-			// Rethink: using 1 f in whole reader or 1 f per streaming ?
-			if _, err := stream.f.Seek(int64(stream.start+stream.readLength), 0); err != nil {
-				return 0, errors.WithStack(err)
-			}
+	opts *ReaderOptions
 
-			err = stream.readAChunk()
-			if err != nil {
-				return 0, err
-			}
-			return stream.buf.ReadByte()
-
-		} else {
-			return b, errors.WithStack(err)
-		}
-	}
-	return b, nil
+	f *os.File
 }
 
-func (stream *sr) Read(p []byte) (n int, err error) {
-	n, err = stream.buf.Read(p)
+func (s streamReader) String() string {
+	return fmt.Sprintf("start %d, length %d, kind %s, already read %d", s.start, s.length,
+		s.kind.String(), s.readLength)
+}
+
+func (s *streamReader) ReadByte() (b byte, err error) {
+	b, err = s.buf.ReadByte()
 	if err != nil {
-		if err == io.EOF && !stream.readFinished() {
+		if err == io.EOF && (s.readLength < s.length) {
 
-			if _, err := stream.f.Seek(int64(stream.start+stream.readLength), 0); err != nil {
-				return 0, errors.WithStack(err)
-			}
-
-			err = stream.readAChunk()
+			err = s.readAChunk()
 			if err != nil {
 				return 0, err
 			}
-			return stream.buf.Read(p)
+			return s.buf.ReadByte()
+
+		}
+
+		return b, errors.WithStack(err)
+	}
+	return
+}
+
+func (s *streamReader) Read(p []byte) (n int, err error) {
+	n, err = s.buf.Read(p)
+	if err != nil {
+		if err == io.EOF && (s.readLength < s.length) {
+
+			err = s.readAChunk()
+			if err != nil {
+				return 0, err
+			}
+			return s.buf.Read(p)
 
 		} else {
 			return n, errors.WithStack(err)
@@ -1189,7 +1181,73 @@ func (stream *sr) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-/*func (r *sr) ReadAChunk(buf *bytes.Buffer) (n int, err error) {
+// read one chunk and decompressed to out
+func (s *streamReader) readAChunk() error {
+
+	if _, err := s.f.Seek(int64(s.start+s.readLength), 0); err != nil {
+		return errors.WithStack(err)
+	}
+
+	if s.opts.CompressionKind == pb.CompressionKind_NONE { // no header
+		l := int64(DEFAULT_CHUNK_SIZE)
+		if int64(s.length) < l {
+			l = int64(s.length)
+		}
+		_, err := io.CopyN(s.buf, s.f, l)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		s.readLength += uint64(l)
+		return nil
+	}
+
+	head := make([]byte, 3)
+	if _, err := io.ReadFull(s.f, head); err != nil {
+		return errors.WithStack(err)
+	}
+	s.readLength += 3
+	original := (head[0] & 0x01) == 1
+	chunkLength := uint64(head[2])<<15 | uint64(head[1])<<7 | uint64(head[0])>>1
+
+	if chunkLength > s.opts.ChunkSize {
+		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, s.opts.ChunkSize)
+	}
+
+	if original {
+		if _, err := io.CopyN(s.buf, s.f, int64(chunkLength)); err != nil {
+			return errors.WithStack(err)
+		}
+		s.readLength += chunkLength
+		return nil
+	}
+
+	/*switch s.opts.CompressionKind {
+	case pb.CompressionKind_ZLIB:
+		r := flate.NewReader(s.f)
+		log.Tracef("copy %d from file\n", chunkLength)
+		if _, err := io.CopyN(s.buf, r, int64(chunkLength)); err != nil {
+			return errors.WithStack(err)
+		}
+		r.Close()
+	default:
+		return errors.New("compression unknown")
+	}*/
+
+	readBuf := bytes.NewBuffer(make([]byte, chunkLength))
+	if _, err := io.CopyN(readBuf, s.f, int64(chunkLength)); err != nil {
+		return errors.WithStack(err)
+	}
+
+	if _, err := decompressChunkData(s.opts.CompressionKind, s.buf, readBuf); err != nil {
+		return err
+	}
+
+	s.readLength += chunkLength
+
+	return nil
+}
+
+/*func (r *streamReader) ReadAChunk(buf *bytes.Buffer) (n int, err error) {
 	if _, err := r.f.Seek(int64(r.start+r.readLength), 0); err != nil {
 		return 0, errors.WithStack(err)
 	}
@@ -1205,31 +1263,19 @@ func (stream *sr) Read(p []byte) (n int, err error) {
 	return
 }*/
 
-// read whole streamR into memory
-func (stream *sr) readWhole(opts *ReaderOptions, f *os.File) (err error) {
-	if _, err = f.Seek(int64(stream.start), 0); err != nil {
-		return errors.WithStack(err)
-	}
-	stream.buf.Reset()
+/*// read whole streamR into memory
+func (s *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {
 
-	if opts.CompressionKind == pb.CompressionKind_NONE {
-		if _, err = io.CopyN(stream.buf, f, int64(stream.length)); err != nil {
-			return errors.WithStack(err)
-		}
-		stream.readLength += stream.length
-		return nil
-	}
-
-	for !stream.readFinished() {
-		err = stream.readAChunk()
+	for s.readLength < s.length {
+		err = s.readAChunk()
 		if err != nil {
 			return err
 		}
 	}
 	return nil
-}
+}*/
 
-func (stream *sr) readFinished() bool {
+func (stream *streamReader) readFinished() bool {
 	return stream.readLength >= stream.length && stream.buf.Len() == 0
 }
 
@@ -1420,55 +1466,6 @@ func assertx(condition bool) {
 	if !condition {
 		panic("assert error")
 	}
-}
-
-// read one chunk and decompressed to out
-func (s *sr) readAChunk() error {
-	if s.opts.CompressionKind == pb.CompressionKind_NONE { // no header
-		l := int64(DEFAULT_CHUNK_SIZE)
-		if int64(s.length) < l {
-			l = int64(s.length)
-		}
-		n, err := io.CopyN(s.buf, s.f, l)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		s.readLength += uint64(n)
-		return nil
-	}
-
-	head := make([]byte, 3)
-	if _, err := io.ReadFull(s.f, head); err != nil {
-		return errors.WithStack(err)
-	}
-	s.readLength += 3
-	original := (head[0] & 0x01) == 1
-	chunkLength := uint64(head[2])<<15 | uint64(head[1])<<7 | uint64(head[0])>>1
-
-	if chunkLength > s.opts.ChunkSize {
-		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, s.opts.ChunkSize)
-	}
-
-	if original {
-		if _, err := io.CopyN(s.buf, s.f, int64(chunkLength)); err != nil {
-			return errors.WithStack(err)
-		}
-		s.readLength += chunkLength
-		return nil
-	}
-
-	readBuf := bytes.NewBuffer(make([]byte, chunkLength))
-	if _, err := io.CopyN(readBuf, s.f, int64(chunkLength)); err != nil {
-		return errors.WithStack(err)
-	}
-
-	if _, err := decompressChunkData(s.opts.CompressionKind, s.buf, readBuf); err != nil {
-		return err
-	}
-
-	s.readLength += chunkLength
-
-	return nil
 }
 
 func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSize int) (decompressed []byte, err error) {

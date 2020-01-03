@@ -43,7 +43,7 @@ func TestNoCompression(t *testing.T) {
 	}
 }
 
-func TestPatchBaseNegativeMin(t *testing.T) {
+func TestPatchBaseNegativeMinNoCmp(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1,
 		3, 17, 71, 35, 2,
@@ -118,7 +118,7 @@ func TestPatchBaseNegativeMin(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestPatchBaseNegativeMin2(t *testing.T) {
+func TestPatchBaseNegativeMin2NoCmp(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1, 3, 17, 71, 35, 2, 1, 139, 2, 2,
 		3, 1783, 475, 2, 1, 1, 3, 1, 3, 2, 32, 1, 2, 3, 1, 8, 30, 1, 3, 414, 1,
