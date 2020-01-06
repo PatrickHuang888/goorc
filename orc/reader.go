@@ -1225,7 +1225,7 @@ func (s *streamReader) readAChunk() error {
 	case pb.CompressionKind_ZLIB:
 		r := flate.NewReader(s.f)
 		log.Tracef("copy %d from file\n", chunkLength)
-		if _, err := io.CopyN(s.buf, r, int64(chunkLength)); err != nil {
+		if _, err := io.CopyN(s.valueBuf, r, int64(chunkLength)); err != nil {
 			return errors.WithStack(err)
 		}
 		r.Close()
@@ -1247,7 +1247,7 @@ func (s *streamReader) readAChunk() error {
 	return nil
 }
 
-/*func (r *streamReader) ReadAChunk(buf *bytes.Buffer) (n int, err error) {
+/*func (r *streamReader) ReadAChunk(valueBuf *bytes.Buffer) (n int, err error) {
 	if _, err := r.f.Seek(int64(r.start+r.readLength), 0); err != nil {
 		return 0, errors.WithStack(err)
 	}
