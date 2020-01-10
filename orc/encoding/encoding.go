@@ -54,13 +54,13 @@ type ByteRunLength struct {
 func (d *ByteRunLength) ReadValues(in BufferedReader, values []byte) ([]byte, error) {
 	control, err := in.ReadByte()
 	if err != nil {
-		return values, err
+		return values, errors.WithStack(err)
 	}
 	if control < 0x80 { // run
 		l := int(control) + MIN_REPEAT_SIZE
 		v, err := in.ReadByte()
 		if err != nil {
-			return values, err
+			return values, errors.WithStack(err)
 		}
 		for i := 0; i < l; i++ {
 			values = append(values, v)
@@ -70,7 +70,7 @@ func (d *ByteRunLength) ReadValues(in BufferedReader, values []byte) ([]byte, er
 		for i := 0; i < l; i++ {
 			v, err := in.ReadByte()
 			if err != nil {
-				return values, err
+				return values, errors.WithStack(err)
 			}
 			values = append(values, v)
 		}
@@ -79,53 +79,64 @@ func (d *ByteRunLength) ReadValues(in BufferedReader, values []byte) ([]byte, er
 }
 
 func (e *ByteRunLength) WriteValues(out *bytes.Buffer, v interface{}) error {
-	values := v.([]byte)
+	vs := v.([]byte)
 
-	for i := 0; i < len(values); {
-		l := len(values) - i
-		if l > 128 {
+	for i := 0; i < len(vs); {
+		l := len(vs) - i
+		if l > 128 { // max 128
 			l = 128
 		}
-		repeats := findRepeatsInBytes(values[i:i+l], 3)
+
+		values := vs[i : i+l]
+		repeats := findRepeatsInBytes(values, 3)
 
 		if repeats == nil {
 			if err := out.WriteByte(byte(-l)); err != nil {
 				return errors.WithStack(err)
 			}
-			if _, err := out.Write(values[i : i+l]); err != nil {
+			if _, err := out.Write(values); err != nil {
 				return errors.WithStack(err)
 			}
 			continue
 		}
 
-		start := 0
-		for i = 0; i < len(repeats); i++ {
-			if err := out.WriteByte(byte(-(repeats[i].start - start))); err != nil {
+		if repeats[0].start != 0 {
+			if err := out.WriteByte(byte(-(repeats[0].start))); err != nil {
 				return errors.WithStack(err)
 			}
-			if _, err := out.Write(values[start:repeats[i].start]); err != nil {
-				return errors.WithStack(err)
-			}
-
-			if err := out.WriteByte(byte(repeats[i].count)); err != nil {
-				return errors.WithStack(err)
-			}
-			if err := out.WriteByte(values[repeats[i].start]); err != nil {
-				return errors.WithStack(err)
-			}
-
-			start = repeats[i].start
-		}
-
-		last := len(repeats) - 1
-		if repeats[last].start+repeats[last].count < l {
-			if err := out.WriteByte(byte(-(l - repeats[last].start - repeats[last].count))); err != nil {
-				return errors.WithStack(err)
-			}
-			if _, err := out.Write(values[repeats[last].start+repeats[last].count : i+l]); err != nil {
+			if _, err := out.Write(values[:repeats[0].start]); err != nil {
 				return errors.WithStack(err)
 			}
 		}
+		for j:=0 ; j < len(repeats); j++ {
+
+			if err := out.WriteByte(byte(repeats[j].count - MIN_REPEAT_SIZE)); err != nil {
+				return errors.WithStack(err)
+			}
+			if err := out.WriteByte(values[repeats[j].start]); err != nil {
+				return errors.WithStack(err)
+			}
+
+			if j+1 < len(repeats) {
+				if err := out.WriteByte(byte(-(repeats[j+1].start - (repeats[j].start+repeats[j].count)))); err != nil {
+					return errors.WithStack(err)
+				}
+				if _, err := out.Write(values[repeats[j].start+repeats[j].count:repeats[j+1].start]); err != nil {
+					return errors.WithStack(err)
+				}
+			}
+		}
+		left :=repeats[len(repeats)-1].start+repeats[len(repeats)-1].count  // first not include in repeat
+		if left < l {
+			if err := out.WriteByte(byte(-(l - left))); err != nil {
+				return errors.WithStack(err)
+			}
+			if _, err := out.Write(values[left:l]); err != nil {
+				return errors.WithStack(err)
+			}
+		}
+
+		i += l
 	}
 
 	return nil
@@ -269,12 +280,12 @@ type BytesContent struct {
 }
 
 // decode bytes, but should have extracted length stream first by rle v2 as length field
-/*func (bd *BytesContent) ReadValues(in BufferedReader, values []byte) (err error) {
-	if _, err= in.Read(values);err!=nil {
+func (bd *BytesContent) ReadValues(in BufferedReader, values []byte) (err error) {
+	if _, err = in.Read(values); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
-}*/
+}
 
 // write out content do not base length field, just base on len of content
 func (e *BytesContent) WriteValues(out *bytes.Buffer, vs interface{}) error {

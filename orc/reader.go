@@ -51,7 +51,7 @@ type reader struct {
 func NewReader(path string, opts *ReaderOptions) (r Reader, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "open file %s error", path)
+		return nil, errors.Wrapf(err, "open file %stream error", path)
 	}
 
 	tail, err := extractFileTail(f)
@@ -123,7 +123,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		if err := sr.prepare(); err != nil {
 			return ss, errors.WithStack(err)
 		}
-		log.Debugf("get stripeR %d : %s", sr.idx, sr.info.String())
+		log.Debugf("get stripeR %d : %stream", sr.idx, sr.info.String())
 		ss = append(ss, sr)
 
 	}
@@ -170,8 +170,8 @@ type column struct {
 func (c *column) String() string {
 	sb := strings.Builder{}
 	fmt.Fprintf(&sb, "id %d, ", c.id)
-	fmt.Fprintf(&sb, "kind %s, ", c.schema.Kind.String())
-	fmt.Fprintf(&sb, "encoding %s, ", c.encoding.String())
+	fmt.Fprintf(&sb, "kind %stream, ", c.schema.Kind.String())
+	fmt.Fprintf(&sb, "encoding %stream, ", c.encoding.String())
 	fmt.Fprintf(&sb, "read cursor %d", c.cursor)
 	return sb.String()
 }
@@ -206,11 +206,11 @@ func (s *stripeR) prepare() error {
 			// todo: init index streamReader
 			indexStart += length
 		} else {
-			sr := &streamReader{start: dataStart, length: length, kind: kind, buf: buf, f: s.f, opts: s.opts}
+			r := &streamReader{start: dataStart, info: ss, buf: buf, in: s.f, opts: s.opts}
 
 			if kind == pb.Stream_PRESENT {
 				decoder := &encoding.ByteRunLength{}
-				stream = &boolSR{r: sr, decoder: decoder}
+				stream = &boolSR{r: r, decoder: decoder}
 			}
 
 			columnEncoding := columns[id].encoding.GetKind()
@@ -223,7 +223,7 @@ func (s *stripeR) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
 						decoder := &encoding.IntRleV2{Signed: true}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 					}
 					break
 				}
@@ -238,33 +238,33 @@ func (s *stripeR) prepare() error {
 				}
 				if kind == pb.Stream_DATA {
 					decoder := &encoding.Ieee754Double{}
-					stream = &ieeeFloatSR{r: sr, decoder: decoder}
+					stream = &ieeeFloatSR{reader: r, decoder: decoder}
 				}
 
 			case pb.Type_STRING:
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
-						stream = &bytesContentSR{r: sr}
+						stream = &bytesContentSR{reader: r}
 						break
 					}
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{Signed: false}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 				}
 				if columnEncoding == pb.ColumnEncoding_DICTIONARY_V2 {
 					if kind == pb.Stream_DATA {
-						stream = &longSR{r: sr, decoder: &encoding.IntRleV2{Signed: false}}
+						stream = &longSR{r: r, decoder: &encoding.IntRleV2{Signed: false}}
 						break
 					}
 					if kind == pb.Stream_DICTIONARY_DATA {
-						stream = &bytesContentSR{r: sr}
+						stream = &bytesContentSR{reader: r}
 						break
 					}
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{Signed: false}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 				}
@@ -277,7 +277,7 @@ func (s *stripeR) prepare() error {
 
 				if kind == pb.Stream_DATA {
 					decoder := &encoding.ByteRunLength{}
-					stream = &boolSR{r: sr, decoder: decoder}
+					stream = &boolSR{r: r, decoder: decoder}
 				}
 
 			case pb.Type_BYTE: // tinyint
@@ -287,7 +287,7 @@ func (s *stripeR) prepare() error {
 
 				if kind == pb.Stream_DATA {
 					decoder := &encoding.ByteRunLength{}
-					stream = &byteSR{r: sr, decoder: decoder}
+					stream = &byteSR{reader: r, decoder: decoder}
 				}
 
 			case pb.Type_BINARY:
@@ -298,12 +298,12 @@ func (s *stripeR) prepare() error {
 				}
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
-						stream = &bytesContentSR{r: sr}
+						stream = &bytesContentSR{reader: r}
 						break
 					}
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{Signed: false}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 				}
@@ -319,12 +319,12 @@ func (s *stripeR) prepare() error {
 					if kind == pb.Stream_DATA {
 						decoder := &encoding.Base128VarInt{}
 						// fixme: only int64 var int
-						stream = &int64VarIntSR{r: sr, decoder: decoder}
+						stream = &int64VarIntSR{reader: r, decoder: decoder}
 						break
 					}
 					if kind == pb.Stream_SECONDARY {
 						decoder := &encoding.IntRleV2{Signed: false}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 				}
@@ -339,7 +339,7 @@ func (s *stripeR) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
 						decoder := &encoding.IntRleV2{Signed: true}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 				}
@@ -354,12 +354,12 @@ func (s *stripeR) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_DATA {
 						decoder := &encoding.IntRleV2{Signed: true}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 					if kind == pb.Stream_SECONDARY {
 						decoder := &encoding.IntRleV2{Signed: false}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 				}
@@ -376,7 +376,7 @@ func (s *stripeR) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 				}
@@ -390,7 +390,7 @@ func (s *stripeR) prepare() error {
 				if columnEncoding == pb.ColumnEncoding_DIRECT_V2 {
 					if kind == pb.Stream_LENGTH {
 						decoder := &encoding.IntRleV2{}
-						stream = &longSR{r: sr, decoder: decoder}
+						stream = &longSR{r: r, decoder: decoder}
 						break
 					}
 				}
@@ -424,7 +424,7 @@ func (s *stripeR) prepare() error {
 func (s *stripeR) NextBatch(batch *ColumnVector) error {
 
 	c := s.columns[batch.Id]
-	log.Debugf("column: %s reading", c.String())
+	log.Debugf("column: %stream reading", c.String())
 
 	if err := c.nextPresents(batch); err != nil {
 		return err
@@ -467,28 +467,28 @@ func (s *stripeR) NextBatch(batch *ColumnVector) error {
 			return c.nextBinaryV2(batch)
 		}
 
-		return errors.Errorf("encoding %s for binary not impl", encoding)
+		return errors.Errorf("encoding %stream for binary not impl", encoding)
 
 	case pb.Type_DECIMAL:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
 			return c.nextDecimal64sV2(batch)
 		}
 
-		return errors.Errorf("encoding %s for decimal not impl", encoding)
+		return errors.Errorf("encoding %stream for decimal not impl", encoding)
 
 	case pb.Type_DATE:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
 			return c.nextDatesV2(batch)
 		}
 
-		return errors.Errorf("encoding %s  for date not impl", encoding)
+		return errors.Errorf("encoding %stream  for date not impl", encoding)
 
 	case pb.Type_TIMESTAMP:
 		if encoding == pb.ColumnEncoding_DIRECT_V2 {
 			return c.nextTimestampsV2(batch)
 		}
 
-		return errors.Errorf("encoding %s for timestamp not impl", encoding)
+		return errors.Errorf("encoding %stream for timestamp not impl", encoding)
 
 	case pb.Type_STRUCT:
 		fields := batch.Vector.([]*ColumnVector)
@@ -519,7 +519,7 @@ func (s *stripeR) NextBatch(batch *ColumnVector) error {
 		}*/
 
 	default:
-		return errors.Errorf("type %s not impl", c.schema.Kind.String())
+		return errors.Errorf("type %stream not impl", c.schema.Kind.String())
 	}
 
 	return nil
@@ -924,7 +924,7 @@ type streamR interface {
 }
 
 type byteSR struct {
-	r *streamReader
+	reader *streamReader
 
 	values   []byte
 	consumed int
@@ -937,7 +937,7 @@ func (s *byteSR) next() (v byte, err error) {
 		s.values = s.values[:0]
 		s.consumed = 0
 
-		if s.values, err = s.decoder.ReadValues(s.r, s.values); err != nil {
+		if s.values, err = s.decoder.ReadValues(s.reader, s.values); err != nil {
 			return 0, err
 		}
 	}
@@ -948,49 +948,52 @@ func (s *byteSR) next() (v byte, err error) {
 }
 
 func (s *byteSR) finished() bool {
-	return s.r.readFinished() && (s.consumed == len(s.values))
+	return s.reader.finished() && (s.consumed == len(s.values))
 }
 
 // rethink: not using decoder, just read directly using streamReader
 type bytesContentSR struct {
-	r *streamReader
+	reader *streamReader
+
+	decoder *encoding.BytesContent
 }
 
 func (s *bytesContentSR) next(length uint64) (v []byte, err error) {
 
-	if s.r.buf.Len() < int(length) && !s.finished() {
-		s.r.buf.Truncate(s.r.buf.Len())
-		if err := s.r.readAChunk(); err != nil {
+	/*if stream.r.buf.Len() < int(length) && !stream.finished() {
+		stream.r.buf.Truncate(stream.r.buf.Len())
+		if err := stream.r.readAChunk(); err != nil {
 			return nil, err
 		}
 	}
 
 	v = make([]byte, length)
-	n, err := s.r.buf.Read(v)
+	n, err := stream.r.buf.Read(v)
 	if err != nil {
 		return nil, err
 	}
 	if n < int(length) {
 		return nil, errors.New("no enough bytes")
-	}
-	return
+	}*/
+	return nil, errors.New("not impl")
 }
 
 func (s *bytesContentSR) finished() bool {
-	return s.r.readFinished() && (s.r.buf.Len() == 0)
+	//return stream.r.readFinished() && (stream.r.buf.Len() == 0)
+	return false
 }
 
 // for streamR like dict
 func (s *bytesContentSR) getAll(lengthAll []uint64) (vs [][]byte, err error) {
-	for !s.r.readFinished() {
-		if err = s.r.readAChunk(); err != nil {
+	/*for !stream.r.readFinished() {
+		if err = stream.r.readAChunk(); err != nil {
 			return nil, err
 		}
 	}
 
 	for _, l := range lengthAll {
 		v := make([]byte, l)
-		n, err := s.r.buf.Read(v)
+		n, err := stream.r.buf.Read(v)
 		if err != nil {
 			return vs, err
 		}
@@ -998,27 +1001,27 @@ func (s *bytesContentSR) getAll(lengthAll []uint64) (vs [][]byte, err error) {
 			return vs, errors.New("no enough bytes")
 		}
 		vs = append(vs, v)
-	}
+	}*/
 
-	return
+	return nil, errors.New("not impl")
 }
 
 type ieeeFloatSR struct {
-	r *streamReader
+	reader *streamReader
 
 	decoder *encoding.Ieee754Double
 }
 
 func (s *ieeeFloatSR) next() (v float64, err error) {
-	return s.decoder.ReadValue(s.r)
+	return s.decoder.ReadValue(s.reader)
 }
 
 func (s *ieeeFloatSR) finished() bool {
-	return s.r.readFinished()
+	return s.reader.finished()
 }
 
 type int64VarIntSR struct {
-	r *streamReader
+	reader *streamReader
 
 	values []int64
 	pos    int
@@ -1031,7 +1034,7 @@ func (s *int64VarIntSR) next() (v int64, err error) {
 		s.pos = 0
 		s.values = s.values[:0]
 
-		if err = s.decoder.ReadValues(s.r, s.values); err != nil {
+		if err = s.decoder.ReadValues(s.reader, s.values); err != nil {
 			return 0, err
 		}
 	}
@@ -1042,7 +1045,7 @@ func (s *int64VarIntSR) next() (v int64, err error) {
 }
 
 func (s *int64VarIntSR) finished() bool {
-	return s.r.readFinished() && (s.pos == len(s.values))
+	return s.reader.finished() && (s.pos == len(s.values))
 }
 
 type longSR struct {
@@ -1080,9 +1083,9 @@ func (s *longSR) nextUInt() (v uint64, err error) {
 	return
 }
 
-// for small data like dict index, ignore s.signed
+// for small data like dict index, ignore stream.signed
 func (s *longSR) getAllUInts() (vs []uint64, err error) {
-	for !s.r.readFinished() {
+	for !s.r.finished() {
 		if s.values, err = s.decoder.ReadValues(s.r, s.values); err != nil {
 			return
 		}
@@ -1091,7 +1094,7 @@ func (s *longSR) getAllUInts() (vs []uint64, err error) {
 }
 
 func (s *longSR) finished() bool {
-	return s.r.readFinished() && (s.pos == len(s.values))
+	return s.r.finished() && (s.pos == len(s.values))
 }
 
 type boolSR struct {
@@ -1125,75 +1128,91 @@ func (s *boolSR) next() (v bool, err error) {
 
 func (s *boolSR) finished() bool {
 	// fixme:
-	return s.r.readFinished() && (s.pos == len(s.values))
+	return s.r.finished() && (s.pos == len(s.values))
 }
 
+/*type streamReader interface {
+	io.Reader
+	io.ByteReader
+	finished() bool
+}*/
+
 type streamReader struct {
+	info *pb.Stream
+
 	start      uint64
-	length     uint64
 	readLength uint64
-	kind       pb.Stream_Kind
-	buf        *bytes.Buffer
+
+	buf *bytes.Buffer
 
 	opts *ReaderOptions
 
-	f *os.File
+	in io.ReadSeeker
 }
 
-func (s streamReader) String() string {
-	return fmt.Sprintf("start %d, length %d, kind %s, already read %d", s.start, s.length,
-		s.kind.String(), s.readLength)
-}
+/*func (stream streamReader) String() string {
+	return fmt.Sprintf("start %d, length %d, kind %stream, already read %d", stream.start, stream.length,
+		stream.kind.String(), stream.readLength)
+}*/
 
 func (s *streamReader) ReadByte() (b byte, err error) {
+	if s.buf.Len() >= 1 {
+		b, err = s.buf.ReadByte()
+		if err != nil {
+			return b, errors.WithStack(err)
+		}
+		return
+	}
+
+	for s.buf.Len() < 1 && s.readLength < s.info.GetLength() {
+		if err = s.readAChunk(); err != nil {
+			return 0, err
+		}
+	}
+
 	b, err = s.buf.ReadByte()
 	if err != nil {
-		if err == io.EOF && (s.readLength < s.length) {
-
-			err = s.readAChunk()
-			if err != nil {
-				return 0, err
-			}
-			return s.buf.ReadByte()
-
-		}
-
 		return b, errors.WithStack(err)
 	}
 	return
 }
 
 func (s *streamReader) Read(p []byte) (n int, err error) {
-	n, err = s.buf.Read(p)
-	if err != nil {
-		if err == io.EOF && (s.readLength < s.length) {
-
-			err = s.readAChunk()
-			if err != nil {
-				return 0, err
-			}
-			return s.buf.Read(p)
-
-		} else {
+	if s.buf.Len() >= len(p) {
+		n, err = s.buf.Read(p)
+		if err != nil {
 			return n, errors.WithStack(err)
 		}
+		return
 	}
-	return n, nil
+
+	for s.buf.Len() < len(p) && s.readLength < s.info.GetLength() {
+		if err = s.readAChunk(); err != nil {
+			return 0, err
+		}
+	}
+
+	n, err = s.buf.Read(p)
+	if err != nil {
+		return n, errors.WithStack(err)
+	}
+	return
 }
 
-// read one chunk and decompressed to out
+// read a chunk to s.buf
 func (s *streamReader) readAChunk() error {
 
-	if _, err := s.f.Seek(int64(s.start+s.readLength), 0); err != nil {
+	if _, err := s.in.Seek(int64(s.start+s.readLength), 0); err != nil {
 		return errors.WithStack(err)
 	}
 
 	if s.opts.CompressionKind == pb.CompressionKind_NONE { // no header
 		l := int64(DEFAULT_CHUNK_SIZE)
-		if int64(s.length) < l {
-			l = int64(s.length)
+		if int64(s.info.GetLength()) < l {
+			l = int64(s.info.GetLength())
 		}
-		_, err := io.CopyN(s.buf, s.f, l)
+		log.Tracef("no compression copy %d from stream", l)
+		_, err := io.CopyN(s.buf, s.in, l)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -1202,7 +1221,7 @@ func (s *streamReader) readAChunk() error {
 	}
 
 	head := make([]byte, 3)
-	if _, err := io.ReadFull(s.f, head); err != nil {
+	if _, err := io.ReadFull(s.in, head); err != nil {
 		return errors.WithStack(err)
 	}
 	s.readLength += 3
@@ -1214,27 +1233,18 @@ func (s *streamReader) readAChunk() error {
 	}
 
 	if original {
-		if _, err := io.CopyN(s.buf, s.f, int64(chunkLength)); err != nil {
+		log.Tracef("stream read original chunkLength %d", chunkLength)
+		if _, err := io.CopyN(s.buf, s.in, int64(chunkLength)); err != nil {
 			return errors.WithStack(err)
 		}
 		s.readLength += chunkLength
 		return nil
 	}
 
-	/*switch s.opts.CompressionKind {
-	case pb.CompressionKind_ZLIB:
-		r := flate.NewReader(s.f)
-		log.Tracef("copy %d from file\n", chunkLength)
-		if _, err := io.CopyN(s.valueBuf, r, int64(chunkLength)); err != nil {
-			return errors.WithStack(err)
-		}
-		r.Close()
-	default:
-		return errors.New("compression unknown")
-	}*/
-
+	log.Tracef("compressing %s read chunkLength %d", s.opts.CompressionKind, chunkLength)
 	readBuf := bytes.NewBuffer(make([]byte, chunkLength))
-	if _, err := io.CopyN(readBuf, s.f, int64(chunkLength)); err != nil {
+	readBuf.Reset()
+	if _, err := io.CopyN(readBuf, s.in, int64(chunkLength)); err != nil {
 		return errors.WithStack(err)
 	}
 
@@ -1264,10 +1274,10 @@ func (s *streamReader) readAChunk() error {
 }*/
 
 /*// read whole streamR into memory
-func (s *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {
+func (stream *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {
 
-	for s.readLength < s.length {
-		err = s.readAChunk()
+	for stream.readLength < stream.length {
+		err = stream.readAChunk()
 		if err != nil {
 			return err
 		}
@@ -1275,8 +1285,8 @@ func (s *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {
 	return nil
 }*/
 
-func (stream *streamReader) readFinished() bool {
-	return stream.readLength >= stream.length && stream.buf.Len() == 0
+func (s streamReader) finished() bool {
+	return s.readLength >= s.info.GetLength() && s.buf.Len() == 0
 }
 
 func (r *reader) NumberOfRows() uint64 {
@@ -1354,7 +1364,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 	psOffset := readSize - 1 - psLen
 	ps, err := extractPostScript(buf[psOffset : psOffset+psLen])
 	if err != nil {
-		return nil, errors.Wrapf(err, "extract postscript error %s", f.Name())
+		return nil, errors.Wrapf(err, "extract postscript error %stream", f.Name())
 	}
 	footerSize := int64(ps.GetFooterLength()) // compressed footer length
 	metaSize := int64(ps.GetMetadataLength())
@@ -1390,7 +1400,7 @@ func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 
-	log.Debugf("Footer: %s\n", footer.String())
+	log.Debugf("Footer: %stream\n", footer.String())
 
 	fl := uint64(size)
 	psl := uint64(psLen)
@@ -1412,7 +1422,7 @@ func extractPostScript(buf []byte) (ps *pb.PostScript, err error) {
 	  default:
 	  	return nil, errors.New("unknown compression")
 	  }*/
-	fmt.Printf("Postscript: %s\n", ps.String())
+	fmt.Printf("Postscript: %stream\n", ps.String())
 	return ps, err
 }
 
@@ -1425,7 +1435,7 @@ func ensureOrcFooter(f *os.File, psLen int, buf []byte) error {
 	magicLength := len(MAGIC)
 	fullLength := magicLength + 1
 	if psLen < fullLength || len(buf) < fullLength {
-		return errors.Errorf("malformed ORC file %s, invalid postscript length %d", f.Name(), psLen)
+		return errors.Errorf("malformed ORC file %stream, invalid postscript length %d", f.Name(), psLen)
 	}
 	// now look for the magic string at the end of the postscript.
 	//if (!Text.decode(array, offset, magicLength).equals(OrcFile.MAGIC)) {
@@ -1436,7 +1446,7 @@ func ensureOrcFooter(f *os.File, psLen int, buf []byte) error {
 		// Read the first 3 bytes of the file to check for the header
 		// todo:
 
-		return errors.Errorf("malformed ORC file %s, invalid postscript", f.Name())
+		return errors.Errorf("malformed ORC file %stream, invalid postscript", f.Name())
 	}
 	return nil
 }
@@ -1510,14 +1520,13 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 
 // data should be compressed
 func decompressChunkData(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
-	assertx(kind != pb.CompressionKind_NONE)
 	switch kind {
 	case pb.CompressionKind_ZLIB:
 		r := flate.NewReader(src)
 		n, err = dst.ReadFrom(r)
 		r.Close()
 		if err != nil {
-			return 0, errors.Wrapf(err, "decompress chunk data error")
+			return 0, errors.WithStack(err)
 		}
 		return n, nil
 	default:

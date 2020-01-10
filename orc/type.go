@@ -18,16 +18,16 @@ type TypeDescription struct {
 }
 
 func (td *TypeDescription) Print() {
-	fmt.Printf("Id %d, Kind %s\n", td.Id, td.Kind.String())
+	fmt.Printf("Id %d, Kind %stream\n", td.Id, td.Kind.String())
 	if td.ChildrenNames != nil && len(td.ChildrenNames) != 0 {
 		fmt.Println("ChildrenNames: ")
 	}
 	for i, cn := range td.ChildrenNames {
 
 		if i == len(td.ChildrenNames)-1 {
-			fmt.Printf("%s \n", cn)
+			fmt.Printf("%stream \n", cn)
 		} else {
-			fmt.Printf("%s, ", cn)
+			fmt.Printf("%stream, ", cn)
 		}
 	}
 	for _, n := range td.Children {
