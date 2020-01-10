@@ -259,7 +259,6 @@ func (w *writer) flushStripe(force bool, out io.Writer) error {
 		// todo: update column stats
 		// reset current currentStripe
 		w.offset += w.stripe.info.GetOffset() + w.stripe.info.GetIndexLength() + w.stripe.info.GetDataLength()
-		w.stripeInfos = append(w.stripeInfos, w.stripe.info)
 		log.Debugf("flushed currentStripe %v", w.stripe.info)
 
 		// todo:
@@ -741,8 +740,8 @@ func (w *writer) GetSchema() *TypeDescription {
 }
 
 func (w *fileWriter) Close() error {
-	if err := w.flushStripe(true); err != nil {
-		return errors.WithStack(err)
+	if err := w.flushStripe(true, w.f); err != nil {
+		return err
 	}
 	if err := w.writeFileTail(); err != nil {
 		return errors.WithStack(err)
@@ -760,7 +759,7 @@ func (w *writer) writeHeader(out io.Writer) (uint64, error) {
 	return uint64(len(b)), nil
 }
 
-func (w *writer) writeFileTail() error {
+func (w *writer) writeFileTail(out io.Writer) error {
 	// writeValues footer
 	// todo: rowsinstrde
 	ft := &pb.Footer{HeaderLength: new(uint64), ContentLength: new(uint64), NumberOfRows: new(uint64)}
