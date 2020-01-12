@@ -51,8 +51,7 @@ type Writer interface {
 	Close() error
 }
 
-
-func NewWriter(path string, schema *TypeDescription, opts *WriterOptions) (Writer, error) {
+func NewFileWriter(path string, schema *TypeDescription, opts *WriterOptions) (writer Writer, err error) {
 	// fixme: create new one, error when exist
 	log.Infof("open %stream", path)
 	f, err := os.Create(path)
@@ -60,21 +59,94 @@ func NewWriter(path string, schema *TypeDescription, opts *WriterOptions) (Write
 		return nil, errors.WithStack(err)
 	}
 
+	w, err:= newWriter(schema, opts, f)
+	if err!=nil {
+		return nil, err
+	}
+	writer= &fileWriter{f:f, path:path, writer:w}
+	return writer, nil
+}
+
+type fileWriter struct {
+	path   string
+	f      *os.File
+
+	*writer
+}
+
+func (w *fileWriter) Write(batch *ColumnVector) error {
+	if err := w.stripe.write(batch); err != nil {
+		return err
+	}
+	w.flushStripe(false, w.f)
+	return nil
+}
+
+func (w *fileWriter) Close() error {
+	return w.close(w.f)
+}
+
+func newWriter(schema *TypeDescription, opts *WriterOptions, out io.Writer) (*writer, error) {
 	schemas := schema.normalize()
 	for _, s := range schemas {
 		s.Encoding = getColumnEncoding(opts, s.Kind)
 	}
-	w := &writer{opts: opts, path: path, f: f, schemas: schemas}
-	n, err := w.writeHeader()
+
+	w := &writer{opts:opts, schemas:schemas}
+	n, err := w.writeHeader(out)
 	if err != nil {
 		return nil, err
 	}
+
 	w.offset = n
 	w.stripe, err = newStripe(w.offset, w.schemas, w.opts)
 	if err != nil {
 		return nil, err
 	}
 	return w, nil
+}
+
+// cannot used concurrently, not synchronized
+// strip buffered in memory until the strip size
+// writeValues out by columns
+type writer struct {
+	schemas []*TypeDescription
+	opts *WriterOptions
+
+	offset uint64
+
+	stripe *stripeWriter
+
+	stripeInfos []*pb.StripeInformation
+	columnStats []*pb.ColumnStatistics
+
+	ps *pb.PostScript
+}
+
+func (w *writer) write(batch *ColumnVector) error {
+	if err := w.stripe.write(batch); err != nil {
+		return err
+	}
+	return nil
+}
+
+// refactoring: whole stripe buffered in memory and flush out?
+func (w *writer) flushStripe(force bool, out io.Writer) error {
+	if w.stripe.shouldFlush() || force {
+		if err := w.stripe.flush(out); err != nil {
+			return errors.WithStack(err)
+		}
+
+		// todo: update column stats
+
+		w.offset += w.stripe.info.GetOffset() + w.stripe.info.GetIndexLength() + w.stripe.info.GetDataLength()
+		log.Debugf("flushed currentStripe %v", w.stripe.info)
+		w.stripeInfos= append(w.stripeInfos, w.stripe.info)
+
+		w.stripe.reset()
+		*w.stripe.info.Offset= w.offset
+	}
+	return nil
 }
 
 func newStripe(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (stripe *stripeWriter, err error) {
@@ -210,61 +282,6 @@ func newStripe(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (
 	info.Offset = &offset
 	s := &stripeWriter{opts: opts, idxBuf: idxBuf, streams: streams, info: info, schemas: schemas}
 	return s, nil
-}
-
-type fileWriter struct {
-	path   string
-	f      *os.File
-
-	*writer
-}
-func (w *fileWriter) Write(batch *ColumnVector) error {
-	if err := w.stripe.write(batch); err != nil {
-		return err
-	}
-	w.flushStripe(false, w.f)
-	return nil
-}
-// cannot used concurrently, not synchronized
-// strip buffered in memory until the strip size
-// writeValues out by columns
-type writer struct {
-	schemas []*TypeDescription
-	opts *WriterOptions
-
-	offset uint64
-
-	stripe *stripeWriter
-
-	//stripeInfos []*pb.StripeInformation
-	columnStats []*pb.ColumnStatistics
-
-	ps *pb.PostScript
-}
-
-func (w *writer) write(batch *ColumnVector) error {
-	if err := w.stripe.write(batch); err != nil {
-		return err
-	}
-	return nil
-}
-
-// refactoring: whole stripe buffered in memory and flush out?
-func (w *writer) flushStripe(force bool, out io.Writer) error {
-	// a currentStripe should contains whole row
-	if w.stripe.shouldFlush() || force {
-		if err := w.stripe.flush(out); err != nil {
-			return errors.WithStack(err)
-		}
-		// todo: update column stats
-		// reset current currentStripe
-		w.offset += w.stripe.info.GetOffset() + w.stripe.info.GetIndexLength() + w.stripe.info.GetDataLength()
-		log.Debugf("flushed currentStripe %v", w.stripe.info)
-
-		// todo:
-		w.stripe.reset()
-	}
-	return nil
 }
 
 type stripeWriter struct {
@@ -628,17 +645,14 @@ func (s *stripeWriter) shouldFlush() bool {
 func (s *stripeWriter) flush(out io.Writer) error {
 	var stripeFooter pb.StripeFooter
 
-	// row number updated at writeValues
-	idxLength := uint64(s.idxBuf.Len())
-	// valueBuf will be reset after writeTo
+	// row number updated at write
+	*s.info.IndexLength = uint64(s.idxBuf.Len())
 	_, err := s.idxBuf.WriteTo(out)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	log.Debugf("flush index with length %d", idxLength)
-	s.info.IndexLength = &idxLength
+	log.Debugf("flush index with length %d", s.info.GetIndexLength())
 
-	//var dataLength uint64
 	for _, schema := range s.schemas {
 		for _, writer := range s.streams[schema.Id] {
 			if writer != nil {
@@ -665,14 +679,24 @@ func (s *stripeWriter) flush(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ftLength := uint64(len(compressedFooterBuf))
-	log.Debugf("writing stripe footer with length: %d", ftLength)
+	*s.info.FooterLength= uint64(len(compressedFooterBuf))
 	if _, err := out.Write(compressedFooterBuf); err != nil {
 		return errors.WithStack(err)
 	}
-	s.info.FooterLength = &ftLength
+	log.Debugf("stripe footer wrote with length: %d", s.info.GetFooterLength())
 
 	return nil
+}
+
+func (s *stripeWriter) reset()  {
+	s.info.Reset()
+	s.idxBuf.Reset()
+	s.bufferedSize= 0
+	for _, td := range s.schemas {
+		for _, stream := range s.streams[td.Id] {
+			stream.reset()
+		}
+	}
 }
 
 type valuesWriter struct {
@@ -692,6 +716,11 @@ func (w *valuesWriter) write(values interface{}) (written int, err error) {
 	}
 
 	return w.stream.write(w.valueBuf)
+}
+
+func (w *valuesWriter) reset()  {
+	w.stream.reset()
+	w.valueBuf.Reset()
 }
 
 type streamWriter struct {
@@ -730,25 +759,13 @@ func (s *streamWriter) flush(w io.Writer) (n int64, err error) {
 	return s.buf.WriteTo(w)
 }
 
-/*func (s *streamWriter) reset() {
-	*s.info.Length = 0
+func (s *streamWriter) reset() {
+	s.info.Reset()
 	s.buf.Reset()
-}*/
+}
 
 func (w *writer) GetSchema() *TypeDescription {
 	return w.schemas[0]
-}
-
-func (w *fileWriter) Close() error {
-	if err := w.flushStripe(true, w.f); err != nil {
-		return err
-	}
-	if err := w.writeFileTail(); err != nil {
-		return errors.WithStack(err)
-	}
-
-	w.f.Close()
-	return nil
 }
 
 func (w *writer) writeHeader(out io.Writer) (uint64, error) {
@@ -759,11 +776,14 @@ func (w *writer) writeHeader(out io.Writer) (uint64, error) {
 	return uint64(len(b)), nil
 }
 
+var HEADER_LENGTH=uint64(3)
+var MAGIC= "ORC"
+
 func (w *writer) writeFileTail(out io.Writer) error {
 	// writeValues footer
 	// todo: rowsinstrde
-	ft := &pb.Footer{HeaderLength: new(uint64), ContentLength: new(uint64), NumberOfRows: new(uint64)}
-	*ft.HeaderLength = 3 // always 3
+	ft := &pb.Footer{HeaderLength: &HEADER_LENGTH, ContentLength: new(uint64), NumberOfRows: new(uint64)}
+
 	for _, si := range w.stripeInfos {
 		*ft.ContentLength += si.GetIndexLength() + si.GetDataLength() + si.GetFooterLength()
 		*ft.NumberOfRows += si.GetNumberOfRows()
@@ -777,41 +797,52 @@ func (w *writer) writeFileTail(out io.Writer) error {
 
 	ftb, err := proto.Marshal(ft)
 	if err != nil {
-		return errors.Wrap(err, "marshall footer error")
+		return errors.WithStack(err)
 	}
 	ftCmpBuf, err := compressByteSlice(w.opts.CompressionKind, w.opts.ChunkSize, ftb)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 	ftl := uint64(len(ftCmpBuf))
-	if _, err := w.f.Write(ftCmpBuf); err != nil {
+
+	if _, err := out.Write(ftCmpBuf); err != nil {
 		return errors.WithStack(err)
 	}
 	log.Debugf("writeValues file footer with length: %d", ftl)
 
-	// writeValues postscript
+	// postscript
 	ps := &pb.PostScript{}
 	ps.FooterLength = &ftl
 	ps.Compression = &w.opts.CompressionKind
 	c := uint64(w.opts.ChunkSize)
 	ps.CompressionBlockSize = &c
 	ps.Version = VERSION
-	m := MAGIC
-	ps.Magic = &m
+	ps.Magic = &MAGIC
 	psb, err := proto.Marshal(ps)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	n, err := w.f.Write(psb)
+	n, err := out.Write(psb)
 	if err != nil {
-		return errors.Wrap(err, "writeValues PS error")
+		return errors.Wrap(err, "write PS error")
 	}
 	log.Debugf("writeValues postscript with length %d", n)
 	// last byte is ps length
-	if _, err = w.f.Write([]byte{byte(n)}); err != nil {
-		return errors.Wrap(err, "writeValues PS length error")
+	if _, err = out.Write([]byte{byte(n)}); err != nil {
+		return errors.WithStack(err)
 	}
 
+	return nil
+}
+
+func (w *writer) close(out io.WriteCloser) error  {
+	if err := w.flushStripe(true, out); err != nil {
+		return err
+	}
+	if err := w.writeFileTail(out); err != nil {
+		return err
+	}
+	out.Close()
 	return nil
 }
 

@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	MAGIC                = "ORC"
+	//MAGIC                = "ORC"
 	MAGIC_LENGTH         = uint64(3)
 	DIRECTORY_SIZE_GUESS = 16 * 1024
 )
