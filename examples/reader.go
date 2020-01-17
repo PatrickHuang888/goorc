@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/PatrickHuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc"
 )
 
 func main() {

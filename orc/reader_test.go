@@ -13,7 +13,7 @@ func init() {
 
 func TestNoCompression(t *testing.T) {
 	opts := DefaultReaderOptions()
-	reader, err := NewReader("../testing/basicLongNoCompression.orc", opts)
+	reader, err := NewFileReader("../testing/basicLongNoCompression.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -27,7 +27,7 @@ func TestNoCompression(t *testing.T) {
 	batch := schema.CreateReaderBatch(opts)
 	for _, stripe := range stripes {
 
-		err = stripe.NextBatch(batch)
+		err = stripe.Next(batch)
 		if err != nil {
 			t.Fatalf("%+v", err)
 		}
@@ -97,7 +97,7 @@ func TestPatchBaseNegativeMinNoCmp(t *testing.T) {
 		16}
 
 	opts := DefaultReaderOptions()
-	reader, err := NewReader("../testing/patchBaseNegativeMin.orc", opts)
+	reader, err := NewFileReader("../testing/patchBaseNegativeMin.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -108,7 +108,7 @@ func TestPatchBaseNegativeMinNoCmp(t *testing.T) {
 	}
 	batch := schema.CreateReaderBatch(opts)
 
-	err = stripes[0].NextBatch(batch)
+	err = stripes[0].Next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -134,7 +134,7 @@ func TestPatchBaseNegativeMin2NoCmp(t *testing.T) {
 		2, 16}
 
 	opts := DefaultReaderOptions()
-	reader, err := NewReader("../testing/patchBaseNegativeMin2.orc", opts)
+	reader, err := NewFileReader("../testing/patchBaseNegativeMin2.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -149,7 +149,7 @@ func TestPatchBaseNegativeMin2NoCmp(t *testing.T) {
 		t.Errorf("create row column error %+v", err)
 	}
 
-	err = stripes[0].NextBatch(batch)
+	err = stripes[0].Next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -174,7 +174,7 @@ func TestPatchBaseNegativeMin3(t *testing.T) {
 		2, 16}
 
 	opts := DefaultReaderOptions()
-	reader, err := NewReader("../testing/patchBaseNegativeMin3.orc", opts)
+	reader, err := NewFileReader("../testing/patchBaseNegativeMin3.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -186,7 +186,7 @@ func TestPatchBaseNegativeMin3(t *testing.T) {
 
 	batch := schema.CreateReaderBatch(opts)
 
-	err = stripes[0].NextBatch(batch)
+	err = stripes[0].Next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}

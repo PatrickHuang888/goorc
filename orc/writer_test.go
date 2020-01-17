@@ -19,7 +19,7 @@ func TestDecimalWriter(t *testing.T) {
 	schema.ChildrenNames = []string{"x"}
 	schema.Children = []*TypeDescription{x}
 	wopts := DefaultWriterOptions()
-	writer, err := NewWriter(path, schema, wopts)
+	writer, err := NewFileWriter(path, schema, wopts)
 	if err != nil {
 		t.Fatalf("create writer error %+v", err)
 	}
@@ -41,7 +41,7 @@ func TestDecimalWriter(t *testing.T) {
 	writer.Close()
 
 	ropts := DefaultReaderOptions()
-	reader, err := NewReader(path, ropts)
+	reader, err := NewFileReader(path, ropts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -54,7 +54,7 @@ func TestDecimalWriter(t *testing.T) {
 
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	err = stripes[0].NextBatch(rbatch)
+	err = stripes[0].Next(rbatch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -74,7 +74,7 @@ func TestDecimalWriter(t *testing.T) {
 func TestTimestamp(t *testing.T) {
 	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP}
 	wopts := DefaultWriterOptions()
-	writer, err := NewWriter(workDir+"testTimestamp.orc", schema, wopts)
+	writer, err := NewFileWriter(workDir+"testTimestamp.orc", schema, wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -117,7 +117,7 @@ func TestTimestamp(t *testing.T) {
 	writer.Close()
 
 	ropts := DefaultReaderOptions()
-	reader, err := NewReader(workDir+"testTimestamp.orc", ropts)
+	reader, err := NewFileReader(workDir+"testTimestamp.orc", ropts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -130,7 +130,7 @@ func TestTimestamp(t *testing.T) {
 
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	err = stripes[0].NextBatch(rbatch)
+	err = stripes[0].Next(rbatch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}

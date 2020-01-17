@@ -23,7 +23,6 @@ type ColumnVector struct {
 	//nullable bool
 	//setNulls bool
 	//hasNulls bool
-	Size int
 
 	Presents []bool
 	Vector interface{}

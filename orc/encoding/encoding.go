@@ -26,22 +26,9 @@ const (
 	BYTES = 8
 )
 
-/*type Decoder interface {
-	ReadValues(in BufferedReader, values interface{}) error
-}*/
-
 type Encoder interface {
 	WriteValues(out *bytes.Buffer, values interface{}) error
 }
-
-/*type decoder struct {
-	consumedIndex int
-}
-
-func (d *decoder) reset() {
-	d.consumedIndex = 0
-}
-*/
 
 type BufferedReader interface {
 	io.ByteReader
@@ -51,7 +38,7 @@ type BufferedReader interface {
 type ByteRunLength struct {
 }
 
-func (d *ByteRunLength) ReadValues(in BufferedReader, values []byte) ([]byte, error) {
+func (d *ByteRunLength) ReadValues(in io.ByteReader, values []byte) ([]byte, error) {
 	control, err := in.ReadByte()
 	if err != nil {
 		return values, errors.WithStack(err)

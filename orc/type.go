@@ -15,6 +15,7 @@ type TypeDescription struct {
 	Encoding      pb.ColumnEncoding_Kind
 
 	HasNulls bool // for writing
+	HasFather bool
 }
 
 func (td *TypeDescription) Print() {
@@ -140,17 +141,21 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *Column
 		panic("unknown type")
 	}
 
-	return &ColumnVector{Id: td.Id, Size: opts.RowSize, Vector: vector}
+	batch= &ColumnVector{Id: td.Id, Vector: vector}
+	if opts.HasNulls {
+		batch.Presents= make([]bool, 0, opts.RowSize)
+	}
+	return
 }
 
-// vector provided by writer
+// vector data provided by writer
 func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) (batch *ColumnVector) {
 	if td.Kind == pb.Type_STRUCT {
 		var vector []*ColumnVector
 		for _, v := range td.Children {
 			vector = append(vector, v.CreateWriterBatch(opts))
 		}
-		return &ColumnVector{Id: td.Id, Size: opts.RowSize, Vector: vector}
+		return &ColumnVector{Id: td.Id, Vector: vector}
 	}
-	return &ColumnVector{Id: td.Id, Size: opts.RowSize}
+	return &ColumnVector{Id: td.Id}
 }
