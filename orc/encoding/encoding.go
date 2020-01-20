@@ -27,7 +27,7 @@ const (
 )
 
 type Encoder interface {
-	WriteValues(out *bytes.Buffer, values interface{}) error
+	Encode(out *bytes.Buffer, values interface{}) error
 }
 
 type BufferedReader interface {
@@ -65,7 +65,7 @@ func (d *ByteRunLength) ReadValues(in io.ByteReader, values []byte) ([]byte, err
 	return values, nil
 }
 
-func (e *ByteRunLength) WriteValues(out *bytes.Buffer, v interface{}) error {
+func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
 	vs := v.([]byte)
 
 	for i := 0; i < len(vs); {
@@ -141,7 +141,7 @@ type BoolRunLength struct {
 	return
 }*/
 
-func (e *BoolRunLength) WriteValues(out *bytes.Buffer, vs interface{}) error {
+func (e *BoolRunLength) Encode(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]bool)
 	for i := 0; i < len(values); {
 		var b byte
@@ -251,7 +251,7 @@ func (irl *intRunLengthV1) reset() {
 	irl.signed = false
 }
 
-func (irl *intRunLengthV1) writeValues(out *bytes.Buffer) error {
+func (irl *intRunLengthV1) Encode(out *bytes.Buffer) error {
 	if irl.numLiterals != 0 {
 
 	}
@@ -275,7 +275,7 @@ func (bd *BytesContent) ReadValues(in BufferedReader, values []byte) (err error)
 }
 
 // write out content do not base length field, just base on len of content
-func (e *BytesContent) WriteValues(out *bytes.Buffer, vs interface{}) error {
+func (e *BytesContent) Encode(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([][]byte)
 	for _, v := range values {
 		if _, err := out.Write(v); err != nil {
@@ -610,7 +610,7 @@ func (e *IntRleV2) writeBits(value uint64, bits int, out *bytes.Buffer) (err err
 	return
 }
 
-func (e *IntRleV2) WriteValues(out *bytes.Buffer, vs interface{}) error {
+func (e *IntRleV2) Encode(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]uint64)
 	return e.write(out, values)
 }
@@ -1334,7 +1334,7 @@ func (e *IntRleV2) writeShortRepeat(count uint16, x uint64, out *bytes.Buffer) e
 type Base128VarInt struct {
 }
 
-func (e *Base128VarInt) WriteValues(out *bytes.Buffer, vs interface{}) error {
+func (e *Base128VarInt) Encode(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]int64)
 	bb := make([]byte, 10)
 	for _, v := range values {
@@ -1369,7 +1369,7 @@ func (d *Ieee754Double) ReadValue(in BufferedReader) (float64, error) {
 	return v, nil
 }
 
-func (e *Ieee754Double) WriteValues(out *bytes.Buffer, vs interface{}) error {
+func (e *Ieee754Double) Encode(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]float64)
 	bb := make([]byte, 8)
 	for _, v := range values {

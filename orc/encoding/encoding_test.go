@@ -40,7 +40,7 @@ func TestByteRunLength(t *testing.T) {
 
 	vs := []byte{0x5, 0x5, 0x5, 0x5}
 	buf.Reset()
-	if err := brl.WriteValues(buf, vs); err != nil {
+	if err := brl.Encode(buf, vs); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 	values=values[:0]
@@ -53,7 +53,7 @@ func TestByteRunLength(t *testing.T) {
 
 	vs = []byte{0x1, 0x5, 0x5, 0x5, 0x5}
 	buf.Reset()
-	if err := brl.WriteValues(buf, vs); err != nil {
+	if err := brl.Encode(buf, vs); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 	values=values[:0]
@@ -66,7 +66,7 @@ func TestByteRunLength(t *testing.T) {
 
 	vs = []byte{0x1, 0x5, 0x5, 0x5, 0x5,0x1}
 	buf.Reset()
-	if err := brl.WriteValues(buf, vs); err != nil {
+	if err := brl.Encode(buf, vs); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 	values=values[:0]
@@ -79,7 +79,7 @@ func TestByteRunLength(t *testing.T) {
 
 	vs = []byte{0x01, 0x02, 0x03, 0x4, 0x05, 0x05, 0x05, 0x05, 0x06, 0x07, 0x08, 0x08, 0x08, 0x09, 0x10}
 	buf.Reset()
-	if err := brl.WriteValues(buf, vs); err != nil {
+	if err := brl.Encode(buf, vs); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 	values=values[:0]
@@ -97,7 +97,7 @@ func TestByteRunLength(t *testing.T) {
 	vs = append(vs, 0x02, 0x03)
 
 	buf.Reset()
-	if err := brl.WriteValues(buf, vs); err != nil {
+	if err := brl.Encode(buf, vs); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestFindBytesRepeats(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.Reset()
 
-	if err := brl.writeValues(buf); err != nil {
+	if err := brl.Encode(buf); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 	assert.Equal(t, bs, buf.Bytes())
@@ -153,7 +153,7 @@ func TestDouble(test *testing.T) {
 	c := &Ieee754Double{}
 	buf := &bytes.Buffer{}
 
-	if err := c.WriteValues(buf, vs); err != nil {
+	if err := c.Encode(buf, vs); err != nil {
 		test.Fatalf("fail %+v", err)
 	}
 
@@ -212,7 +212,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	assert.EqualValues(t, uvs, uvalues)
 
 	buf.Reset()
-	err = irl.WriteValues(buf, uvs)
+	err = irl.Encode(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, buf.Bytes())
 
@@ -224,7 +224,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	}
 
 	buf.Reset()
-	err = irl.WriteValues(buf, uvs)
+	err = irl.Encode(buf, uvs)
 	assert.Nil(t, err)
 
 	var values []int64
@@ -245,7 +245,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 		uvs = append(uvs, Zigzag(v))
 	}
 	buf.Reset()
-	err = irl.WriteValues(buf, uvs)
+	err = irl.Encode(buf, uvs)
 	assert.Nil(t, err)
 
 	uvs = uvs[:0]
@@ -265,7 +265,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	irl.Signed = false
 
 	buf.Reset()
-	err = irl.WriteValues(buf, uvs)
+	err = irl.Encode(buf, uvs)
 	assert.Nil(t, err)
 
 	uvs = uvs[:0]
@@ -285,7 +285,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	irl.Signed = true
 
 	buf.Reset()
-	err = irl.WriteValues(buf, uvs)
+	err = irl.Encode(buf, uvs)
 	assert.Nil(t, err)
 
 	uvs = uvs[:0]
@@ -311,7 +311,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	encoded := []byte{0x5e, 0x03, 0x5c, 0xa1, 0xde, 0xad, 0xab, 0x1e, 0xbe, 0xef}
 	irl.Signed = false
 
-	err := irl.WriteValues(buf, uvs)
+	err := irl.Encode(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, encoded, buf.Bytes())
 
@@ -322,7 +322,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	uvs = []uint64{999, 900203003, 688888888, 857340643}
 
 	buf.Reset()
-	err = irl.WriteValues(buf, uvs)
+	err = irl.Encode(buf, uvs)
 	assert.Nil(t, err)
 
 	uvalues = uvalues[:0]
@@ -435,7 +435,7 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 	for _, v := range values {
 		uvs= append(uvs, Zigzag(v))
 	}
-	if err := irl.WriteValues(buf, signed, uvs); err != nil {
+	if err := irl.Encode(buf, signed, uvs); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 	assert.Equal(t, bs, buf.Bytes())
@@ -449,7 +449,7 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 
 	/*values = []int64{-2030, -2000, -2020, 1000000, 2040, -2050, -2060, -2070, -2080, -2090, -2100, -2110, -2120, -2130,
 		-2140, -2150, -2160, -2170, -2180, -2190}
-	if err := rle.writeValues(buf); err != nil {
+	if err := rle.Encode(buf); err != nil {
 		t.Fatalf("encoding error %+v", err)
 	}
 	rle.reset()
@@ -475,7 +475,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.Equal(t, 10000, int(uvs[4]))
 
 	buf.Reset()
-	err = irl.WriteValues(buf, uvs)
+	err = irl.Encode(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, buf.Bytes())
 
@@ -489,7 +489,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	for _, v := range values {
 		uvs = append(uvs, Zigzag(v))
 	}
-	err = irl.WriteValues(buf, uvs) //encoding
+	err = irl.Encode(buf, uvs) //encoding
 	assert.Nil(t, err)
 
 	uvs = uvs[:0]

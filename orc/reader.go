@@ -36,7 +36,8 @@ type ReaderOptions struct {
 }
 
 func DefaultReaderOptions() *ReaderOptions {
-	return &ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE}
+	return &ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE,
+		CompressionKind:pb.CompressionKind_ZLIB}
 }
 
 type File interface {
@@ -203,11 +204,10 @@ func (s *stripeReader) prepare() error {
 	// id==i
 	for _, schema := range s.schemas {
 		c := &cr{}
-		c.id = schema.Id
+		schema.Encoding = s.footer.GetColumns()[schema.Id].GetKind()
 		c.schema = schema
-		c.encoding = s.footer.GetColumns()[schema.Id]
 		c.numberOfRows = s.info.GetNumberOfRows()
-		c.opts = s.opts
+		//c.opts = s.opts
 		columns[schema.Id] = c
 	}
 
@@ -244,7 +244,7 @@ func (s *stripeReader) prepare() error {
 		case pb.Type_INT:
 			fallthrough
 		case pb.Type_LONG:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if s.columnReaders[id] == nil {
 					s.columnReaders[id] = &longV2Reader{cr: c}
 				}
@@ -252,7 +252,7 @@ func (s *stripeReader) prepare() error {
 
 				if streamKind == pb.Stream_DATA {
 					decoder := &encoding.IntRleV2{Signed: true}
-					data := &longV2ValuesReader{stream: sr, decoder: decoder}
+					data := &longV2StreamReader{stream: sr, decoder: decoder}
 					cr.data = data
 				}
 				break
@@ -264,7 +264,7 @@ func (s *stripeReader) prepare() error {
 		// todo:
 
 		case pb.Type_DOUBLE:
-			if c.encoding.GetKind() != pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("column encoding error")
 			}
 
@@ -280,7 +280,7 @@ func (s *stripeReader) prepare() error {
 			}
 
 		case pb.Type_STRING:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if s.columnReaders[id] == nil {
 					s.columnReaders[id] = &stringDirectV2Reader{cr: c}
 				}
@@ -292,20 +292,20 @@ func (s *stripeReader) prepare() error {
 				}
 				if streamKind == pb.Stream_LENGTH {
 					decoder := &encoding.IntRleV2{Signed: false}
-					length := &longV2ValuesReader{stream: sr, decoder: decoder}
+					length := &longV2StreamReader{stream: sr, decoder: decoder}
 					cr.length = length
 				}
 				break
 			}
 
-			if c.encoding.GetKind() == pb.ColumnEncoding_DICTIONARY_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
 				if s.columnReaders[id] == nil {
 					s.columnReaders[id] = &stringDictV2Reader{cr: c}
 				}
 				cr := s.columnReaders[id].(*stringDictV2Reader)
 
 				if streamKind == pb.Stream_DATA {
-					data := &longV2ValuesReader{stream: sr, decoder: &encoding.IntRleV2{Signed: false}}
+					data := &longV2StreamReader{stream: sr, decoder: &encoding.IntRleV2{Signed: false}}
 					cr.data = data
 				}
 				if streamKind == pb.Stream_DICTIONARY_DATA {
@@ -315,7 +315,7 @@ func (s *stripeReader) prepare() error {
 				}
 				if streamKind == pb.Stream_LENGTH {
 					decoder := &encoding.IntRleV2{Signed: false}
-					dictLength := &longV2ValuesReader{stream: sr, decoder: decoder}
+					dictLength := &longV2StreamReader{stream: sr, decoder: decoder}
 					cr.dictLength = dictLength
 				}
 				break
@@ -323,7 +323,7 @@ func (s *stripeReader) prepare() error {
 			return errors.New("column encoding error")
 
 		case pb.Type_BOOLEAN:
-			if c.encoding.GetKind() != pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("bool column encoding error")
 			}
 
@@ -339,7 +339,7 @@ func (s *stripeReader) prepare() error {
 			}
 
 		case pb.Type_BYTE: // tinyint
-			if c.encoding.GetKind() != pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("tinyint column encoding error")
 			}
 
@@ -357,12 +357,12 @@ func (s *stripeReader) prepare() error {
 			}
 
 		case pb.Type_BINARY:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
 				// todo:
 				return errors.New("not impl")
 				break
 			}
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if s.columnReaders[id] == nil {
 					s.columnReaders[id] = &binaryV2Reader{cr: c}
 				}
@@ -373,7 +373,7 @@ func (s *stripeReader) prepare() error {
 					cr.data = data
 				} else if streamKind == pb.Stream_LENGTH {
 					decoder := &encoding.IntRleV2{Signed: false}
-					length := &longV2ValuesReader{stream: sr, decoder: decoder}
+					length := &longV2StreamReader{stream: sr, decoder: decoder}
 					cr.length = length
 				} else {
 					return errors.New("stream kind error")
@@ -383,12 +383,12 @@ func (s *stripeReader) prepare() error {
 			return errors.New("binary column encoding error")
 
 		case pb.Type_DECIMAL:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
 				// todo:
 				return errors.New("not impl")
 				break
 			}
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if s.columnReaders[id] == nil {
 					s.columnReaders[id] = &decimal64DirectV2Reader{cr: c}
 				}
@@ -400,7 +400,7 @@ func (s *stripeReader) prepare() error {
 					cr.data = data
 				} else if streamKind == pb.Stream_SECONDARY {
 					decoder := &encoding.IntRleV2{Signed: false}
-					secondary := &longV2ValuesReader{stream: sr, decoder: decoder}
+					secondary := &longV2StreamReader{stream: sr, decoder: decoder}
 					cr.secondary = secondary
 				} else {
 					errors.New("stream kind error")
@@ -410,12 +410,12 @@ func (s *stripeReader) prepare() error {
 			return errors.New("column encoding error")
 
 		case pb.Type_DATE:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
 				// todo:
 				return errors.New("not impl")
 				break
 			}
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if s.columnReaders[id] == nil {
 					s.columnReaders[id] = &dateReader{cr: c}
 				}
@@ -423,7 +423,7 @@ func (s *stripeReader) prepare() error {
 
 				if streamKind == pb.Stream_DATA {
 					decoder := &encoding.IntRleV2{Signed: true}
-					data := &longV2ValuesReader{stream: sr, decoder: decoder}
+					data := &longV2StreamReader{stream: sr, decoder: decoder}
 					cr.data = data
 				} else {
 					errors.New("stream kind error")
@@ -433,12 +433,12 @@ func (s *stripeReader) prepare() error {
 			return errors.New("column encoding error")
 
 		case pb.Type_TIMESTAMP:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
 				// todo:
 				return errors.New("not impl")
 				break
 			}
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if s.columnReaders[id] == nil {
 					s.columnReaders[id] = &timestampV2Reader{cr: c}
 				}
@@ -446,12 +446,12 @@ func (s *stripeReader) prepare() error {
 
 				if streamKind == pb.Stream_DATA {
 					decoder := &encoding.IntRleV2{Signed: true}
-					data := &longV2ValuesReader{stream: sr, decoder: decoder}
+					data := &longV2StreamReader{stream: sr, decoder: decoder}
 					cr.data = data
 				}
 				if streamKind == pb.Stream_SECONDARY {
 					decoder := &encoding.IntRleV2{Signed: false}
-					secondary := &longV2ValuesReader{stream: sr, decoder: decoder}
+					secondary := &longV2StreamReader{stream: sr, decoder: decoder}
 					cr.secondary = secondary
 				} else {
 					return errors.New("stream kind error")
@@ -461,7 +461,7 @@ func (s *stripeReader) prepare() error {
 			return errors.New("column encoding error")
 
 		case pb.Type_STRUCT:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if s.columnReaders[id] == nil {
 					s.columnReaders[id] = &structReader{cr: c}
 
@@ -472,12 +472,12 @@ func (s *stripeReader) prepare() error {
 			return errors.New("encoding error")
 
 		case pb.Type_LIST:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
 				// todo:
 				return errors.New("not impl")
 				break
 			}
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if streamKind == pb.Stream_LENGTH {
 					// todo:
 					//decoder := &encoding.IntRleV2{}
@@ -489,12 +489,12 @@ func (s *stripeReader) prepare() error {
 			return errors.New("encoding error")
 
 		case pb.Type_MAP:
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
 				// todo:
 				return errors.New("not impl")
 				break
 			}
-			if c.encoding.GetKind() == pb.ColumnEncoding_DIRECT_V2 {
+			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				if streamKind == pb.Stream_LENGTH {
 					//decoder := &encoding.IntRleV2{}
 					//length := &longStream{r: r, decoder: decoder}
@@ -503,7 +503,7 @@ func (s *stripeReader) prepare() error {
 			}
 
 		case pb.Type_UNION:
-			if c.encoding.GetKind() != pb.ColumnEncoding_DIRECT {
+			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("column encoding error")
 			}
 
@@ -546,23 +546,21 @@ type columnReader interface {
 }
 
 type cr struct {
-	id       uint32
-	schema   *TypeDescription
-	encoding *pb.ColumnEncoding
-	//f            *os.File
-	numberOfRows uint64
-	opts         *ReaderOptions
+	schema *TypeDescription
+
+	//opts         *ReaderOptions
 
 	present *boolValuesReader
 
-	cursor uint64
+	numberOfRows uint64
+	cursor       uint64
 }
 
 func (c *cr) String() string {
 	sb := strings.Builder{}
-	fmt.Fprintf(&sb, "id %d, ", c.id)
+	fmt.Fprintf(&sb, "id %d, ", c.schema.Id)
 	fmt.Fprintf(&sb, "kind %stream, ", c.schema.Kind.String())
-	fmt.Fprintf(&sb, "encoding %stream, ", c.encoding.String())
+	fmt.Fprintf(&sb, "encoding %stream, ", c.schema.Encoding.String())
 	fmt.Fprintf(&sb, "read cursor %d", c.cursor)
 	return sb.String()
 }
@@ -616,7 +614,7 @@ func (c *byteReader) next(batch *ColumnVector) error {
 
 type dateReader struct {
 	*cr
-	data *longV2ValuesReader
+	data *longV2StreamReader
 }
 
 func (c *dateReader) next(batch *ColumnVector) error {
@@ -649,8 +647,8 @@ func (c *dateReader) next(batch *ColumnVector) error {
 type timestampV2Reader struct {
 	*cr
 
-	data      *longV2ValuesReader
-	secondary *longV2ValuesReader
+	data      *longV2StreamReader
+	secondary *longV2StreamReader
 }
 
 func (c *timestampV2Reader) next(batch *ColumnVector) error {
@@ -723,7 +721,7 @@ func (c *boolReader) next(batch *ColumnVector) error {
 
 type binaryV2Reader struct {
 	*cr
-	length *longV2ValuesReader
+	length *longV2StreamReader
 	data   *bytesContentValuesReader
 }
 
@@ -764,7 +762,7 @@ func (c *binaryV2Reader) next(batch *ColumnVector) error {
 type stringDirectV2Reader struct {
 	*cr
 
-	length *longV2ValuesReader
+	length *longV2StreamReader
 	data   *bytesContentValuesReader
 }
 
@@ -806,9 +804,9 @@ func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
 type stringDictV2Reader struct {
 	*cr
 
-	data       *longV2ValuesReader
+	data       *longV2StreamReader
 	dictData   *bytesContentValuesReader
-	dictLength *longV2ValuesReader
+	dictLength *longV2StreamReader
 }
 
 func (c *stringDictV2Reader) next(batch *ColumnVector) error {
@@ -852,9 +850,19 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 
 type longV2Reader struct {
 	*cr
-
-	data *longV2ValuesReader
+	data *longV2StreamReader
 }
+
+func newLongV2Reader(schema *TypeDescription, opts *ReaderOptions, info *pb.Stream, signed bool,
+	in io.ReadSeeker) *longV2Reader {
+	present := &boolValuesReader{stream: &streamReader{opts: opts, info:info, buf: &bytes.Buffer{}, in: in}}
+	cr := &cr{schema: schema, present: present}
+	decoder:= &encoding.IntRleV2{Signed:signed}
+	data := &longV2StreamReader{stream: &streamReader{opts: opts, info:info, buf: &bytes.Buffer{},in: in},
+		decoder:decoder}
+	return &longV2Reader{cr: cr, data: data}
+}
+
 
 func (c *longV2Reader) next(batch *ColumnVector) error {
 	if err := c.nextPresents(batch); err != nil {
@@ -888,7 +896,7 @@ type decimal64DirectV2Reader struct {
 	*cr
 
 	data      *int64VarIntValuesReader
-	secondary *longV2ValuesReader
+	secondary *longV2StreamReader
 }
 
 func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
@@ -953,7 +961,7 @@ func (c *doubleReader) next(batch *ColumnVector) error {
 	}
 
 	c.cursor += uint64(i)
-	batch.Vector= vector
+	batch.Vector = vector
 	return nil
 }
 
@@ -1067,7 +1075,7 @@ func (r *bytesContentValuesReader) getAll(lengthAll []uint64) (vs [][]byte, err 
 }
 
 type ieeeFloatValuesReader struct {
-	stream       *streamReader
+	stream  *streamReader
 	decoder *encoding.Ieee754Double
 }
 
@@ -1107,7 +1115,7 @@ func (r *int64VarIntValuesReader) finished() bool {
 	return r.stream.finished() && (r.pos == len(r.values))
 }
 
-type longV2ValuesReader struct {
+type longV2StreamReader struct {
 	stream *streamReader
 
 	values []uint64
@@ -1116,16 +1124,16 @@ type longV2ValuesReader struct {
 	decoder *encoding.IntRleV2
 }
 
-func (r *longV2ValuesReader) nextInt() (v int64, err error) {
-	x, err := r.nextUInt()
+func (r *longV2StreamReader) nextInt() (v int64, err error) {
+	uv, err := r.nextUInt()
 	if err != nil {
 		return
 	}
-	v = encoding.UnZigzag(x)
+	v = encoding.UnZigzag(uv)
 	return
 }
 
-func (r *longV2ValuesReader) nextUInt() (v uint64, err error) {
+func (r *longV2StreamReader) nextUInt() (v uint64, err error) {
 	if r.pos >= len(r.values) {
 		r.pos = 0
 		r.values = r.values[:0]
@@ -1143,7 +1151,7 @@ func (r *longV2ValuesReader) nextUInt() (v uint64, err error) {
 }
 
 // for small data like dict index, ignore stream.signed
-func (r *longV2ValuesReader) getAllUInts() (vs []uint64, err error) {
+func (r *longV2StreamReader) getAllUInts() (vs []uint64, err error) {
 	for !r.stream.finished() {
 		if r.values, err = r.decoder.ReadValues(r.stream, r.values); err != nil {
 			return
@@ -1152,7 +1160,7 @@ func (r *longV2ValuesReader) getAllUInts() (vs []uint64, err error) {
 	return
 }
 
-func (r *longV2ValuesReader) finished() bool {
+func (r *longV2StreamReader) finished() bool {
 	return r.stream.finished() && (r.pos == len(r.values))
 }
 
