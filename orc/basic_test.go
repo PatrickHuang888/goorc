@@ -2,6 +2,7 @@ package orc
 
 import (
 	"bytes"
+	"github.com/patrickhuang888/goorc/orc/encoding"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
@@ -88,7 +89,10 @@ func TestLongColumnReadWrite(t *testing.T) {
 	length_:= uint64(writer.data.buf.Len())
 	info:= &pb.Stream{Column:&schema.Id, Kind:&kind_, Length:&length_}
 
-	reader:= newLongV2Reader(schema, ropts, info, true, bufSeeker)
+	cr:= &cr{schema:schema}
+	dataStream:= &streamReader{opts:ropts, info:info, buf:&bytes.Buffer{}, in:bufSeeker}
+	data:= &longV2StreamReader{decoder:&encoding.IntRleV2{Signed:true}, stream:dataStream}
+	reader:= &longV2Reader{cr:cr, data:data}
 	err = reader.next(rbatch)
 	if err != nil {
 		t.Fatalf("%+v", err)

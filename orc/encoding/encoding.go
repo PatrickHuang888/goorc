@@ -133,7 +133,8 @@ func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
 type BoolRunLength struct {
 }
 
-/*func (brl *boolRunLength) NextValue() (v interface{}) {
+/*func (brl *BoolRunLength) ReadValues(in io.ByteReader, values []bool) (vs []bool, err error) {
+	// todo:
 	pos := brl.consumedIndex / 8
 	off := brl.consumedIndex % 8
 	b := brl.literals[pos]
