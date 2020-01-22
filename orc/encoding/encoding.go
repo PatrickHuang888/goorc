@@ -84,6 +84,7 @@ func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
 			if _, err := out.Write(values); err != nil {
 				return errors.WithStack(err)
 			}
+			i += l
 			continue
 		}
 
@@ -131,19 +132,27 @@ func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
 
 // bool run length use byte run length encoding, but how to know the length of bools?
 type BoolRunLength struct {
+	brl *ByteRunLength
 }
 
-/*func (brl *BoolRunLength) ReadValues(in io.ByteReader, values []bool) (vs []bool, err error) {
-	// todo:
-	pos := brl.consumedIndex / 8
-	off := brl.consumedIndex % 8
-	b := brl.literals[pos]
-	v = b>>byte(7-off) == 0x01
+func (d *BoolRunLength) Decode(in io.ByteReader, vs []bool) (result []bool, err error) {
+	var bs []byte
+	if bs, err=d.brl.ReadValues(in, bs);err!=nil {
+		return
+	}
+	for _, b := range bs {
+		for i:=0; i<8; i++ {
+			v:= b >> byte(7-i) == 0x01
+			vs= append(vs, v)
+		}
+	}
+	result= vs
 	return
-}*/
+}
 
 func (e *BoolRunLength) Encode(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]bool)
+	var bs []byte
 	for i := 0; i < len(values); {
 		var b byte
 		for j := 0; j <= 7 && (i < len(values)); j++ {
@@ -152,11 +161,9 @@ func (e *BoolRunLength) Encode(out *bytes.Buffer, vs interface{}) error {
 			}
 			i++
 		}
-		if err := out.WriteByte(b); err != nil {
-			return errors.WithStack(err)
-		}
+		bs= append(bs, b)
 	}
-	return nil
+	return e.brl.Encode(out, bs)
 }
 
 /*type intRunLengthV1 struct {

@@ -545,3 +545,22 @@ func TestNanoEncoding(t *testing.T) {
 	assert.Equal(t, uint64(0x0a), encodingNano(uint64(1000)))
 	assert.Equal(t, uint64(0x0c), encodingNano(uint64(100000)))
 }
+
+func TestBoolRunLength (t *testing.T) {
+	values:=[]bool{true, false, false, false, false, false, false, false}
+	encoded:= []byte{0xff, 0x80}
+
+	buf:=&bytes.Buffer{}
+	brl:= &BoolRunLength{&ByteRunLength{}}
+	err:= brl.Encode(buf, values)
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, encoded, buf.Bytes())
+	var vs []bool
+	vs, err=brl.Decode(buf, vs)
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, values, vs)
+}

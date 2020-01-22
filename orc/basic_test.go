@@ -80,19 +80,59 @@ func TestLongColumnReadWrite(t *testing.T) {
 	}
 	assert.Equal(t, uint64(100), rows)
 
-
 	ropts := DefaultReaderOptions()
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	bufSeeker:= &bufSeeker{writer.data.buf}
+	bs:= &bufSeeker{writer.data.buf}
 	kind_:= pb.Stream_DATA
 	length_:= uint64(writer.data.buf.Len())
 	info:= &pb.Stream{Column:&schema.Id, Kind:&kind_, Length:&length_}
 
-	cr:= &cr{schema:schema}
-	dataStream:= &streamReader{opts:ropts, info:info, buf:&bytes.Buffer{}, in:bufSeeker}
+	cr:= &crBase{schema: schema}
+	dataStream:= &streamReader{opts:ropts, info:info, buf:&bytes.Buffer{}, in:bs}
 	data:= &longV2StreamReader{decoder:&encoding.IntRleV2{Signed:true}, stream:dataStream}
-	reader:= &longV2Reader{cr:cr, data:data}
+	reader:= &longV2Reader{crBase: cr, data:data}
+	err = reader.next(rbatch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, values, rbatch.Vector)
+
+	//with presents
+	schema = &TypeDescription{Id: 0, Kind: pb.Type_LONG, HasNulls:true}
+	batch = schema.CreateWriterBatch(wopts)
+
+	presents:= make([]bool, 100)
+	for i:=0; i<100; i++ {
+		presents[i]= true
+	}
+	presents[0]=false
+	presents[99]=false
+	presents[45]=false
+	batch.Presents= presents
+	batch.Vector= values
+	writer= newLongV2Writer(schema, wopts)
+	rows, err=writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(100), rows)
+
+	batch= schema.CreateReaderBatch(ropts)
+	bs= &bufSeeker{writer.data.buf}
+
+	kind_= pb.Stream_PRESENT
+	length_= uint64(writer.present.buf.Len())
+	info= &pb.Stream{Column:&schema.Id, Kind:&kind_, Length:&length_}
+	presentStream:= &streamReader{opts:ropts, info:info, buf:&bytes.Buffer{}, in:bs}
+	present:= &boolStreamReader{decoder:&encoding.BoolRunLength{}}
+	cr= &crBase{schema:schema, present:presentStream}
+	kind_= pb.Stream_DATA
+	length_= uint64(writer.data.buf.Len())
+	info= &pb.Stream{Column:&schema.Id, Kind:&kind_, Length:&length_}
+	dataStream= &streamReader{opts:ropts, info:info, buf:&bytes.Buffer{}, in:bs}
+	data= &longV2StreamReader{decoder:&encoding.IntRleV2{Signed:true}, stream:dataStream}
+	reader= &longV2Reader{crBase: cr, data:data}
 	err = reader.next(rbatch)
 	if err != nil {
 		t.Fatalf("%+v", err)
