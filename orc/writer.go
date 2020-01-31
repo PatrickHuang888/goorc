@@ -381,7 +381,7 @@ type structWriter struct {
 }
 
 func newStructWriter(schema *TypeDescription, opts *WriterOptions) *structWriter  {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	return &structWriter{cw_}
 }
 
@@ -409,7 +409,7 @@ type timestampDirectV2Writer struct {
 }
 
 func newTimestampDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *timestampDirectV2Writer  {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
 	secondary_ := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, false, opts)
 	return &timestampDirectV2Writer{cw_, data_, secondary_}
@@ -462,7 +462,7 @@ type dateDirectV2Writer struct {
 }
 
 func newDateDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *dateDirectV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, false, opts)
 	return &dateDirectV2Writer{cw_, data_}
 }
@@ -514,7 +514,7 @@ type decimal64DirectV2Writer struct {
 }
 
 func newDecimal64DirectV2Writer(schema *TypeDescription, opts *WriterOptions) *decimal64DirectV2Writer  {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newBase128VarIntStream(schema.Id, pb.Stream_DATA, opts)
 	secondary_ := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, false, opts)
 	return &decimal64DirectV2Writer{cw_, data_, secondary_}
@@ -614,7 +614,7 @@ type binaryDirectV2Writer struct {
 }
 
 func newBinaryDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *binaryDirectV2Writer  {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newStringV2Stream(schema.Id, pb.Stream_DATA, opts)
 	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
 	return &binaryDirectV2Writer{cw_, data_, length_}
@@ -679,7 +679,7 @@ type stringDictV2Writer struct {
 }
 
 func newStringDictV2Writer(schema *TypeDescription, opts *WriterOptions) *stringDictV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, false, opts)
 	secondary_ := newStringV2Stream(schema.Id, pb.Stream_DICTIONARY_DATA, opts)
 	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
@@ -715,7 +715,7 @@ type stringV2Writer struct {
 }
 
 func newStringV2Writer(schema *TypeDescription, opts *WriterOptions) *stringV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newStringV2Stream(schema.Id, pb.Stream_DATA, opts)
 	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
 	return &stringV2Writer{cw_, data_, length_}
@@ -777,8 +777,8 @@ type boolWriter struct {
 }
 
 func newBoolWriter(schema *TypeDescription, opts *WriterOptions) *boolWriter {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newBoolStream(schema.Id, pb.Stream_DATA, opts)
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
+	data_ := newBoolStreamWriter(schema.Id, pb.Stream_DATA, opts)
 	return &boolWriter{cw_, data_}
 }
 
@@ -829,7 +829,7 @@ type byteWriter struct {
 }
 
 func newByteWriter(schema *TypeDescription, opts *WriterOptions) *byteWriter  {
-	cw_ := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newByteStream(schema.Id, pb.Stream_DATA, opts)
 	return &byteWriter{cw_, data_}
 }
@@ -882,7 +882,7 @@ type longV2Writer struct {
 }
 
 func newLongV2Writer(schema *TypeDescription, opts *WriterOptions) *longV2Writer {
-	c := &cwBase{schema: schema, present: newBoolStream(schema.Id, pb.Stream_PRESENT, opts)}
+	c := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
 	return &longV2Writer{cwBase: c, data: data}
 }
@@ -900,6 +900,7 @@ func (c *longV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
 			return 0, errors.New("rows of presents != vector")
 		}
 
+		log.Tracef("writing: long column write %d presents", len(batch.Presents))
 		if _, err := c.present.writeValues(batch.Presents); err != nil {
 			return 0, err
 		}
@@ -965,7 +966,7 @@ func (s *streamWriter) write(data *bytes.Buffer) (written uint64, err error) {
 }
 
 func (s *streamWriter) writeValues(values interface{}) (written uint64, err error) {
-	log.Tracef("stream %d %s writing values", s.info.GetColumn(), s.info.Kind.String())
+	log.Tracef("writing: stream id %d - %s writing", s.info.GetColumn(), s.info.Kind.String())
 	if err = s.encoder.Encode(s.encodingBuf, values); err != nil {
 		return 0, err
 	}
@@ -1096,7 +1097,7 @@ func zlibCompressing(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error 
 			if _, err = dst.Write(header); err != nil {
 				return errors.WithStack(err)
 			}
-			log.Tracef("write original chunksize %d remaining %d before writing", chunkSize, remaining)
+			log.Tracef("compress-writing original chunksize %d has  %d bytes to write", chunkSize, remaining)
 			if _, err = dst.Write(srcBytes[start : start+chunkSize]); err != nil {
 				return errors.WithStack(err)
 			}
@@ -1107,7 +1108,7 @@ func zlibCompressing(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error 
 			if _, err = dst.Write(header); err != nil {
 				return errors.WithStack(err)
 			}
-			log.Tracef("zlib compressing chunkSize %d remaining %d before writing with compressed length %d",
+			log.Tracef("compress-writing zlib chunkSize %d has %d bytes to write, after compressed has %d bytes",
 				chunkSize, remaining, cBuf.Len())
 			if _, err = cBuf.WriteTo(dst); err != nil {
 				return errors.WithStack(err)
@@ -1131,7 +1132,7 @@ func zlibCompressing(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error 
 		if _, err = dst.Write(header); err != nil {
 			return errors.WithStack(err)
 		}
-		log.Tracef("write original remaining %d before writing", remaining)
+		log.Tracef("compress-writing original has %d bytes to write", remaining)
 		if _, err = dst.Write(srcBytes[start : start+remaining]); err != nil {
 			return errors.WithStack(err)
 		}
@@ -1140,7 +1141,7 @@ func zlibCompressing(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error 
 		if _, err = dst.Write(header); err != nil {
 			return errors.WithStack(err)
 		}
-		log.Tracef("zlib compressing remaining %d before writing with chunklength %d", remaining, cBuf.Len())
+		log.Tracef("compress-writing zlib has %d bytes to write, after compressed has %d bytes", remaining, cBuf.Len())
 		if _, err = cBuf.WriteTo(dst); err != nil {
 			return errors.WithStack(err)
 		}
@@ -1186,7 +1187,7 @@ func compressByteSlice(kind pb.CompressionKind, chunkSize int, b []byte) (compre
 	return
 }
 
-func newBoolStream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
+func newBoolStreamWriter(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
 	kind_ := kind
 	id_ := id
 	length_ := uint64(0)

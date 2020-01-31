@@ -142,7 +142,7 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *Column
 	}
 
 	batch= &ColumnVector{Id: td.Id, Vector: vector}
-	if opts.HasNulls {
+	if td.HasNulls {
 		batch.Presents= make([]bool, 0, opts.RowSize)
 	}
 	return

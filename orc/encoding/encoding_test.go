@@ -127,27 +127,6 @@ func TestFindBytesRepeats(t *testing.T) {
 	assert.Equal(t, 0, len(repeats))
 }
 
-/*func TestBoolRunLength(t *testing.T) {
-	vs := []bool{true, false, false, false, false, false, false, false}
-	bs := []byte{0xff, 0x80}
-
-	brl := &BoolRunLength{}
-	brl.bools = vs
-	buf := &bytes.Buffer{}
-	buf.Reset()
-
-	if err := brl.Encode(buf); err != nil {
-		t.Fatalf("fail %+v", err)
-	}
-	assert.Equal(t, bs, buf.Bytes())
-
-	brl.reset()
-	if err := brl.readValues(buf); err != nil {
-		t.Fatalf("fail %+v", err)
-	}
-	assert.Equal(t, vs, brl.bools)
-}*/
-
 func TestDouble(test *testing.T) {
 	vs := []float64{0.0001, 125.001, 1343822337.759, 0.8}
 	c := &Ieee754Double{}
@@ -563,4 +542,38 @@ func TestBoolRunLength (t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, values, vs)
+
+
+	values= make([]bool, 100)
+	values[0]=true
+
+	buf.Reset()
+	err= brl.Encode(buf, values)
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	vs= vs[:0]
+	for buf.Len()!=0 {
+		vs, err = brl.Decode(buf, vs)
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+	assert.Equal(t, values, vs[:100])
+
+	values[44]= true
+	values[99]= true
+	buf.Reset()
+	err= brl.Encode(buf, values)
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	vs= vs[:0]
+	for buf.Len()!=0 {
+		vs, err = brl.Decode(buf, vs)
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+	assert.Equal(t, values, vs[:100])
 }

@@ -41,7 +41,7 @@ type ByteRunLength struct {
 func (d *ByteRunLength) ReadValues(in io.ByteReader, values []byte) ([]byte, error) {
 	control, err := in.ReadByte()
 	if err != nil {
-		return values, errors.WithStack(err)
+		return values, err
 	}
 	if control < 0x80 { // run
 		l := int(control) + MIN_REPEAT_SIZE
@@ -132,17 +132,17 @@ func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
 
 // bool run length use byte run length encoding, but how to know the length of bools?
 type BoolRunLength struct {
-	brl *ByteRunLength
+	*ByteRunLength
 }
 
 func (d *BoolRunLength) Decode(in io.ByteReader, vs []bool) (result []bool, err error) {
 	var bs []byte
-	if bs, err=d.brl.ReadValues(in, bs);err!=nil {
+	if bs, err=d.ByteRunLength.ReadValues(in, bs);err!=nil {
 		return
 	}
 	for _, b := range bs {
 		for i:=0; i<8; i++ {
-			v:= b >> byte(7-i) == 0x01
+			v:= (b >> byte(7-i)) & 0x01 == 0x01
 			vs= append(vs, v)
 		}
 	}
@@ -163,7 +163,7 @@ func (e *BoolRunLength) Encode(out *bytes.Buffer, vs interface{}) error {
 		}
 		bs= append(bs, b)
 	}
-	return e.brl.Encode(out, bs)
+	return e.ByteRunLength.Encode(out, bs)
 }
 
 /*type intRunLengthV1 struct {
@@ -298,7 +298,7 @@ type IntRleV2 struct {
 	lastByte byte // different align when using read/writer, used in r/w
 	bitsLeft int  // used in r/w
 
-	Signed bool // for encoder
+	Signed bool
 }
 
 // decoding buffer all to u/literals
