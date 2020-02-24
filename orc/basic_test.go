@@ -62,7 +62,7 @@ func TestStreamReadWrite(t *testing.T) {
 	assert.Equal(t, bs, vs[:n])
 }
 
-func TestLongColumnReadWrite(t *testing.T) {
+func TestLongColumnRWwithNoPresents(t *testing.T) {
 	schema := &TypeDescription{Id: 0, Kind: pb.Type_LONG}
 	wopts := DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
@@ -99,7 +99,7 @@ func TestLongColumnReadWrite(t *testing.T) {
 	assert.Equal(t, values, rbatch.Vector)
 }
 
-func TestLongReadWriteWithPresents(t *testing.T)  {
+func TestLongColumnRWwithPresents(t *testing.T)  {
 	schema := &TypeDescription{Id: 0, Kind: pb.Type_LONG, HasNulls:true}
 	wopts:= DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
@@ -161,7 +161,7 @@ func TestLongReadWriteWithPresents(t *testing.T)  {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestBoolColumnReadWrite(t *testing.T) {
+func TestBoolColumnRW(t *testing.T) {
 	schema := &TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
 	wopts := DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)

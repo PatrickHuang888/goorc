@@ -37,7 +37,7 @@ type BufferedReader interface {
 type ByteRunLength struct {
 }
 
-func (d *ByteRunLength) ReadValues(in io.ByteReader, values []byte) ([]byte, error) {
+func (d *ByteRunLength) Decode(in io.ByteReader, values []byte) ([]byte, error) {
 	control, err := in.ReadByte()
 	if err != nil {
 		return values, err
@@ -136,7 +136,7 @@ type BoolRunLength struct {
 
 func (d *BoolRunLength) Decode(in io.ByteReader, vs []bool) (result []bool, err error) {
 	var bs []byte
-	if bs, err = d.ByteRunLength.ReadValues(in, bs); err != nil {
+	if bs, err = d.ByteRunLength.Decode(in, bs); err != nil {
 		return
 	}
 	for _, b := range bs {
@@ -301,7 +301,7 @@ type IntRleV2 struct {
 }
 
 // decoding buffer all to u/literals
-func (d *IntRleV2) ReadValues(in BufferedReader, values []uint64) ([]uint64, error) {
+func (d *IntRleV2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 	// header from MSB to LSB
 	firstByte, err := in.ReadByte()
 	if err != nil {
@@ -702,7 +702,6 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 		}
 
 		if sub == Encoding_DIRECT {
-			//e.sub = Encoding_DIRECT
 			if err = e.writeDirect(out, true, values[i:i+scope]); err != nil {
 				return
 			}
@@ -717,8 +716,6 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 }
 
 func (e *IntRleV2) writeDirect(out *bytes.Buffer, widthAlign bool, values []uint64) error {
-	//e.forgetBits()
-
 	header := make([]byte, 2)
 	header[0] = Encoding_DIRECT << 6
 
@@ -754,13 +751,8 @@ func (e *IntRleV2) writeDirect(out *bytes.Buffer, widthAlign bool, values []uint
 			return err
 		}
 	}
-
-	// expand to byte
-	if e.bitsLeft != 0 {
-		b := e.lastByte << (8 - e.bitsLeft) // last align to msb
-		if err := out.WriteByte(b); err != nil {
-			return errors.WithStack(err)
-		}
+	if err:=e.writeLeftBits(out);err!=nil {
+		return err
 	}
 	return nil
 }
@@ -1390,7 +1382,7 @@ func (d *Base128VarInt) ReadValues(in BufferedReader, values []int64) (err error
 type Ieee754Double struct {
 }
 
-func (d *Ieee754Double) ReadValue(in BufferedReader) (float64, error) {
+func (d *Ieee754Double) Decode(in BufferedReader) (float64, error) {
 	bb := make([]byte, 8)
 	if _, err := io.ReadFull(in, bb); err != nil {
 		return 0, errors.WithStack(err)
