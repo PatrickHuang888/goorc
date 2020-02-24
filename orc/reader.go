@@ -913,7 +913,6 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 
 	vector := batch.Vector.([]int64)
 	vector = vector[:0]
-
 	i := 0
 	for ; !c.data.finished() && i < cap(vector); i++ {
 		if len(batch.Presents)==0 {

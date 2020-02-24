@@ -3,7 +3,6 @@ package encoding
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"math"
 
@@ -96,7 +95,7 @@ func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
 				return errors.WithStack(err)
 			}
 		}
-		for j:=0 ; j < len(repeats); j++ {
+		for j := 0; j < len(repeats); j++ {
 
 			if err := out.WriteByte(byte(repeats[j].count - MIN_REPEAT_SIZE)); err != nil {
 				return errors.WithStack(err)
@@ -106,15 +105,15 @@ func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
 			}
 
 			if j+1 < len(repeats) {
-				if err := out.WriteByte(byte(-(repeats[j+1].start - (repeats[j].start+repeats[j].count)))); err != nil {
+				if err := out.WriteByte(byte(-(repeats[j+1].start - (repeats[j].start + repeats[j].count)))); err != nil {
 					return errors.WithStack(err)
 				}
-				if _, err := out.Write(values[repeats[j].start+repeats[j].count:repeats[j+1].start]); err != nil {
+				if _, err := out.Write(values[repeats[j].start+repeats[j].count : repeats[j+1].start]); err != nil {
 					return errors.WithStack(err)
 				}
 			}
 		}
-		left :=repeats[len(repeats)-1].start+repeats[len(repeats)-1].count  // first not include in repeat
+		left := repeats[len(repeats)-1].start + repeats[len(repeats)-1].count // first not include in repeat
 		if left < l {
 			if err := out.WriteByte(byte(-(l - left))); err != nil {
 				return errors.WithStack(err)
@@ -137,16 +136,16 @@ type BoolRunLength struct {
 
 func (d *BoolRunLength) Decode(in io.ByteReader, vs []bool) (result []bool, err error) {
 	var bs []byte
-	if bs, err=d.ByteRunLength.ReadValues(in, bs);err!=nil {
+	if bs, err = d.ByteRunLength.ReadValues(in, bs); err != nil {
 		return
 	}
 	for _, b := range bs {
-		for i:=0; i<8; i++ {
-			v:= (b >> byte(7-i)) & 0x01 == 0x01
-			vs= append(vs, v)
+		for i := 0; i < 8; i++ {
+			v := (b>>byte(7-i))&0x01 == 0x01
+			vs = append(vs, v)
 		}
 	}
-	result= vs
+	result = vs
 	return
 }
 
@@ -161,7 +160,7 @@ func (e *BoolRunLength) Encode(out *bytes.Buffer, vs interface{}) error {
 			}
 			i++
 		}
-		bs= append(bs, b)
+		bs = append(bs, b)
 	}
 	return e.ByteRunLength.Encode(out, bs)
 }
@@ -298,7 +297,7 @@ type IntRleV2 struct {
 	lastByte byte // different align when using read/writer, used in r/w
 	bitsLeft int  // used in r/w
 
-	Signed bool
+	Signed bool // for read
 }
 
 // decoding buffer all to u/literals
@@ -500,43 +499,39 @@ func (d *IntRleV2) readPatched(in BufferedReader, firstByte byte, values []uint6
 		base = -base
 	}
 
-	log.Tracef("decoding: int rl v2 Patch width %d length %d bw %d patchWidth %d pll %d base %d",
+	log.Tracef("decoding: int rl v2 Patch values width %d length %d bw %d(bytes) and patchWidth %d pll %d base %d",
 		width, length, bw, pw, pll, base)
 
-	// data values (W*L bits padded to the byte)
-	// base is the smallest one, so data values all positive
+	// values (W*L bits padded to the byte)
+	// base is the smallest one, values should be all positive
 	d.forgetBits()
 	for i := 0; i < int(length); i++ {
 		delta, err := d.readBits(in, int(width))
 		if err != nil {
 			return values, err
 		}
+		// rethink: cast int64
 		values = append(values, Zigzag(base+int64(delta)))
 	}
 
-	// patched values, PGW+PW must < 64
+	// decode patch values, PGW+PW must < 64
 	d.forgetBits()
 	for i := 0; i < int(pll); i++ {
-		bs, err := d.readBits(in, int(pgw)+int(pw))
+		pp, err := d.readBits(in, int(pgw)+int(pw))
 		if err != nil {
 			return values, err
 		}
 
-		patchGap := int(bs >> pw)
+		patchGap := int(pp >> pw)
 		mark += patchGap
+		patch:= pp & ((1 << pw)-1)
 
-		patchMask := (uint64(1) << pw) - 1
-		patchValue := bs & patchMask
-
-		if patchGap == 255 && patchValue == 0 {
-			mark += 255
-			continue
-		}
+		// todo: check gap==255 and patch==0
 
 		// patchValue should be at largest 63 bits?
 		v := UnZigzag(values[mark])
 		v -= base // remove added base first
-		v |= int64(patchValue << width)
+		v |= int64(patch << width)
 		v += base // add base back
 		values[mark] = Zigzag(v)
 	}
@@ -573,49 +568,38 @@ func (d *IntRleV2) forgetBits() {
 	d.lastByte = 0
 }
 
-// all bits align to msb
 func (e *IntRleV2) writeBits(value uint64, bits int, out *bytes.Buffer) (err error) {
 	totalBits := e.bitsLeft + bits
 	if totalBits > 64 {
 		return errors.New("write bits > 64")
 	}
 
-	data := (uint64(e.lastByte) << bits) | value // last byte and value will not overlap
+	if e.lastByte != 0 {
+		value = (uint64(e.lastByte) << bits) | value // last byte and value should not overlap
+	}
 
-	for totalBits -= 8; totalBits > 0; totalBits -= 8 {
-		b := byte(data >> totalBits)
+	for totalBits -= 8; totalBits >= 0; totalBits -= 8 {
+		b := byte(value >> totalBits)
 		if err = out.WriteByte(b); err != nil {
 			return errors.WithStack(err)
 		}
 	}
 	totalBits += 8
 	e.bitsLeft = totalBits
-	leadZeros := 8 - totalBits
-	// reAssure: clear lead bits
-	e.lastByte = byte(data) << leadZeros >> leadZeros
+	// clear lead bits
+	e.lastByte = byte(value) & ((1 << e.bitsLeft) - 1)
 
-	/*trailZeros := 8 - rle.bitsLeft
-	move := trailZeros + 56 - bits
-	assertx(move >= 0)
-	v := value << uint(move)
-	if rle.bitsLeft != 0 { // has msb byte
-		v = (uint64(rle.lastByte) << 56) | v
-	}
+	return
+}
 
-
-	writeCount := 0
-	for ; totalBits > 0; totalBits -= 8 {
-		b := byte(v >> uint(56-writeCount*8))
-		if err = out.WriteByte(b); err != nil {
+func (e *IntRleV2) writeLeftBits(out *bytes.Buffer) error {
+	if e.bitsLeft != 0 {
+		b := e.lastByte << (8 - e.bitsLeft) // last align to msb
+		if err := out.WriteByte(b); err != nil {
 			return errors.WithStack(err)
 		}
-		writeCount++
 	}
-	totalBits += 8
-
-	rle.lastByte = byte(v >> uint(56-writeCount*8))
-	rle.bitsLeft = totalBits*/
-	return
+	return nil
 }
 
 func (e *IntRleV2) Encode(out *bytes.Buffer, vs interface{}) error {
@@ -629,7 +613,6 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 	}
 
 	for i := 0; i < len(values); {
-
 		// try repeat first
 		repeat := getRepeat(values, i)
 		if repeat >= 3 {
@@ -699,23 +682,23 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 			sub = Encoding_DIRECT
 		}
 
-		// toAssure: encoding until MAX_SCOPE?
+		if sub == Encoding_PATCHED_BASE {
+			//log.Tracef("encoding: int rl v2 Patch %s", pvs.toString())
+			if err = e.writePatch(&pvs, out); err != nil {
+				return
+			}
+			// todo: test len(values) > 512
+			i += pvs.count
+			continue
+		}
+
+		// todo: max scope every encoding method varies
 		var scope int
 		l := len(values) - i
 		if l >= MAX_SCOPE {
 			scope = MAX_SCOPE
 		} else {
 			scope = l
-		}
-
-		if sub == Encoding_PATCHED_BASE {
-			//e.sub = Encoding_PATCHED_BASE
-			log.Tracef("encoding: int rl v2 Patch %s", pvs.toString())
-			if err = e.writePatch(&pvs, out); err != nil {
-				return
-			}
-			i += scope
-			continue
 		}
 
 		if sub == Encoding_DIRECT {
@@ -887,114 +870,42 @@ func (rle *IntRleV2) tryDirectEncoding(idx int) bool {
 }
 
 type patchedValues struct {
+	count  int
 	values []uint64
 	width  byte // value bits width
 	base   int64
 	//pll        byte     // patch list length
-	gapWidth   byte     // patch gap bits width, 1 to 8
-	gaps       []byte   // patch gap values
-	patchWidth byte     // patch bits width according to table, 1 to 64
-	patches    []uint64 // patch values, already shifted valuebits
+	//gapWidth   byte     // patch gap bits width, 1 to 8
+	gaps []int // patch gap values
+	//patchWidth byte     // patch bits width according to table, 1 to 64
+	patches []uint64 // patch values, already shifted valuebits
 }
 
-func (pvs *patchedValues) toString() string {
-	return fmt.Sprintf("patch values: base %d, value width %d, pll %d, gapWidth %d, patchWidth %d",
+/*func (pvs *patchedValues) toString() string {
+	return fmt.Sprintf("patch: base %d, delta value width %d, pll %d, gapWidth %d, patchWidth %d",
 		pvs.base, pvs.width, len(pvs.patches), pvs.gapWidth, pvs.patchWidth)
-}
-
-func (e *IntRleV2) writePatch(pvs *patchedValues, out *bytes.Buffer) error {
-	// write header
-	header := make([]byte, 4)
-	header[0] = Encoding_PATCHED_BASE << 6
-	w, err := widthEncoding(int(pvs.width))
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	header[0] |= w << 1
-	length := len(pvs.values) - 1 // 1 to 512
-	header[0] |= byte(length >> 8 & 0x01)
-	header[1] = byte(length & 0xff)
-	base := uint64(pvs.base)
-	if pvs.base < 0 {
-		base = uint64(-pvs.base)
-	}
-	// base bytes 1 to 8, add 1 bit for negative mark
-	baseBytes := byte(math.Ceil(float64(getBitsWidth(base)+1) / 8))
-	header[2] = (baseBytes - 1) & 0x07 << 5 // 3bits for 1 to 8
-	pw, err := widthEncoding(int(pvs.patchWidth))
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	header[2] |= pw & 0x1f                     // 1f, 5 bits
-	header[3] = (pvs.gapWidth - 1) & 0x07 << 5 // 07, 3bits for 1 to 8 bits
-	pll := byte(len(pvs.patches))              // patch list length, 0 to 31
-	header[3] |= pll & 0x1f
-	if _, err := out.Write(header); err != nil {
-		return errors.WithStack(err)
-	}
-
-	// write base
-	if pvs.base < 0 {
-		base |= 0x01 << ((baseBytes-1)*8 + 7) // msb set to 1
-	}
-	for i := int(baseBytes) - 1; i >= 0; i-- { // hxm: watch out loop index
-		out.WriteByte(byte((base >> (byte(i) * 8)) & 0xff)) // big endian
-	}
-
-	// write W*L positive values
-	if err := writeUints(out, w, pvs.values); err != nil {
-		return errors.WithStack(err)
-	}
-
-	// write patch list, (PLL*(PGW+PW) bytes
-	patchBytes := int(math.Ceil(float64(pvs.patchWidth) / float64(8)))
-	for i := 0; i < int(pll); i++ {
-		v := pvs.gaps[i] << (8 - pvs.gapWidth)
-		p := pvs.patches[i]
-		shiftW := byte(getBitsWidth(p)) - (8 - pvs.gapWidth)
-		bhigh := byte(p >> shiftW)
-		v |= bhigh
-		if err := out.WriteByte(v); err != nil {
-			return errors.WithStack(err)
-		}
-		for j := patchBytes - 2; j >= 0; j-- {
-			if shiftW > 8 {
-				shiftW -= 8
-				v = byte(p >> shiftW)
-			} else {
-				if j != 0 {
-					log.Errorf("patch shift value should less than 8 should be the lowest byte")
-				}
-				v = byte(p) << (8 - shiftW)
-			}
-			if err := out.WriteByte(v); err != nil {
-				return errors.WithStack(err)
-			}
-		}
-	}
-	return nil
-}
+}*/
 
 // analyze bit widths, if return encoding Patch then fill the patchValues, else return encoding Direct
 // todo: patch 0
 func bitsWidthAnalyze(values []uint64, pvs *patchedValues) (sub byte, err error) {
-	min := UnZigzag(values[0])
+	base := UnZigzag(values[0])
 	var count int
-	baseWidthHist := make([]byte, BITS_SLOTS) // slots for 0 to 64 bits widths
+	//baseWidthHist := make([]byte, BITS_SLOTS) // slots for 0 to 64 bits widths
 
-	// fixme: patch only apply until to 512?
+	// max L is 512
 	for i := 1; i < 512 && i < len(values); i++ {
 		v := UnZigzag(values[i])
-		if v < min {
-			min = v
+		if v < base {
+			base = v
 		}
 		// toAssure: using zigzag to decide bits width
-		baseWidthHist[getAlignedWidth(values[i])] += 1
+		//baseWidthHist[getAlignedWidth(values[i])] += 1
 		count = i + 1
 	}
 
 	// get bits width cover 100% and 90%
-	var p100w, p90w byte
+	/*var p100w, p90w byte
 	for i := BITS_SLOTS - 1; i >= 0; i-- {
 		if baseWidthHist[i] != 0 {
 			p100w = byte(i)
@@ -1011,67 +922,180 @@ func bitsWidthAnalyze(values []uint64, pvs *patchedValues) (sub byte, err error)
 			break
 		}
 	}
-	if p100w-p90w > 1 { // can be patched
-		values := make([]uint64, count)
-		valuesWidths := make([]byte, count)
-		for i := 0; i < count; i++ {
-			values[i] = uint64(UnZigzag(values[i]) - min)
-			valuesWidths[i] = byte(getAlignedWidth(values[i]))
-		}
-		valuesWidthHist := make([]byte, BITS_SLOTS) // values bits width 0 to 64
-		for i := 0; i < count; i++ {
-			valuesWidthHist[valuesWidths[i]] += 1
-		}
+	log.Tracef("encoding: int rl try patch, 0.90 width %d and 1.00 width %d", p90w, p100w)*/
 
-		var vp100w, vp95w byte // values width cover 100% and 95%
-		for i := BITS_SLOTS - 1; i >= 0; i-- {
-			if valuesWidthHist[i] != 0 {
-				vp100w = byte(i)
-				break
-			}
-		}
-		p95 := 0.95
-		v95len := int(float64(count) * p95)
-		s = 0
-		for i := 0; i < BITS_SLOTS; i++ {
-			s += int(valuesWidthHist[i])
-			if s >= v95len && valuesWidthHist[i] != 0 {
-				vp95w = byte(i)
-				break
-			}
-		}
-		if vp100w-vp95w != 0 {
-			sub = Encoding_PATCHED_BASE
-			pvs.base = min
-			pvs.values = values
-			pvs.width = vp95w
-			// get patches
-			for i := 0; i < count; i++ {
-				if valuesWidths[i] > pvs.width { // patched value
-					pvs.gaps = append(pvs.gaps, byte(i))
-					pvs.patches = append(pvs.patches, values[i]>>pvs.width)
-				}
-			}
-			for i := 0; i < len(pvs.gaps); i++ {
-				w := byte(getBitsWidth(uint64(pvs.gaps[i])))
-				if pvs.gapWidth < w {
-					pvs.gapWidth = w
-				}
-			}
-			for i := 0; i < len(pvs.patches); i++ {
-				w := getAlignedWidth(pvs.patches[i])
-				if int(pvs.patchWidth) < w {
-					pvs.patchWidth = byte(w)
-				}
-			}
-			if pvs.gapWidth+pvs.patchWidth > 64 {
-				return Encoding_UNSET, errors.New("encoding: int rl v2 Patch PGW+PW > 64")
-			}
-			return
+	var width, w byte // w is %90 delta values width
+
+	deltaValues := make([]uint64, count)
+	deltaValuesWidths := make([]byte, count)
+	for i := 0; i < count; i++ {
+		deltaValues[i] = uint64(UnZigzag(values[i]) - base) // it should be positive
+		width_ := byte(getBitsWidth(deltaValues[i]))
+		deltaValuesWidths[i] = width_
+		if width_ > width {
+			width = width_
 		}
 	}
+	deltaValuesWidthHist := make([]byte, BITS_SLOTS) // values bits width 0 to 64
+	for i := 0; i < count; i++ {
+		deltaValuesWidthHist[deltaValuesWidths[i]] += 1
+	}
+
+	p90len := int(float64(count) * 0.9)
+	l := 0
+	for i := 0; i < BITS_SLOTS; i++ {
+		l += int(deltaValuesWidthHist[i])
+		if l >= p90len && deltaValuesWidthHist[i] != 0 {
+			w = byte(i)
+			break
+		}
+	}
+
+	log.Tracef("encoding: int rl possible patch, 90%% width %d and width %d of adjusted values", w, width)
+	if width > w {
+		sub = Encoding_PATCHED_BASE
+		pvs.base = base
+		pvs.values = deltaValues
+		pvs.width = w
+		pvs.count = count
+
+		// get patches
+		var previousGap int
+		for i := 0; i < count; i++ {
+			if deltaValuesWidths[i] > w {
+				for i-previousGap > 255 {
+					// todo: test this block
+					// recheck: gap is 255, patch is 0 ?
+					pvs.gaps = append(pvs.gaps, 255)
+					pvs.patches = append(pvs.patches, 0)
+					previousGap += 255
+				}
+				pvs.gaps = append(pvs.gaps, i-previousGap)
+				//Patches are applied by logically or’ing the data values with the relevant patch shifted W bits left
+				patch := pvs.values[i]
+				pvs.values[i] = patch & ((0x1 << w) - 1) // remove patch bits
+				pvs.patches = append(pvs.patches, patch>>w)
+				previousGap = i
+			}
+		}
+		if len(pvs.patches) > 31 {
+			// fixme: how to handle this
+			return Encoding_UNSET, errors.New("patches max 31")
+		}
+
+		/*for i := 0; i < len(pvs.gaps); i++ {
+			w := byte(getBitsWidth(uint64(pvs.gaps[i])))
+			if pvs.gapWidth < w {
+				pvs.gapWidth = w
+			}
+		}*/
+		/*for i := 0; i < len(pvs.patches); i++ {
+			w := getAlignedWidth(pvs.patches[i])
+			if int(pvs.patchWidth) < w {
+				pvs.patchWidth = byte(w)
+			}
+		}
+		if pvs.gapWidth+pvs.patchWidth > 64 {
+			return Encoding_UNSET, errors.New("encoding: int rl v2 Patch PGW+PW > 64")
+		}*/
+		return
+	}
+
+	//}
 	sub = Encoding_DIRECT
 	return
+}
+
+func (e *IntRleV2) writePatch(pvs *patchedValues, out *bytes.Buffer) error {
+	// write header
+	header := make([]byte, 4)
+	header[0] = Encoding_PATCHED_BASE << 6
+	w, err := widthEncoding(int(pvs.width))
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	header[0] |= w << 1           // 5 bits for W
+	length := len(pvs.values) - 1 // 1 to 512, 9 bits for L
+	header[0] |= byte(length >> 8 & 0x01)
+	header[1] = byte(length & 0xff)
+	base := uint64(pvs.base)
+	if pvs.base < 0 {
+		base = uint64(-pvs.base)
+	}
+	// base bytes 1 to 8, add 1 bit for negative mark
+	bw := byte(math.Ceil(float64(getBitsWidth(base)+1) / 8)) // base width
+	header[2] = (bw - 1) << 5                                // 3bits for 1 to 8 bytes
+
+	// 5 bits for PW (patch width) (1 to 64 bits)
+	var patchWidth int
+	for _, p := range pvs.patches {
+		patchWidth_ := getBitsWidth(p)
+		if patchWidth_ > patchWidth {
+			patchWidth = patchWidth_
+		}
+	}
+	pw, err := widthEncoding(patchWidth)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	header[2] |= pw & 0b11111
+
+	// 3 bits for PGW (patch gap width) (1 to 8 bits)
+	// so max pg for 3 bits pgw is 255
+	var pgw int
+	for _, g := range pvs.gaps {
+		pgw_ := getBitsWidth(uint64(g))
+		if pgw_ > pgw {
+			pgw = pgw_
+		}
+	}
+	header[3] = byte(pgw-1) & 0b111 << 5
+
+	// 5 bits for PLL (patch list length) (0 to 31)
+	// rethink: len(patches)==0 ?
+	pll := byte(len(pvs.patches))
+	header[3] |= pll & 0b11111
+
+	if _, err := out.Write(header); err != nil {
+		return errors.WithStack(err)
+	}
+
+	// write base
+	if pvs.base < 0 {
+		base |= 0b1 << ((bw-1)*8 + 7) // msb set to 1
+	}
+	for i := int(bw) - 1; i >= 0; i-- { // hxm: watch out loop index
+		out.WriteByte(byte((base >> (byte(i) * 8)) & 0xff)) // big endian
+	}
+
+	// write W*L values
+	e.forgetBits()
+	for _, v := range pvs.values {
+		if err := e.writeBits(v, int(pvs.width), out); err != nil {
+			return err
+		}
+	}
+	if err:= e.writeLeftBits(out);err!=nil {
+		return err
+	}
+
+	if pgw+patchWidth > 64 {
+		return errors.New("pgw+pw must less than or equal to 64")
+	}
+
+	// write patch list, (PLL*(PGW+PW) bytes
+	e.forgetBits()
+	for i, p := range pvs.patches {
+		patch := (uint64(pvs.gaps[i]) << patchWidth) | p
+		if err:= e.writeBits(patch, pgw+patchWidth, out);err!=nil {
+			return err
+		}
+	}
+	if err:= e.writeLeftBits(out);err!=nil {
+		return err
+	}
+
+	return nil
 }
 
 func writeUints(out *bytes.Buffer, width byte, values []uint64) error {

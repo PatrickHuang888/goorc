@@ -119,8 +119,13 @@ func TestLongReadWriteWithPresents(t *testing.T)  {
 	values[0]= 0
 	presents[45]=false
 	values[45]= 0
-	presents[103]=false
-	values[103]= 0
+
+	// is it meaningfal last present is false?
+	//presents[103]=false
+	//values[103]= 0
+
+	presents[102]= false
+	values[102]= 0
 
 	batch.Presents= presents
 	batch.Vector= values
