@@ -19,7 +19,7 @@ func TestByteRunLength(t *testing.T) {
 	buf := bytes.NewBuffer([]byte{0x61, 0x00})
 	brl := &ByteRunLength{}
 
-	values, err = brl.ReadValues(buf, values)
+	values, err = brl.Decode(buf, values)
 	if err != nil {
 		t.Error(err)
 	}
@@ -30,7 +30,7 @@ func TestByteRunLength(t *testing.T) {
 
 	values = values[:0]
 	t2 := bytes.NewBuffer([]byte{0xfe, 0x44, 0x45})
-	values, err = brl.ReadValues(t2, values)
+	values, err = brl.Decode(t2, values)
 	if err != nil {
 		t.Error(err)
 	}
@@ -45,7 +45,7 @@ func TestByteRunLength(t *testing.T) {
 	}
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = brl.ReadValues(buf, values); err != nil {
+		if values, err = brl.Decode(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -58,7 +58,7 @@ func TestByteRunLength(t *testing.T) {
 	}
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = brl.ReadValues(buf, values); err != nil {
+		if values, err = brl.Decode(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -71,7 +71,7 @@ func TestByteRunLength(t *testing.T) {
 	}
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = brl.ReadValues(buf, values); err != nil {
+		if values, err = brl.Decode(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -84,7 +84,7 @@ func TestByteRunLength(t *testing.T) {
 	}
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = brl.ReadValues(buf, values); err != nil {
+		if values, err = brl.Decode(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -103,7 +103,7 @@ func TestByteRunLength(t *testing.T) {
 
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = brl.ReadValues(buf, values); err != nil {
+		if values, err = brl.Decode(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -138,7 +138,7 @@ func TestDouble(test *testing.T) {
 
 	var values []float64
 	for ; buf.Len() != 0; {
-		value, err := c.ReadValue(buf)
+		value, err := c.Decode(buf)
 		if err != nil {
 			test.Fatalf("fail %+v", err)
 		}
@@ -183,7 +183,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	var uvalues []uint64
 	buf := bytes.NewBuffer(bs)
 
-	uvalues, err = irl.ReadValues(buf, uvalues)
+	uvalues, err = irl.Decode(buf, uvalues)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 
 	var values []int64
 	uvs = uvs[:0]
-	uvs, err = irl.ReadValues(buf, uvs)
+	uvs, err = irl.Decode(buf, uvs)
 	for _, v := range uvs {
 		values = append(values, UnZigzag(v))
 	}
@@ -228,7 +228,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	assert.Nil(t, err)
 
 	uvs = uvs[:0]
-	uvs, err = irl.ReadValues(buf, uvs)
+	uvs, err = irl.Decode(buf, uvs)
 	assert.Nil(t, err)
 	values = values[:0]
 	for _, v := range uvs {
@@ -249,7 +249,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 
 	uvs = uvs[:0]
 	for buf.Len() != 0 {
-		uvs, err = irl.ReadValues(buf, uvs)
+		uvs, err = irl.Decode(buf, uvs)
 		assert.Nil(t, err)
 	}
 	assert.Equal(t, 1000, len(uvs))
@@ -269,7 +269,7 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 
 	uvs = uvs[:0]
 	for buf.Len() != 0 {
-		uvs, err = irl.ReadValues(buf, uvs)
+		uvs, err = irl.Decode(buf, uvs)
 		assert.Nil(t, err)
 	}
 	vs = vs[:0]
@@ -295,7 +295,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	assert.Equal(t, encoded, buf.Bytes())
 
 	var uvalues []uint64
-	uvalues, err = irl.ReadValues(buf, uvalues)
+	uvalues, err = irl.Decode(buf, uvalues)
 	assert.Equal(t, uvs, uvalues)
 
 	uvs = []uint64{999, 900203003, 688888888, 857340643}
@@ -305,7 +305,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	assert.Nil(t, err)
 
 	uvalues = uvalues[:0]
-	uvalues, err = irl.ReadValues(buf, uvalues)
+	uvalues, err = irl.Decode(buf, uvalues)
 	assert.Nil(t, err)
 	assert.Equal(t, uvs, uvalues)
 
@@ -315,7 +315,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	uvs = uvs[:0]
-	uvs, err = irl.ReadValues(buf, uvs)
+	uvs, err = irl.Decode(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, uvalues, uvs)
 
@@ -332,7 +332,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	}
 
 	uvs = uvs[:0]
-	uvs, err = irl.ReadValues(buf, uvs)
+	uvs, err = irl.Decode(buf, uvs)
 	assert.Nil(t, err)
 	var vs []int64
 	for _, v := range uvs {
@@ -350,7 +350,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	uvs = uvs[:0]
-	uvs, err = irl.ReadValues(buf, uvs)
+	uvs, err = irl.Decode(buf, uvs)
 	assert.Nil(t, err)
 	vs = vs[:0]
 	for _, v := range uvs {
@@ -359,35 +359,31 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	assert.Equal(t, values, vs)
 
 	// test width 16
-	/*irl.sub= Encoding_DIRECT
-	irl.signed=false
-	irl.uliterals= []uint64{0x5ff}
+	uvalues=[]uint64{0x5ff}
+	irl.Signed= false
 	buf.Reset()
-	if err := irl.writeDirect(buf, 0, 1, true); err != nil {
+	if err=irl.Encode(buf, uvalues);err!=nil {
 		t.Fatalf("%+v", err)
 	}
-	irl.reset()
-	if err := irl.readValues(buf); err != nil {
+	uvs= uvs[:0]
+	uvs, err=irl.Decode(buf, uvs)
+	if err!=nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, uint64(0x5ff), irl.uliterals[0])
+	assert.Equal(t, uvalues, uvs)
 
 	// test width 11
-	irl.reset()
-	irl.sub= Encoding_DIRECT
-	irl.signed=false
-	irl.uliterals= []uint64{0b100_0000_0001, 0b100_0000_0011}
+	uvalues= []uint64{0b100_0000_0001, 0b100_0000_0011}
+	irl.Signed=false
 	buf.Reset()
-	if err := irl.writeDirect(buf, 0, 2, false); err != nil {
+	if err := irl.writeDirect(buf, false, uvalues); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	irl.reset()
-	if err := irl.readValues(buf); err != nil {
+	uvs= uvs[:0]
+	if uvs, err = irl.Decode(buf, uvs); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, 2, irl.len())
-	assert.Equal(t, uint64(0b100_0000_0001), irl.uliterals[0])
-	assert.Equal(t, uint64(0b100_0000_0011), irl.uliterals[1])*/
+	assert.Equal(t, uvalues, uvs)
 }
 
 func TestIntRunLengthV2Patch(t *testing.T) {
@@ -401,42 +397,44 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 
 	var uvs []uint64
 	var vs []int64
+	var err error
 
-	uvs, err := irl.ReadValues(bytes.NewBuffer(bs), uvs)
+	uvs, err = irl.Decode(bytes.NewBuffer(bs), uvs)
 	assert.Nil(t, err)
 	for _, v := range uvs {
 		vs = append(vs, UnZigzag(v))
 	}
 	assert.Equal(t, values, vs)
 
-	/*buf := &bytes.Buffer{}
+	buf := &bytes.Buffer{}
 	uvs= uvs[:0]
 	for _, v := range values {
 		uvs= append(uvs, Zigzag(v))
 	}
-	if err := irl.Encode(buf, signed, uvs); err != nil {
+	if err := irl.Encode(buf, uvs); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 	assert.Equal(t, bs, buf.Bytes())
 
-	rle.reset()
-	rle.signed = true
-	if err := rle.readValues(buf); err != nil {
-		t.Fatalf("decode error %+v", err)
-	}
-	assert.Equal(t, v, rle.literals)*/
-
-	/*values = []int64{-2030, -2000, -2020, 1000000, 2040, -2050, -2060, -2070, -2080, -2090, -2100, -2110, -2120, -2130,
+	values = []int64{-2030, -2000, -2020, 1000000, 2040, -2050, -2060, -2070, -2080, -2090, -2100, -2110, -2120, -2130,
 		-2140, -2150, -2160, -2170, -2180, -2190}
-	if err := rle.Encode(buf); err != nil {
+	uvs= uvs[:0]
+	for _, v := range values {
+		uvs = append(uvs, Zigzag(v))
+	}
+	buf.Reset()
+	if err := irl.Encode(buf, uvs); err != nil {
 		t.Fatalf("encoding error %+v", err)
 	}
-	rle.reset()
-	rle.signed = true
-	if err := rle.readValues(buf); err != nil {
+	uvs= uvs[:0]
+	if uvs, err = irl.Decode(buf, uvs); err != nil {
 		t.Fatalf("decoding error %+v", err)
 	}
-	assert.Equal(t, v, rle.literals)*/
+	vs=vs[:0]
+	for _, v := range uvs {
+		vs= append(vs, UnZigzag(v))
+	}
+	assert.Equal(t, values, vs)
 }
 
 func TestIntRunLengthV2(t *testing.T) {
@@ -447,7 +445,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	buf := bytes.NewBuffer(bs)
 
 	var uvs []uint64
-	uvs, err := irl.ReadValues(buf, uvs)
+	uvs, err := irl.Decode(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, 5, len(uvs))
 	assert.Equal(t, 10000, int(uvs[0]))
@@ -472,7 +470,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.Nil(t, err)
 
 	uvs = uvs[:0]
-	uvs, err = irl.ReadValues(buf, uvs)
+	uvs, err = irl.Decode(buf, uvs)
 	assert.Nil(t, err)
 	var vs []int64
 	for _, v := range uvs {
@@ -484,7 +482,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	uvalues := []uint64{23713, 43806, 57005, 48879}
 	buf = bytes.NewBuffer([]byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef})
 	uvs = uvs[:0]
-	uvs, err = irl.ReadValues(buf, uvs)
+	uvs, err = irl.Decode(buf, uvs)
 	assert.Nil(t, err)
 	assert.Equal(t, uvalues, uvs)
 }

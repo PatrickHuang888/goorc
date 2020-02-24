@@ -913,7 +913,6 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 
 	vector := batch.Vector.([]int64)
 	vector = vector[:0]
-
 	i := 0
 	for ; !c.data.finished() && i < cap(vector); i++ {
 		if len(batch.Presents)==0 {
@@ -1060,7 +1059,7 @@ func (r *byteStreamReader) next() (v byte, err error) {
 		r.values = r.values[:0]
 		r.consumed = 0
 
-		if r.values, err = r.decoder.ReadValues(r.stream, r.values); err != nil {
+		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
 			return 0, err
 		}
 	}
@@ -1149,7 +1148,7 @@ func newIeeeFloatStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64
 }
 
 func (r *ieeeFloatStreamReader) next() (v float64, err error) {
-	return r.decoder.ReadValue(r.stream)
+	return r.decoder.Decode(r.stream)
 }
 
 func (r *ieeeFloatStreamReader) finished() bool {
@@ -1219,7 +1218,7 @@ func (r *longV2StreamReader) nextUInt() (v uint64, err error) {
 		r.pos = 0
 		r.values = r.values[:0]
 
-		if r.values, err = r.decoder.ReadValues(r.stream, r.values); err != nil {
+		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
 			return
 		}
 
@@ -1234,7 +1233,7 @@ func (r *longV2StreamReader) nextUInt() (v uint64, err error) {
 // for small data like dict index, ignore stream.signed
 func (r *longV2StreamReader) getAllUInts() (vs []uint64, err error) {
 	for !r.stream.finished() {
-		if r.values, err = r.decoder.ReadValues(r.stream, r.values); err != nil {
+		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
 			return
 		}
 	}
