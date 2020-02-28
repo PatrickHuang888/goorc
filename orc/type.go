@@ -96,7 +96,7 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *Column
 		vector = make([]int64, 0, opts.RowSize)
 
 	case pb.Type_FLOAT:
-		// todo:
+		vector = make([]float32, 0, opts.RowSize)
 
 	case pb.Type_DOUBLE:
 		vector = make([]float64, 0, opts.RowSize)

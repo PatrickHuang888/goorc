@@ -273,12 +273,12 @@ type BytesContent struct {
 		pos           int*/
 }
 
-// decode bytes, but should have extracted length stream first by rle v2 as length field
-func (bd *BytesContent) ReadValues(in BufferedReader, values []byte) (err error) {
-	if _, err = in.Read(values); err != nil {
-		return errors.WithStack(err)
+func (bd *BytesContent) DecodeNext(in BufferedReader, byteLength int) (value []byte, err error) {
+	value= make([]byte, byteLength)
+	if _, err = io.ReadFull(in, value); err != nil {
+		return value, errors.WithStack(err)
 	}
-	return nil
+	return
 }
 
 // write out content do not base length field, just base on len of content
@@ -1377,6 +1377,31 @@ func (d *Base128VarInt) ReadValues(in BufferedReader, values []int64) (err error
 	}
 	values = append(values, v)
 	return
+}
+
+type Ieee754Float struct {
+
+}
+
+func (d *Ieee754Float) Decode(in BufferedReader) (float32, error) {
+	bb := make([]byte, 4)
+	if _, err := io.ReadFull(in, bb); err != nil {
+		return 0, errors.WithStack(err)
+	}
+	v := math.Float32frombits(binary.BigEndian.Uint32(bb))
+	return v, nil
+}
+
+func (e *Ieee754Float) Encode(out *bytes.Buffer, vs interface{}) error {
+	values := vs.([]float32)
+	bb := make([]byte, 4)
+	for _, v := range values {
+		binary.BigEndian.PutUint32(bb, math.Float32bits(v))
+		if _, err := out.Write(bb); err != nil {
+			return errors.WithStack(err)
+		}
+	}
+	return nil
 }
 
 type Ieee754Double struct {

@@ -2,6 +2,7 @@ package orc
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"testing"
 
@@ -161,7 +162,7 @@ func TestLongColumnRWwithPresents(t *testing.T)  {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestBoolColumnRW(t *testing.T) {
+func TestBoolColumnRWwithoutPresents(t *testing.T) {
 	schema := &TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
 	wopts := DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
@@ -200,4 +201,175 @@ func TestBoolColumnRW(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, values, rbatch.Vector)
+}
+
+func TestFloatColumnWithPresents(t *testing.T)  {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_FLOAT, HasNulls:true}
+	wopts:= DefaultWriterOptions()
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows:= 100
+	values:= make([]float32, rows)
+	for i := 0; i < rows; i++ {
+		values[i]= float32(i)
+	}
+	presents:= make([]bool, rows)
+	for i:=0; i<rows; i++ {
+		presents[i]= true
+	}
+	presents[0]=false
+	values[0]= 0
+	presents[45]=false
+	values[45]= 0
+	presents[98]= false
+	values[98]= 0
+
+	batch.Presents= presents
+	batch.Vector= values
+
+	writer:= newFloatWriter(schema, wopts)
+	n, err:=writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(rows), n)
+
+	ropts:=DefaultReaderOptions()
+	batch= schema.CreateReaderBatch(ropts)
+	presentBs:= &bufSeeker{writer.present.buf}
+	pKind:= pb.Stream_PRESENT
+	pLength_:= uint64(writer.present.buf.Len())
+	pInfo:= &pb.Stream{Column:&schema.Id, Kind:&pKind, Length:&pLength_}
+	present:= newBoolStreamReader(ropts, pInfo,0, presentBs)
+
+	dataBs:= &bufSeeker{writer.data.buf}
+	dKind:= pb.Stream_DATA
+	dLength:= uint64(writer.data.buf.Len())
+	dInfo:= &pb.Stream{Column:&schema.Id, Kind:&dKind, Length:&dLength}
+	data:= newFloatStreamReader(ropts, dInfo, 0, dataBs)
+
+	cr:= &crBase{schema:schema, present:present}
+	reader:= &floatReader{crBase: cr, data:data}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector)
+}
+
+func TestDoubleColumnWithPresents(t *testing.T)  {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_DOUBLE, HasNulls:true}
+	wopts:= DefaultWriterOptions()
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows:= 100
+	values:= make([]float64, rows)
+	for i := 0; i < rows; i++ {
+		values[i]= float64(i)
+	}
+	presents:= make([]bool, rows)
+	for i:=0; i<rows; i++ {
+		presents[i]= true
+	}
+	presents[0]=false
+	values[0]= 0
+	presents[45]=false
+	values[45]= 0
+	presents[98]= false
+	values[98]= 0
+
+	batch.Presents= presents
+	batch.Vector= values
+
+	writer:= newDoubleWriter(schema, wopts)
+	n, err:=writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(rows), n)
+
+	ropts:=DefaultReaderOptions()
+	batch= schema.CreateReaderBatch(ropts)
+	presentBs:= &bufSeeker{writer.present.buf}
+	pKind:= pb.Stream_PRESENT
+	pLength_:= uint64(writer.present.buf.Len())
+	pInfo:= &pb.Stream{Column:&schema.Id, Kind:&pKind, Length:&pLength_}
+	present:= newBoolStreamReader(ropts, pInfo,0, presentBs)
+
+	dataBs:= &bufSeeker{writer.data.buf}
+	dKind:= pb.Stream_DATA
+	dLength:= uint64(writer.data.buf.Len())
+	dInfo:= &pb.Stream{Column:&schema.Id, Kind:&dKind, Length:&dLength}
+	data:= newDoubleStreamReader(ropts, dInfo, 0, dataBs)
+
+	cr:= &crBase{schema:schema, present:present}
+	reader:= &doubleReader{crBase: cr, data:data}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector)
+}
+
+func TestStringColumnEncodingDirectWithPresents(t *testing.T)  {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls:true}
+	wopts:= DefaultWriterOptions()
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows:= 100
+	values:= make([]string, rows)
+	for i := 0; i < rows; i++ {
+		values[i]= fmt.Sprintf("string %d", i)
+	}
+	presents:= make([]bool, rows)
+	for i:=0; i<rows; i++ {
+		presents[i]= true
+	}
+	presents[0]=false
+	values[0]= ""
+	presents[45]=false
+	values[45]= ""
+	presents[98]= false
+	values[98]= ""
+
+	batch.Presents= presents
+	batch.Vector= values
+
+	writer:= newStringDirectV2Writer(schema, wopts)
+	n, err:=writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(rows), n)
+
+	ropts:=DefaultReaderOptions()
+	batch= schema.CreateReaderBatch(ropts)
+	presentBs:= &bufSeeker{writer.present.buf}
+	pKind:= pb.Stream_PRESENT
+	pLength_:= uint64(writer.present.buf.Len())
+	pInfo:= &pb.Stream{Column:&schema.Id, Kind:&pKind, Length:&pLength_}
+	present:= newBoolStreamReader(ropts, pInfo,0, presentBs)
+
+	dataBs:= &bufSeeker{writer.data.buf}
+	dKind:= pb.Stream_DATA
+	dLength:= uint64(writer.data.buf.Len())
+	dInfo:= &pb.Stream{Column:&schema.Id, Kind:&dKind, Length:&dLength}
+	data:= newStringContentsStreamReader(ropts, dInfo, 0, dataBs)
+
+	lengthBs:= &bufSeeker{writer.length.buf}
+	lKind:= pb.Stream_LENGTH
+	lLength:= uint64(writer.length.buf.Len())
+	lInfo:= &pb.Stream{Column:&schema.Id, Kind:&lKind, Length:&lLength}
+	length:= newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
+
+	cr:= &crBase{schema:schema, present:present}
+	reader:= &stringDirectV2Reader{crBase: cr, data:data, length:length}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector)
 }

@@ -179,7 +179,7 @@ func newStripe(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (
 			fallthrough
 		case pb.Type_STRING:
 			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				column = newStringV2Writer(schema, opts)
+				column = newStringDirectV2Writer(schema, opts)
 				break
 			}
 
@@ -574,6 +574,12 @@ type doubleWriter struct {
 	data *streamWriter
 }
 
+func newDoubleWriter(schema *TypeDescription, opts *WriterOptions) *doubleWriter {
+	c := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
+	data := newDoubleStream(schema.Id, pb.Stream_DATA, opts)
+	return &doubleWriter{cwBase: c, data: data}
+}
+
 func (c *doubleWriter) write(batch *ColumnVector) (rows uint64, err error) {
 	var vector []float64
 	values := batch.Vector.([]float64)
@@ -615,7 +621,7 @@ type binaryDirectV2Writer struct {
 
 func newBinaryDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *binaryDirectV2Writer  {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newStringV2Stream(schema.Id, pb.Stream_DATA, opts)
+	data_ := newStringContentsStream(schema.Id, pb.Stream_DATA, opts)
 	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
 	return &binaryDirectV2Writer{cw_, data_, length_}
 }
@@ -681,7 +687,7 @@ type stringDictV2Writer struct {
 func newStringDictV2Writer(schema *TypeDescription, opts *WriterOptions) *stringDictV2Writer {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, false, opts)
-	secondary_ := newStringV2Stream(schema.Id, pb.Stream_DICTIONARY_DATA, opts)
+	secondary_ := newStringContentsStream(schema.Id, pb.Stream_DICTIONARY_DATA, opts)
 	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
 	return &stringDictV2Writer{cwBase: cw_, data: data_, secondary: secondary_, length: length_}
 }
@@ -708,20 +714,20 @@ func (c *stringDictV2Writer) getStreams() []*streamWriter {
 	return ss
 }
 
-type stringV2Writer struct {
+type stringDirectV2Writer struct {
 	*cwBase
 	data   *streamWriter
 	length *streamWriter
 }
 
-func newStringV2Writer(schema *TypeDescription, opts *WriterOptions) *stringV2Writer {
+func newStringDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *stringDirectV2Writer {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newStringV2Stream(schema.Id, pb.Stream_DATA, opts)
+	data_ := newStringContentsStream(schema.Id, pb.Stream_DATA, opts)
 	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
-	return &stringV2Writer{cw_, data_, length_}
+	return &stringDirectV2Writer{cw_, data_, length_}
 }
 
-func (c *stringV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
+func (c *stringDirectV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
 	var lengthVector []uint64
 	var contents [][]byte
 	values := batch.Vector.([]string)
@@ -763,7 +769,7 @@ func (c *stringV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
 	return
 }
 
-func (c *stringV2Writer) getStreams() []*streamWriter {
+func (c *stringDirectV2Writer) getStreams() []*streamWriter {
 	ss := make([]*streamWriter, 3)
 	ss[0] = c.present
 	ss[1] = c.data
@@ -931,6 +937,59 @@ func (c longV2Writer) getStreams() []*streamWriter {
 	return ss
 }
 
+type floatWriter struct {
+	*cwBase
+	data *streamWriter
+}
+
+func (c *floatWriter) write(batch *ColumnVector) (rows uint64, err error) {
+	var vector []float32
+	values := batch.Vector.([]float32)
+	rows = uint64(len(values))
+
+	if c.schema.HasNulls {
+		if batch.Presents == nil || len(batch.Presents) == 0 {
+			return 0, errors.New("no presents data")
+		}
+		if len(batch.Presents) != len(values) {
+			return 0, errors.New("rows of presents != vector")
+		}
+
+		log.Tracef("writing: float column write %d presents", len(batch.Presents))
+		if _, err := c.present.writeValues(batch.Presents); err != nil {
+			return 0, err
+		}
+
+		for i, p := range batch.Presents {
+			if p {
+				vector = append(vector, values[i])
+			}
+		}
+
+	} else {
+		vector= values
+	}
+
+	if _, err := c.data.writeValues(vector); err != nil {
+		return 0, err
+	}
+
+	return
+}
+
+func (c floatWriter) getStreams() []*streamWriter {
+	ss := make([]*streamWriter, 2)
+	ss[0] = c.present
+	ss[1] = c.data
+	return ss
+}
+
+func newFloatWriter(schema *TypeDescription, opts *WriterOptions) *floatWriter {
+	c := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
+	data := newFloatStream(schema.Id, pb.Stream_DATA, opts)
+	return &floatWriter{cwBase: c, data: data}
+}
+
 type streamWriter struct {
 	info *pb.Stream
 
@@ -970,7 +1029,6 @@ func (s *streamWriter) writeValues(values interface{}) (written uint64, err erro
 	if err = s.encoder.Encode(s.encodingBuf, values); err != nil {
 		return 0, err
 	}
-
 	return s.write(s.encodingBuf)
 }
 
@@ -1214,7 +1272,7 @@ func newIntV2Stream(id uint32, kind pb.Stream_Kind, signed bool, opts *WriterOpt
 	return &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: encoder, encodingBuf: &bytes.Buffer{}}
 }
 
-func newStringV2Stream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
+func newStringContentsStream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
 	id_ := id
 	kind_ := kind
 	length_ := uint64(0)
@@ -1239,6 +1297,15 @@ func newBase128VarIntStream(id uint32, kind pb.Stream_Kind, opts *WriterOptions)
 	encoder := &encoding.Base128VarInt{}
 	info_ := &pb.Stream{Kind: &kind_, Column: &id_, Length: &length_}
 	return &streamWriter{info: info_, buf: &bytes.Buffer{}, opts: opts, encoder: encoder, encodingBuf: &bytes.Buffer{}}
+}
+
+func newFloatStream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
+	id_ := id
+	kind_ := kind
+	length_ := uint64(0)
+	info := &pb.Stream{Kind: &kind_, Column: &id_, Length: &length_}
+	encoder := &encoding.Ieee754Float{}
+	return &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: encoder, encodingBuf: &bytes.Buffer{}}
 }
 
 func newDoubleStream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
