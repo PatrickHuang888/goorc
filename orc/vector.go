@@ -2,6 +2,9 @@ package orc
 
 import (
 	"fmt"
+	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"time"
 )
 
@@ -9,130 +12,41 @@ const (
 	DEFAULT_ROW_SIZE = 1024 * 10
 )
 
-/*type ColumnVector interface {
-	T() pb.Type_Kind
-	Id() uint32
-	Rows() int
-	Presents() []bool
-	reset()
-}*/
-
 type ColumnVector struct {
-	Id uint32
-	//T pb.Type_Kind
-	//nullable bool
-	//setNulls bool
-	//hasNulls bool
-
+	Id       uint32
+	Kind     pb.Type_Kind
 	Presents []bool
-	Vector interface{}
+	Vector   interface{}
 }
 
-/*func (c col) Id() uint32 {
-	return c.id
-}*/
-
-// call this function will not reflect Nulls change
-/*func (c *col) HasNulls() bool {
-	if !c.nullable {
-		return false
-	}
-	if c.setNulls {
-		return c.hasNulls
-	}
-	for _, b := range c.Nulls {
-		if b {
-			c.setNulls = true
-			c.hasNulls = true
+func (cv ColumnVector) check() error {
+	if cv.Kind == pb.Type_STRUCT && cv.Presents != nil {
+		var presentCounts int
+		for _, p := range cv.Presents {
+			if p {
+				presentCounts++
+			}
 		}
+		for i, childVector := range cv.Vector.([]*ColumnVector) {
+			switch childVector.Kind {
+			case pb.Type_INT:
+				fallthrough
+			case pb.Type_LONG:
+				vector := childVector.Vector.([]int64)
+				if len(vector) < presentCounts {
+					return errors.Errorf("column %d vector data less than presents data in struct column", childVector.Id)
+				}
+				if len(vector) > presentCounts {
+					log.Warnf("column %d vector data large than prensents in struct column, extra data will be discard", childVector.Id)
+					vector=vector[:presentCounts]
+					cv.Vector.([]*ColumnVector)[i].Vector= vector
+				}
+			}
+		}
+
 	}
-	c.setNulls = true
-	return false
-}*/
-
-/*func (c col) Presents() []bool {
-	return c.presents
-}*/
-
-/*func (c *col) Presents() []bool {
-	return c.presents
+	return nil
 }
-*/
-/*func (c *col) reset() {
-	c.presents = c.presents[:0]
-	c.setNulls = false
-	c.hasNulls = false
-	//c.nullable= false
-}*/
-
-/*type BoolColumn struct {
-	col
-	Vector []bool
-}
-
-func (BoolColumn) T() pb.Type_Kind {
-	return pb.Type_BOOLEAN
-}
-
-func (bc *BoolColumn) reset() {
-	bc.Vector = bc.Vector[:0]
-	bc.col.reset()
-}
-
-func (c BoolColumn) Rows() int {
-	return len(c.Vector)
-}
-
-type TinyIntColumn struct {
-	col
-	Vector []byte
-}
-
-func (*TinyIntColumn) T() pb.Type_Kind {
-	return pb.Type_BYTE
-}
-func (tic *TinyIntColumn) reset() {
-	tic.Vector = tic.Vector[:0]
-	tic.col.reset()
-}
-func (tic *TinyIntColumn) Rows() int {
-	return len(tic.Vector)
-}
-
-// nullable int column vector for all integer types
-type LongColumn struct {
-	ColumnVector
-	Vector []int64
-}
-
-func (*LongColumn) T() pb.Type_Kind {
-	return pb.Type_LONG
-}
-
-func (lc *LongColumn) Rows() int {
-	return len(lc.Vector)
-}
-
-func (lc *LongColumn) reset() {
-	lc.Vector = lc.Vector[:0]
-	lc.col.reset()
-}
-
-type BinaryColumn struct {
-	col
-	Vector [][]byte
-}
-
-func (*BinaryColumn) T() pb.Type_Kind {
-	return pb.Type_BINARY
-}
-func (bc *BinaryColumn) reset() {
-	bc.Vector = bc.Vector[:0]
-	bc.col.reset()
-}
-func (bc *BinaryColumn) Rows() int {
-	return len(bc.Vector)
-}*/
 
 // hive 0.13 support 38 digits
 type Decimal64 struct {
@@ -181,33 +95,11 @@ func toDays(d Date) int64 {
 	return int64(s.Hours() / 24)
 }
 
-/*type DateColumn struct {
-	col
-	Vector []Date
-}
-
-func (*DateColumn) T() pb.Type_Kind {
-	return pb.Type_DATE
-}
-
-func (dc *DateColumn) Rows() int {
-	return len(dc.Vector)
-}
-
-func (dc *DateColumn) reset() {
-	dc.col.reset()
-	dc.Vector = dc.Vector[:0]
-}*/
-
-// todo: local timezone
+// todo: timezone
 type Timestamp struct {
 	Seconds int64
 	Nanos   uint32
 }
-/*type TimestampColumn struct {
-	col
-	Vector []Timestamp
-}*/
 
 // return seconds from 2015, Jan, 1 and nano seconds
 func GetTime(ts Timestamp) (t time.Time) {
@@ -286,18 +178,9 @@ func (c *StringColumn) reset() {
 	c.Vector = c.Vector[:0]
 }*/
 
-/*type StructColumn struct {
-	ColumnVector
-	Fields []ColumnVector
-}
-
-func (StructColumn) T() pb.Type_Kind {
-	return pb.Type_STRUCT
-}*/
-
-/*func (c StructColumn) Rows() int {
-	// fixme:
-	return c.Fields[0].Rows()
+/*type Struct struct {
+	Presents []bool
+	Children []*ColumnVector
 }*/
 
 /*type ListColumn struct {

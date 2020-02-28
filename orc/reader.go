@@ -243,7 +243,7 @@ func (s *stripeReader) prepare() error {
 			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("bool column encoding error")
 			}
-			s.columnReaders[schema.Id] = &boolReader{crBase: c, numberOfRows:s.info.GetNumberOfRows()}
+			s.columnReaders[schema.Id] = &boolReader{crBase: c, numberOfRows: s.info.GetNumberOfRows()}
 
 		case pb.Type_BYTE: // tinyint
 			if c.schema.Encoding != pb.ColumnEncoding_DIRECT {
@@ -282,7 +282,7 @@ func (s *stripeReader) prepare() error {
 				break
 			}
 			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &dateReader{crBase: c}
+				s.columnReaders[schema.Id] = &dateV2Reader{crBase: c}
 				break
 			}
 			return errors.New("column encoding error")
@@ -380,7 +380,7 @@ func (s *stripeReader) prepare() error {
 			continue
 		}
 
-		schema:= s.schemas[id]
+		schema := s.schemas[id]
 		switch schema.Kind {
 		case pb.Type_SHORT:
 			fallthrough
@@ -388,7 +388,7 @@ func (s *stripeReader) prepare() error {
 			fallthrough
 		case pb.Type_LONG:
 			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader:= s.columnReaders[id].(*longV2Reader)
+				reader := s.columnReaders[id].(*longV2Reader)
 				if streamKind == pb.Stream_DATA {
 					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, true)
 					break
@@ -397,12 +397,17 @@ func (s *stripeReader) prepare() error {
 			}
 
 		case pb.Type_FLOAT:
-		// todo:
+			reader := s.columnReaders[id].(*floatReader)
+			if streamKind == pb.Stream_DATA {
+				reader.data = newFloatStreamReader(s.opts, streamInfo, dataStart, s.f)
+				break
+			}
+			return errors.New("stream kind error")
 
 		case pb.Type_DOUBLE:
-			reader:= s.columnReaders[id].(*doubleReader)
+			reader := s.columnReaders[id].(*doubleReader)
 			if streamKind == pb.Stream_DATA {
-				reader.data = newIeeeFloatStreamReader(s.opts, streamInfo, dataStart, s.f)
+				reader.data = newDoubleStreamReader(s.opts, streamInfo, dataStart, s.f)
 				break
 			}
 			return errors.New("stream kind error")
@@ -412,7 +417,7 @@ func (s *stripeReader) prepare() error {
 				reader := s.columnReaders[id].(*stringDirectV2Reader)
 
 				if streamKind == pb.Stream_DATA {
-					reader.data = newByteContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
 					break
 				}
 				if streamKind == pb.Stream_LENGTH {
@@ -430,7 +435,7 @@ func (s *stripeReader) prepare() error {
 					break
 				}
 				if streamKind == pb.Stream_DICTIONARY_DATA {
-					dictData := newByteContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					dictData := newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
 					reader.dictData = dictData
 					break
 				}
@@ -443,7 +448,7 @@ func (s *stripeReader) prepare() error {
 			}
 
 		case pb.Type_BOOLEAN:
-			reader:= s.columnReaders[id].(*boolReader)
+			reader := s.columnReaders[id].(*boolReader)
 			if streamKind == pb.Stream_DATA {
 				reader.data = newBoolStreamReader(s.opts, streamInfo, dataStart, s.f)
 				break
@@ -451,7 +456,7 @@ func (s *stripeReader) prepare() error {
 			return errors.New("stream kind error")
 
 		case pb.Type_BYTE: // tinyint
-			reader:= s.columnReaders[id].(*byteReader)
+			reader := s.columnReaders[id].(*byteReader)
 			if streamKind == pb.Stream_DATA {
 				reader.data = newByteStreamReader(s.opts, streamInfo, dataStart, s.f)
 				break
@@ -467,7 +472,7 @@ func (s *stripeReader) prepare() error {
 			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 				reader := s.columnReaders[id].(*binaryV2Reader)
 				if streamKind == pb.Stream_DATA {
-					reader.data = newByteContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
 					break
 				}
 				if streamKind == pb.Stream_LENGTH {
@@ -503,7 +508,7 @@ func (s *stripeReader) prepare() error {
 				break
 			}
 			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader:= s.columnReaders[id].(*dateReader)
+				reader := s.columnReaders[id].(*dateV2Reader)
 				if streamKind == pb.Stream_DATA {
 					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
 					break
@@ -635,7 +640,6 @@ func (c *crBase) nextPresents(batch *ColumnVector) (err error) {
 
 type byteReader struct {
 	*crBase
-
 	data *byteStreamReader
 }
 
@@ -665,12 +669,12 @@ func (c *byteReader) next(batch *ColumnVector) error {
 	return nil
 }
 
-type dateReader struct {
+type dateV2Reader struct {
 	*crBase
 	data *longV2StreamReader
 }
 
-func (c *dateReader) next(batch *ColumnVector) error {
+func (c *dateV2Reader) next(batch *ColumnVector) error {
 	if err := c.nextPresents(batch); err != nil {
 		return err
 	}
@@ -685,10 +689,9 @@ func (c *dateReader) next(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			// opti:
-			batch.Vector = append(vector, fromDays(v))
+			vector = append(vector, fromDays(v))
 		} else {
-			batch.Vector = append(vector, Date{})
+			vector = append(vector, Date{})
 		}
 	}
 
@@ -719,7 +722,7 @@ func (c *timestampV2Reader) next(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			nanos, err := c.data.nextUInt()
+			nanos, err := c.secondary.nextUInt()
 			if err != nil {
 				return err
 			}
@@ -741,7 +744,7 @@ func (c *timestampV2Reader) next(batch *ColumnVector) error {
 type boolReader struct {
 	*crBase
 	numberOfRows uint64
-	data *boolStreamReader
+	data         *boolStreamReader
 }
 
 func (c *boolReader) next(batch *ColumnVector) error {
@@ -775,7 +778,7 @@ func (c *boolReader) next(batch *ColumnVector) error {
 type binaryV2Reader struct {
 	*crBase
 	length *longV2StreamReader
-	data   *bytesContentStreamReader
+	data   *stringContentsStreamReader
 }
 
 func (c *binaryV2Reader) next(batch *ColumnVector) error {
@@ -787,24 +790,25 @@ func (c *binaryV2Reader) next(batch *ColumnVector) error {
 	vector = vector[:0]
 
 	i := 0
-	for ; i < cap(vector) && !c.data.finished(); i++ {
-		if len(batch.Presents) != 0 {
-			assertx(i < len(batch.Presents))
-		}
-
+	for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
 		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
 			l, err := c.length.nextUInt()
 			if err != nil {
 				return err
 			}
-			v, err := c.data.next(l)
+			v, err := c.data.nextBytes(l)
 			if err != nil {
 				return err
 			}
+			// default utf-8
 			vector = append(vector, v)
 		} else {
-			vector = append(vector, []byte{})
+			vector = append(vector, nil)
 		}
+	}
+
+	if (c.length.finished() && !c.data.finished()) || (c.data.finished() && !c.length.finished()) {
+		return errors.New("read error")
 	}
 
 	c.cursor = c.cursor + uint64(i)
@@ -814,9 +818,8 @@ func (c *binaryV2Reader) next(batch *ColumnVector) error {
 
 type stringDirectV2Reader struct {
 	*crBase
-
+	data   *stringContentsStreamReader
 	length *longV2StreamReader
-	data   *bytesContentStreamReader
 }
 
 func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
@@ -858,7 +861,7 @@ type stringDictV2Reader struct {
 	*crBase
 
 	data       *longV2StreamReader
-	dictData   *bytesContentStreamReader
+	dictData   *stringContentsStreamReader
 	dictLength *longV2StreamReader
 }
 
@@ -915,14 +918,14 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 	vector = vector[:0]
 	i := 0
 	for ; !c.data.finished() && i < cap(vector); i++ {
-		if len(batch.Presents)==0 {
+		if len(batch.Presents) == 0 {
 			v, err := c.data.nextInt64()
 			if err != nil {
 				return err
 			}
 			vector = append(vector, v)
-		}else {
-			if i>=len(batch.Presents) {
+		} else {
+			if i >= len(batch.Presents) {
 				return errors.Errorf("no more present data")
 			}
 			if batch.Presents[i] {
@@ -931,7 +934,7 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 					return err
 				}
 				vector = append(vector, v)
-			}else {
+			} else {
 				vector = append(vector, 0)
 			}
 		}
@@ -944,7 +947,6 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 
 type decimal64DirectV2Reader struct {
 	*crBase
-
 	data      *varIntStreamReader
 	secondary *longV2StreamReader
 }
@@ -983,10 +985,40 @@ func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
 	return nil
 }
 
+type floatReader struct {
+	*crBase
+	data *floatStreamReader
+}
+
+func (c *floatReader) next(batch *ColumnVector) error {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	vector := batch.Vector.([]float32)
+	vector = vector[:0]
+
+	i := 0
+	for ; i < cap(vector) && !c.data.finished(); i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, v)
+		} else {
+			vector = append(vector, 0)
+		}
+	}
+
+	c.cursor += uint64(i)
+	batch.Vector = vector
+	return nil
+}
+
 type doubleReader struct {
 	*crBase
-
-	data *ieeeFloatStreamReader
+	data *doubleStreamReader
 }
 
 func (c *doubleReader) next(batch *ColumnVector) error {
@@ -1017,7 +1049,6 @@ func (c *doubleReader) next(batch *ColumnVector) error {
 
 type structReader struct {
 	*crBase
-
 	children []columnReader
 }
 
@@ -1029,7 +1060,7 @@ func (c *structReader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]*ColumnVector)
 
 	for i, child := range c.children {
-		// fixme: how to handle present ?
+		// rethink: how to handle present ?
 		// todo: cursor
 		if err := child.next(vector[i]); err != nil {
 			return err
@@ -1050,7 +1081,7 @@ type byteStreamReader struct {
 
 func newByteStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
 	in io.ReadSeeker) *byteStreamReader {
-	sr:= &streamReader{opts:opts, info:info, start:start, in:in, buf:&bytes.Buffer{}}
+	sr := &streamReader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}
 	return &byteStreamReader{stream: sr, decoder: &encoding.ByteRunLength{}}
 }
 
@@ -1073,120 +1104,105 @@ func (r *byteStreamReader) finished() bool {
 	return r.stream.finished() && (r.consumed == len(r.values))
 }
 
-// rethink: not using decoder, just read directly using streamReader
-type bytesContentStreamReader struct {
-	stream *streamReader
-
+type stringContentsStreamReader struct {
+	stream  *streamReader
 	decoder *encoding.BytesContent
 }
 
-func newByteContentsStreamReader(opts *ReaderOptions, info *pb.Stream,
-	start uint64, in io.ReadSeeker) *bytesContentStreamReader {
-	sr:= &streamReader{opts:opts, info:info, buf:&bytes.Buffer{}, in:in}
-	return&bytesContentStreamReader{stream: sr, decoder: &encoding.BytesContent{}}
+func newStringContentsStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *stringContentsStreamReader {
+	sr := &streamReader{opts: opts, info: info, buf: &bytes.Buffer{}, in: in, start: start}
+	return &stringContentsStreamReader{stream: sr, decoder: &encoding.BytesContent{}}
 }
 
-func (r *bytesContentStreamReader) next(length uint64) (v []byte, err error) {
-	// todo
-	/*if s.r.buf.Len() < int(length) && !s.r.finished() {
-		s.r.buf.Truncate(s.r.buf.Len())
-		if err := s.r.readAChunk(); err != nil {
-			return nil, err
-		}
-	}
+func (r *stringContentsStreamReader) nextBytes(byteLength uint64) (v []byte, err error) {
+	v, err = r.decoder.DecodeNext(r.stream, int(byteLength))
+	return
+}
 
-	v = make([]byte, length)
-	n, err := s.r.buf.Read(v)
+func (r *stringContentsStreamReader) next(byteLength uint64) (v string, err error) {
+	var bb []byte
+	bb, err = r.nextBytes(byteLength)
 	if err != nil {
-		return nil, err
+		return
 	}
-	if n < int(length) {
-		return nil, errors.New("no enough bytes")
-	}*/
-	return nil, errors.New("not impl")
+	return string(bb), err
 }
 
-func (r *bytesContentStreamReader) finished() bool {
-	// todo
-	//return stream.r.readFinished() && (stream.r.buf.Len() == 0)
-	return false
+func (r *stringContentsStreamReader) finished() bool {
+	return r.stream.finished()
 }
 
 // for read column using encoding like dict
-func (r *bytesContentStreamReader) getAll(lengthAll []uint64) (vs [][]byte, err error) {
-	// todo
-	/*for !stream.r.readFinished() {
-		if err = stream.r.readAChunk(); err != nil {
-			return nil, err
+func (r *stringContentsStreamReader) getAll(byteLengths []uint64) (vs []string, err error) {
+	for !r.finished() {
+		// todo: data check
+		for _, l := range byteLengths {
+			var v string
+			v, err = r.next(l)
+			if err != nil {
+				return
+			}
+			vs = append(vs, v)
 		}
 	}
-
-	for _, l := range lengthAll {
-		v := make([]byte, l)
-		n, err := stream.r.buf.Read(v)
-		if err != nil {
-			return vs, err
-		}
-		if n < int(l) {
-			return vs, errors.New("no enough bytes")
-		}
-		vs = append(vs, v)
-	}*/
-
-	return nil, errors.New("not impl")
+	return
 }
 
-type ieeeFloatStreamReader struct {
+type doubleStreamReader struct {
 	stream  *streamReader
 	decoder *encoding.Ieee754Double
 }
 
-func newIeeeFloatStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
-	in io.ReadSeeker)  *ieeeFloatStreamReader{
+func newDoubleStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
+	in io.ReadSeeker) *doubleStreamReader {
 	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, opts: opts}
-	return &ieeeFloatStreamReader{stream: sr, decoder: &encoding.Ieee754Double{}}
+	return &doubleStreamReader{stream: sr, decoder: &encoding.Ieee754Double{}}
 }
 
-func (r *ieeeFloatStreamReader) next() (v float64, err error) {
+func (r *doubleStreamReader) next() (v float64, err error) {
 	return r.decoder.Decode(r.stream)
 }
 
-func (r *ieeeFloatStreamReader) finished() bool {
+func (r *doubleStreamReader) finished() bool {
+	return r.stream.finished()
+}
+
+type floatStreamReader struct {
+	stream  *streamReader
+	decoder *encoding.Ieee754Float
+}
+
+func newFloatStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *floatStreamReader {
+	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, opts: opts}
+	return &floatStreamReader{stream: sr, decoder: &encoding.Ieee754Float{}}
+}
+
+func (r *floatStreamReader) next() (v float32, err error) {
+	return r.decoder.Decode(r.stream)
+}
+
+func (r *floatStreamReader) finished() bool {
 	return r.stream.finished()
 }
 
 type varIntStreamReader struct {
 	stream *streamReader
 
-	values []int64
-	pos    int
-
 	decoder *encoding.Base128VarInt
 }
 
-func newVarIntStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
-	in io.ReadSeeker) *varIntStreamReader {
-	sr:= &streamReader{opts:opts, info:info, start:start, buf:&bytes.Buffer{}, in:in}
+func newVarIntStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *varIntStreamReader {
+	sr := &streamReader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}
 	return &varIntStreamReader{stream: sr, decoder: &encoding.Base128VarInt{}}
 }
 
 func (r *varIntStreamReader) next() (v int64, err error) {
-	if r.pos >= len(r.values) {
-		r.pos = 0
-		r.values = r.values[:0]
-
-		if err = r.decoder.ReadValues(r.stream, r.values); err != nil {
-			return 0, err
-		}
-	}
-
-	v = r.values[r.pos]
-	r.pos++
-	return
+		v,err = r.decoder.DecodeNext(r.stream)
+		return
 }
 
 func (r *varIntStreamReader) finished() bool {
-	return r.stream.finished() && (r.pos == len(r.values))
+	return r.stream.finished()
 }
 
 type longV2StreamReader struct {
@@ -1198,14 +1214,14 @@ type longV2StreamReader struct {
 	decoder *encoding.IntRleV2
 }
 
-func newLongV2StreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker,
-	signed bool) *longV2StreamReader{
-	sr:= &streamReader{opts:opts, info:info, start:start, buf:&bytes.Buffer{}, in:in}
-	return &longV2StreamReader{stream:sr, decoder:&encoding.IntRleV2{Signed:signed}}
+func newLongV2StreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker, signed bool) *longV2StreamReader {
+	sr := &streamReader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}
+	return &longV2StreamReader{stream: sr, decoder: &encoding.IntRleV2{Signed: signed}}
 }
 
 func (r *longV2StreamReader) nextInt64() (v int64, err error) {
-	uv, err := r.nextUInt()
+	var uv uint64
+	uv, err = r.nextUInt()
 	if err != nil {
 		return
 	}
@@ -1247,15 +1263,15 @@ func (r *longV2StreamReader) finished() bool {
 type boolStreamReader struct {
 	stream *streamReader
 
-	values  []bool
-	pos     int
+	values []bool
+	pos    int
 
 	decoder *encoding.BoolRunLength
 }
 
 func newBoolStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *boolStreamReader {
-	sr:= &streamReader{opts:opts, info:info, start:start, in:in, buf:&bytes.Buffer{}}
-	return &boolStreamReader{stream:sr, decoder:&encoding.BoolRunLength{&encoding.ByteRunLength{}}}
+	sr := &streamReader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}
+	return &boolStreamReader{stream: sr, decoder: &encoding.BoolRunLength{&encoding.ByteRunLength{}}}
 }
 
 func (r *boolStreamReader) next() (v bool, err error) {

@@ -14,7 +14,7 @@ type TypeDescription struct {
 	Children      []*TypeDescription
 	Encoding      pb.ColumnEncoding_Kind
 
-	HasNulls bool // for writing
+	HasNulls  bool // for writing
 	HasFather bool
 }
 
@@ -35,6 +35,53 @@ func (td *TypeDescription) Print() {
 		fmt.Printf("Children of %d:", td.Id)
 		n.Print()
 	}
+}
+
+func doId(node *TypeDescription) error {
+	nodeId++
+	node.Id = nodeId
+	return nil
+}
+
+func doFatherFlag(node *TypeDescription) error {
+	if node.HasNulls {
+		return errors.New("child node cannot has nulls")
+	}
+	node.HasFather = true
+	return nil
+}
+
+type action func(*TypeDescription) error
+
+// pre-order traverse
+func traverse(node *TypeDescription, do action) error {
+	if node.Kind == pb.Type_STRUCT || node.Kind == pb.Type_LIST {
+		for _, td := range node.Children {
+			if err := do(td); err != nil {
+				return err
+			}
+			if err := traverse(td, do); err != nil {
+				return err
+			}
+		}
+	} else if node.Kind == pb.Type_UNION || node.Kind == pb.Type_MAP {
+		return errors.New("type union or map no impl")
+	}
+	return nil
+}
+
+var nodeId uint32
+
+func normalizeSchema(root *TypeDescription) error {
+	nodeId = 0
+	if err := traverse(root, doId); err != nil {
+		return err
+	}
+
+	if err := traverse(root, doFatherFlag); err != nil {
+		return err
+	}
+	return nil
 }
 
 // set ids of schema, flat the schema tree to slice
@@ -96,7 +143,7 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *Column
 		vector = make([]int64, 0, opts.RowSize)
 
 	case pb.Type_FLOAT:
-		// todo:
+		vector = make([]float32, 0, opts.RowSize)
 
 	case pb.Type_DOUBLE:
 		vector = make([]float64, 0, opts.RowSize)
@@ -141,9 +188,9 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *Column
 		panic("unknown type")
 	}
 
-	batch= &ColumnVector{Id: td.Id, Vector: vector}
+	batch = &ColumnVector{Id: td.Id, Vector: vector}
 	if td.HasNulls {
-		batch.Presents= make([]bool, 0, opts.RowSize)
+		batch.Presents = make([]bool, 0, opts.RowSize)
 	}
 	return
 }
@@ -155,7 +202,7 @@ func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) (batch *ColumnV
 		for _, v := range td.Children {
 			vector = append(vector, v.CreateWriterBatch(opts))
 		}
-		return &ColumnVector{Id: td.Id, Vector: vector}
+		return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: vector}
 	}
-	return &ColumnVector{Id: td.Id}
+	return &ColumnVector{Id: td.Id, Kind: td.Kind}
 }
