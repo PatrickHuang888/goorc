@@ -282,7 +282,7 @@ func (s *stripeReader) prepare() error {
 				break
 			}
 			if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &dateReader{crBase: c}
+				s.columnReaders[schema.Id] = &dateV2Reader{crBase: c}
 				break
 			}
 			return errors.New("column encoding error")
@@ -508,7 +508,7 @@ func (s *stripeReader) prepare() error {
 				break
 			}
 			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader := s.columnReaders[id].(*dateReader)
+				reader := s.columnReaders[id].(*dateV2Reader)
 				if streamKind == pb.Stream_DATA {
 					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
 					break
@@ -640,7 +640,6 @@ func (c *crBase) nextPresents(batch *ColumnVector) (err error) {
 
 type byteReader struct {
 	*crBase
-
 	data *byteStreamReader
 }
 
@@ -670,12 +669,12 @@ func (c *byteReader) next(batch *ColumnVector) error {
 	return nil
 }
 
-type dateReader struct {
+type dateV2Reader struct {
 	*crBase
 	data *longV2StreamReader
 }
 
-func (c *dateReader) next(batch *ColumnVector) error {
+func (c *dateV2Reader) next(batch *ColumnVector) error {
 	if err := c.nextPresents(batch); err != nil {
 		return err
 	}
@@ -690,10 +689,9 @@ func (c *dateReader) next(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			// opti:
-			batch.Vector = append(vector, fromDays(v))
+			vector = append(vector, fromDays(v))
 		} else {
-			batch.Vector = append(vector, Date{})
+			vector = append(vector, Date{})
 		}
 	}
 
@@ -792,25 +790,25 @@ func (c *binaryV2Reader) next(batch *ColumnVector) error {
 	vector = vector[:0]
 
 	i := 0
-	for ; i < cap(vector) && !c.data.finished(); i++ {
-		if len(batch.Presents) != 0 {
-			assertx(i < len(batch.Presents))
-		}
-
+	for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
 		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			//todo:
-		/*	l, err := c.length.nextUInt()
+			l, err := c.length.nextUInt()
 			if err != nil {
 				return err
 			}
-			v, err := c.data.next(l)
+			v, err := c.data.nextBytes(l)
 			if err != nil {
 				return err
 			}
-			vector = append(vector, v)*/
+			// default utf-8
+			vector = append(vector, v)
 		} else {
-			vector = append(vector, []byte{})
+			vector = append(vector, nil)
 		}
+	}
+
+	if (c.length.finished() && !c.data.finished()) || (c.data.finished() && !c.length.finished()) {
+		return errors.New("read error")
 	}
 
 	c.cursor = c.cursor + uint64(i)
@@ -1118,10 +1116,18 @@ func newStringContentsStreamReader(opts *ReaderOptions, info *pb.Stream, start u
 	return &stringContentsStreamReader{stream: sr, decoder: &encoding.BytesContent{}}
 }
 
+func (r *stringContentsStreamReader) nextBytes(byteLength uint64) (v []byte, err error) {
+	v, err = r.decoder.DecodeNext(r.stream, int(byteLength))
+	return
+}
+
 func (r *stringContentsStreamReader) next(byteLength uint64) (v string, err error) {
-	var bytes []byte
-	bytes, err = r.decoder.DecodeNext(r.stream, int(byteLength))
-	return string(bytes), err
+	var bb []byte
+	bb, err= r.nextBytes(byteLength)
+	if err!=nil {
+		return
+	}
+	return string(bb), err
 }
 
 func (r *stringContentsStreamReader) finished() bool {
@@ -1229,7 +1235,8 @@ func newLongV2StreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, i
 }
 
 func (r *longV2StreamReader) nextInt64() (v int64, err error) {
-	uv, err := r.nextUInt()
+	var uv uint64
+	uv, err = r.nextUInt()
 	if err != nil {
 		return
 	}

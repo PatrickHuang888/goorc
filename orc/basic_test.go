@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"testing"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -366,6 +367,210 @@ func TestStringColumnEncodingDirectWithPresents(t *testing.T)  {
 
 	cr:= &crBase{schema:schema, present:present}
 	reader:= &stringDirectV2Reader{crBase: cr, data:data, length:length}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector)
+}
+
+func TestColumnTinyIntWithPresents(t *testing.T)  {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_BYTE, HasNulls:true}
+	wopts:= DefaultWriterOptions()
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows:= 100
+	values:= make([]byte, rows)
+	for i := 0; i < rows; i++ {
+		values[i]= byte(i)
+	}
+	presents:= make([]bool, rows)
+	for i:=0; i<rows; i++ {
+		presents[i]= true
+	}
+	presents[0]=false
+	values[0]= 0
+	presents[45]=false
+	values[45]= 0
+	presents[98]= false
+	values[98]= 0
+
+	batch.Presents= presents
+	batch.Vector= values
+
+	writer:= newByteWriter(schema, wopts)
+	n, err:=writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(rows), n)
+
+	ropts:=DefaultReaderOptions()
+	batch= schema.CreateReaderBatch(ropts)
+	presentBs:= &bufSeeker{writer.present.buf}
+	pKind:= pb.Stream_PRESENT
+	pLength_:= uint64(writer.present.buf.Len())
+	pInfo:= &pb.Stream{Column:&schema.Id, Kind:&pKind, Length:&pLength_}
+	present:= newBoolStreamReader(ropts, pInfo,0, presentBs)
+
+	dataBs:= &bufSeeker{writer.data.buf}
+	dKind:= pb.Stream_DATA
+	dLength:= uint64(writer.data.buf.Len())
+	dInfo:= &pb.Stream{Column:&schema.Id, Kind:&dKind, Length:&dLength}
+	data:= newByteStreamReader(ropts, dInfo, 0, dataBs)
+
+	cr:= &crBase{schema:schema, present:present}
+	reader:= &byteReader{crBase: cr, data:data}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector)
+}
+
+func TestColumnBinaryV2WithPresents(t *testing.T)  {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_BINARY, HasNulls:true}
+	wopts:= DefaultWriterOptions()
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows:= 100
+	values:= make([][]byte, rows)
+	for i := 0; i < rows; i++ {
+		values[i]= []byte{0b1101, byte(i)}
+	}
+	presents:= make([]bool, rows)
+	for i:=0; i<rows; i++ {
+		presents[i]= true
+	}
+	presents[0]=false
+	values[0]= nil
+	presents[45]=false
+	values[45]= nil
+	presents[98]= false
+	values[98]= nil
+
+	batch.Presents= presents
+	batch.Vector= values
+
+	writer:= newBinaryDirectV2Writer(schema, wopts)
+	n, err:=writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(rows), n)
+
+	ropts:=DefaultReaderOptions()
+	batch= schema.CreateReaderBatch(ropts)
+	presentBs:= &bufSeeker{writer.present.buf}
+	pKind:= pb.Stream_PRESENT
+	pLength_:= uint64(writer.present.buf.Len())
+	pInfo:= &pb.Stream{Column:&schema.Id, Kind:&pKind, Length:&pLength_}
+	present:= newBoolStreamReader(ropts, pInfo,0, presentBs)
+
+	dataBs:= &bufSeeker{writer.data.buf}
+	dKind:= pb.Stream_DATA
+	dLength:= uint64(writer.data.buf.Len())
+	dInfo:= &pb.Stream{Column:&schema.Id, Kind:&dKind, Length:&dLength}
+	data:= newStringContentsStreamReader(ropts, dInfo, 0, dataBs)
+
+	lengthBs:= &bufSeeker{writer.length.buf}
+	lKind:= pb.Stream_LENGTH
+	lLength:= uint64(writer.length.buf.Len())
+	lInfo:= &pb.Stream{Column:&schema.Id, Kind:&lKind, Length:&lLength}
+	length:= newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
+
+	cr:= &crBase{schema:schema, present:present}
+	reader:= &binaryV2Reader{crBase: cr, data:data, length:length}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector)
+}
+
+// todo:
+/*func TestColumnDecimal64WithPresents(t *testing.T) {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_DECIMAL, HasNulls:true}
+	wopts:= DefaultWriterOptions()
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows:= 100
+	values:= make([]Decimal64, rows)
+	for i := 0; i < rows; i++ {
+		values[i]= Decimal64{Precision:i, Scale:10}
+	}
+	presents:= make([]bool, rows)
+	for i:=0; i<rows; i++ {
+		presents[i]= true
+	}
+	presents[0]=false
+	values[0]= nil
+	presents[45]=false
+	values[45]= nil
+	presents[98]= false
+	values[98]= nil
+
+	batch.Presents= presents
+	batch.Vector= values
+
+	writer:= newBinaryDirectV2Writer(schema, wopts)
+	n, err:=writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(rows), n)
+}*/
+
+func TestColumnDateWithPresents(t *testing.T)  {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_DATE, HasNulls:true}
+	wopts:= DefaultWriterOptions()
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows:= 100
+	values:= make([]Date, rows)
+	for i := 0; i < rows; i++ {
+		values[i]= NewDate(2020, time.February, i%30)
+	}
+	presents:= make([]bool, rows)
+	for i:=0; i<rows; i++ {
+		presents[i]= true
+	}
+	presents[0]=false
+	values[0]= Date{}
+	presents[45]=false
+	values[45]= Date{}
+	presents[98]= false
+	values[98]= Date{}
+
+	batch.Presents= presents
+	batch.Vector= values
+
+	writer:= newDateDirectV2Writer(schema, wopts)
+	n, err:=writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(rows), n)
+
+	ropts:=DefaultReaderOptions()
+	batch= schema.CreateReaderBatch(ropts)
+	presentBs:= &bufSeeker{writer.present.buf}
+	pKind:= pb.Stream_PRESENT
+	pLength_:= uint64(writer.present.buf.Len())
+	pInfo:= &pb.Stream{Column:&schema.Id, Kind:&pKind, Length:&pLength_}
+	present:= newBoolStreamReader(ropts, pInfo,0, presentBs)
+
+	dataBs:= &bufSeeker{writer.data.buf}
+	dKind:= pb.Stream_DATA
+	dLength:= uint64(writer.data.buf.Len())
+	dInfo:= &pb.Stream{Column:&schema.Id, Kind:&dKind, Length:&dLength}
+	data:= newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
+
+	cr:= &crBase{schema:schema, present:present}
+	reader:= &dateV2Reader{crBase: cr, data:data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)

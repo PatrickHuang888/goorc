@@ -456,19 +456,19 @@ func (c *timestampDirectV2Writer) getStreams() []*streamWriter {
 	return ss
 }
 
-type dateDirectV2Writer struct {
+type dateV2Writer struct {
 	*cwBase
 	data *streamWriter
 }
 
-func newDateDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *dateDirectV2Writer {
+func newDateDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *dateV2Writer {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, false, opts)
-	return &dateDirectV2Writer{cw_, data_}
+	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
+	return &dateV2Writer{cw_, data_}
 }
 
-func (c *dateDirectV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	var vector []int64
+func (c *dateV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
+	var vector []uint64
 	values := batch.Vector.([]Date)
 	rows = uint64(len(values))
 
@@ -485,12 +485,12 @@ func (c *dateDirectV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 
 		for i, p := range batch.Presents {
 			if p {
-				vector = append(vector, toDays(values[i]))
+				vector = append(vector, encoding.Zigzag(toDays(values[i])))
 			}
 		}
 	} else {
 		for _, v := range values {
-			vector = append(vector, toDays(v))
+			vector = append(vector, encoding.Zigzag(toDays(v)))
 		}
 	}
 
@@ -500,7 +500,7 @@ func (c *dateDirectV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 	return
 }
 
-func (c *dateDirectV2Writer) getStreams() []*streamWriter {
+func (c *dateV2Writer) getStreams() []*streamWriter {
 	ss := make([]*streamWriter, 2)
 	ss[0] = c.present
 	ss[1] = c.data
@@ -836,7 +836,7 @@ type byteWriter struct {
 
 func newByteWriter(schema *TypeDescription, opts *WriterOptions) *byteWriter  {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newByteStream(schema.Id, pb.Stream_DATA, opts)
+	data_ := newByteStreamWriter(schema.Id, pb.Stream_DATA, opts)
 	return &byteWriter{cw_, data_}
 }
 
@@ -1254,7 +1254,7 @@ func newBoolStreamWriter(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *s
 	return &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: encoder, encodingBuf: &bytes.Buffer{}}
 }
 
-func newByteStream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
+func newByteStreamWriter(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
 	id_ := id
 	kind_ := kind
 	length_ := uint64(0)
