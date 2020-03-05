@@ -305,7 +305,7 @@ func (d *IntRleV2) Decode(in BufferedReader, values []uint64) ([]uint64, error) 
 	// header from MSB to LSB
 	firstByte, err := in.ReadByte()
 	if err != nil {
-		return values, errors.WithStack(err)
+		return values, err
 	}
 
 	sub := firstByte >> 6

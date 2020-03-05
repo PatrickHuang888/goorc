@@ -159,108 +159,9 @@ func newStripe(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (
 	var columns []columnWriter
 	for _, schema := range schemas {
 		var column columnWriter
-
-		switch schema.Kind {
-		case pb.Type_SHORT:
-			fallthrough
-		case pb.Type_INT:
-			fallthrough
-		case pb.Type_LONG:
-			column = newLongV2Writer(schema, opts)
-
-		case pb.Type_FLOAT:
-			fallthrough
-		case pb.Type_DOUBLE:
-		// todo:
-
-		case pb.Type_CHAR:
-			fallthrough
-		case pb.Type_VARCHAR:
-			fallthrough
-		case pb.Type_STRING:
-			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				column = newStringDirectV2Writer(schema, opts)
-				break
-			}
-
-			if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-				column = newStringDictV2Writer(schema, opts)
-				break
-			}
-
-			return nil, errors.New("encoding not impl")
-
-		case pb.Type_BOOLEAN:
-			if schema.Encoding != pb.ColumnEncoding_DIRECT {
-				return nil, errors.New("encoding error")
-			}
-			column = newBoolWriter(schema, opts)
-
-		case pb.Type_BYTE:
-			if schema.Encoding != pb.ColumnEncoding_DIRECT {
-				return nil, errors.New("encoding error")
-			}
-			column = newByteWriter(schema, opts)
-
-		case pb.Type_BINARY:
-			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				column = newBinaryDirectV2Writer(schema, opts)
-				break
-			}
-
-			return nil, errors.New("encoding not impl")
-
-		case pb.Type_DECIMAL:
-			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				column = newDecimal64DirectV2Writer(schema, opts)
-				break
-			}
-			return nil, errors.New("encoding not impl")
-
-		case pb.Type_DATE:
-			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				column = newDateDirectV2Writer(schema, opts)
-				break
-			}
-			return nil, errors.New("encoding not impl")
-
-		case pb.Type_TIMESTAMP:
-			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				column = newTimestampDirectV2Writer(schema, opts)
-				break
-			}
-			return nil, errors.New("encoding not impl")
-
-		case pb.Type_STRUCT:
-			if schema.Encoding != pb.ColumnEncoding_DIRECT {
-				return nil, errors.New("encoding error")
-			}
-			column = newStructWriter(schema, opts)
-
-		case pb.Type_LIST:
-			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				// todo:
-				//streams[schema.Id][1] = newUnsignedIntV2Writer(schema.Id, pb.Stream_LENGTH, opts)
-				break
-			}
-			return nil, errors.New("encoding not impl")
-
-		case pb.Type_MAP:
-			if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-				// todo:
-				// streams[schema.Id][1] = newUnsignedIntV2Writer(schema.Id, pb.Stream_LENGTH, opts)
-				break
-			}
-			return nil, errors.New("encoding not impl")
-
-		case pb.Type_UNION:
-			if schema.Encoding != pb.ColumnEncoding_DIRECT {
-				return nil, errors.New("encoding error")
-			}
-			// todo:
-			//streams[schema.Id][1]= newByteStream(schema.Id, pb.Stream_DIRECT)
+		if column, err = createColumnWriter(schema, opts); err != nil {
+			return nil, err
 		}
-
 		columns = append(columns, column)
 	}
 
@@ -268,6 +169,114 @@ func newStripe(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (
 	info := &pb.StripeInformation{Offset: &o}
 	s := &stripeWriter{opts: opts, idxBuf: idxBuf, columnWriters: columns, info: info, schemas: schemas}
 	return s, nil
+}
+
+func createColumnWriter(schema *TypeDescription, opts *WriterOptions) (writer columnWriter, err error) {
+	switch schema.Kind {
+	case pb.Type_SHORT:
+		fallthrough
+	case pb.Type_INT:
+		fallthrough
+	case pb.Type_LONG:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			writer = newLongV2Writer(schema, opts)
+			break
+		}
+		return nil, errors.New("encoding not impl")
+
+	case pb.Type_FLOAT:
+		writer = newFloatWriter(schema, opts)
+	case pb.Type_DOUBLE:
+		writer = newDoubleWriter(schema, opts)
+
+	case pb.Type_CHAR:
+		fallthrough
+	case pb.Type_VARCHAR:
+		fallthrough
+	case pb.Type_STRING:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			writer = newStringDirectV2Writer(schema, opts)
+			break
+		}
+
+		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
+			writer = newStringDictV2Writer(schema, opts)
+			break
+		}
+
+		return nil, errors.New("encoding not impl")
+
+	case pb.Type_BOOLEAN:
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
+			return nil, errors.New("encoding error")
+		}
+		writer = newBoolWriter(schema, opts)
+
+	case pb.Type_BYTE:
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
+			return nil, errors.New("encoding error")
+		}
+		writer = newByteWriter(schema, opts)
+
+	case pb.Type_BINARY:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			writer = newBinaryDirectV2Writer(schema, opts)
+			break
+		}
+
+		return nil, errors.New("encoding not impl")
+
+	case pb.Type_DECIMAL:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			writer = newDecimal64DirectV2Writer(schema, opts)
+			break
+		}
+		return nil, errors.New("encoding not impl")
+
+	case pb.Type_DATE:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			writer = newDateDirectV2Writer(schema, opts)
+			break
+		}
+		return nil, errors.New("encoding not impl")
+
+	case pb.Type_TIMESTAMP:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			writer = newTimestampDirectV2Writer(schema, opts)
+			break
+		}
+		return nil, errors.New("encoding not impl")
+
+	case pb.Type_STRUCT:
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
+			return nil, errors.New("encoding error")
+		}
+		writer, err = newStructWriter(schema, opts)
+
+	case pb.Type_LIST:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			// todo:
+			//streams[schema.Id][1] = newUnsignedIntV2Writer(schema.Id, pb.Stream_LENGTH, opts)
+			break
+		}
+		return nil, errors.New("encoding not impl")
+
+	case pb.Type_MAP:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			// todo:
+			// streams[schema.Id][1] = newUnsignedIntV2Writer(schema.Id, pb.Stream_LENGTH, opts)
+			break
+		}
+		return nil, errors.New("encoding not impl")
+
+	case pb.Type_UNION:
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
+			return nil, errors.New("encoding error")
+		}
+		// todo:
+		//streams[schema.Id][1]= newByteStream(schema.Id, pb.Stream_DIRECT)
+	}
+	return
 }
 
 type stripeWriter struct {
@@ -359,9 +368,7 @@ func (s *stripeWriter) reset() {
 	}
 }
 
-
 // enhance: if presents all false, no write
-
 
 type columnWriter interface {
 	write(batch *ColumnVector) (rows uint64, err error)
@@ -378,18 +385,44 @@ type cwBase struct {
 
 type structWriter struct {
 	*cwBase
+	childrenWriters []columnWriter
 }
 
-func newStructWriter(schema *TypeDescription, opts *WriterOptions) *structWriter  {
+func newStructWriter(schema *TypeDescription, opts *WriterOptions) (writer *structWriter, err error) {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	return &structWriter{cw_}
+	if schema.Kind != pb.Type_STRUCT {
+		panic("schema not struct")
+	}
+	var childrenWriters []columnWriter
+	for _, childSchema := range schema.Children {
+		var childWriter columnWriter
+		childWriter, err = createColumnWriter(childSchema, opts)
+		if err != nil {
+			return
+		}
+		childrenWriters = append(childrenWriters, childWriter)
+	}
+	writer = &structWriter{cw_, childrenWriters}
+	return
 }
 
 func (c *structWriter) write(batch *ColumnVector) (rows uint64, err error) {
-	children := batch.Vector.([]*ColumnVector)
-	for _, child := range children {
+	if err = batch.check(); err != nil {
+		return 0, err
+	}
+
+	if c.schema.HasNulls && batch.Presents != nil {
+		if _, err := c.present.writeValues(batch.Presents); err != nil {
+			return 0, err
+		}
+	}
+	childrenVector := batch.Vector.([]*ColumnVector)
+	if len(c.childrenWriters) != len(childrenVector) {
+		return 0, errors.New("children vector not match children writer")
+	}
+	for i, child := range childrenVector {
 		// rethink: rows
-		if rows, err = c.write(child); err != nil {
+		if rows, err = c.childrenWriters[i].write(child); err != nil {
 			return 0, err
 		}
 	}
@@ -408,7 +441,7 @@ type timestampDirectV2Writer struct {
 	secondary *streamWriter
 }
 
-func newTimestampDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *timestampDirectV2Writer  {
+func newTimestampDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *timestampDirectV2Writer {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
 	secondary_ := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, false, opts)
@@ -416,25 +449,29 @@ func newTimestampDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *t
 }
 
 func (c *timestampDirectV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	var seconds []int64
+	var seconds []uint64
 	var nanos []uint64
 	values := batch.Vector.([]Timestamp)
 	rows = uint64(len(values))
 
 	if c.schema.HasNulls {
-		//
 		if len(batch.Presents) != len(values) {
 			return 0, errors.New("rows of present != vector")
 		}
+
+		if _, err := c.present.writeValues(batch.Presents); err != nil {
+			return 0, err
+		}
+
 		for i, p := range batch.Presents {
 			if p {
-				seconds = append(seconds, values[i].Seconds)
+				seconds = append(seconds, encoding.Zigzag(values[i].Seconds))
 				nanos = append(nanos, uint64(values[i].Nanos))
 			}
 		}
 	} else {
 		for _, v := range values {
-			seconds = append(seconds, v.Seconds)
+			seconds = append(seconds, encoding.Zigzag(v.Seconds))
 			nanos = append(nanos, uint64(v.Nanos))
 		}
 	}
@@ -513,7 +550,7 @@ type decimal64DirectV2Writer struct {
 	secondary *streamWriter
 }
 
-func newDecimal64DirectV2Writer(schema *TypeDescription, opts *WriterOptions) *decimal64DirectV2Writer  {
+func newDecimal64DirectV2Writer(schema *TypeDescription, opts *WriterOptions) *decimal64DirectV2Writer {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newBase128VarIntStream(schema.Id, pb.Stream_DATA, opts)
 	secondary_ := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, false, opts)
@@ -613,13 +650,20 @@ func (c *doubleWriter) write(batch *ColumnVector) (rows uint64, err error) {
 	return
 }
 
+func (c *doubleWriter) getStreams() []*streamWriter {
+	ss := make([]*streamWriter, 2)
+	ss[0] = c.present
+	ss[1] = c.data
+	return ss
+}
+
 type binaryDirectV2Writer struct {
 	*cwBase
 	data   *streamWriter
 	length *streamWriter
 }
 
-func newBinaryDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *binaryDirectV2Writer  {
+func newBinaryDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *binaryDirectV2Writer {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newStringContentsStream(schema.Id, pb.Stream_DATA, opts)
 	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
@@ -834,7 +878,7 @@ type byteWriter struct {
 	data *streamWriter
 }
 
-func newByteWriter(schema *TypeDescription, opts *WriterOptions) *byteWriter  {
+func newByteWriter(schema *TypeDescription, opts *WriterOptions) *byteWriter {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newByteStreamWriter(schema.Id, pb.Stream_DATA, opts)
 	return &byteWriter{cw_, data_}
@@ -967,7 +1011,7 @@ func (c *floatWriter) write(batch *ColumnVector) (rows uint64, err error) {
 		}
 
 	} else {
-		vector= values
+		vector = values
 	}
 
 	if _, err := c.data.writeValues(vector); err != nil {

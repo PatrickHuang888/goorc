@@ -33,7 +33,7 @@ func TestNoCompression(t *testing.T) {
 		}
 
 		values := batch.Vector.([]int64)
-		if len(values)==0 {
+		if len(values) == 0 {
 			break
 		}
 

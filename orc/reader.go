@@ -722,7 +722,7 @@ func (c *timestampV2Reader) next(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			nanos, err := c.data.nextUInt()
+			nanos, err := c.secondary.nextUInt()
 			if err != nil {
 				return err
 			}
@@ -1123,8 +1123,8 @@ func (r *stringContentsStreamReader) nextBytes(byteLength uint64) (v []byte, err
 
 func (r *stringContentsStreamReader) next(byteLength uint64) (v string, err error) {
 	var bb []byte
-	bb, err= r.nextBytes(byteLength)
-	if err!=nil {
+	bb, err = r.nextBytes(byteLength)
+	if err != nil {
 		return
 	}
 	return string(bb), err
@@ -1137,7 +1137,7 @@ func (r *stringContentsStreamReader) finished() bool {
 // for read column using encoding like dict
 func (r *stringContentsStreamReader) getAll(byteLengths []uint64) (vs []string, err error) {
 	for !r.finished() {
-		// todo: data check 
+		// todo: data check
 		for _, l := range byteLengths {
 			var v string
 			v, err = r.next(l)
