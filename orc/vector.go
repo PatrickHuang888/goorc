@@ -12,14 +12,6 @@ const (
 	DEFAULT_ROW_SIZE = 1024 * 10
 )
 
-/*type ColumnVector interface {
-	T() pb.Type_Kind
-	Id() uint32
-	Rows() int
-	Presents() []bool
-	reset()
-}*/
-
 type ColumnVector struct {
 	Id       uint32
 	Kind     pb.Type_Kind
@@ -35,7 +27,7 @@ func (cv ColumnVector) check() error {
 				presentCounts++
 			}
 		}
-		for _, childVector := range cv.Vector.([]*ColumnVector) {
+		for i, childVector := range cv.Vector.([]*ColumnVector) {
 			switch childVector.Kind {
 			case pb.Type_INT:
 				fallthrough
@@ -46,6 +38,8 @@ func (cv ColumnVector) check() error {
 				}
 				if len(vector) > presentCounts {
 					log.Warnf("column %d vector data large than prensents in struct column, extra data will be discard", childVector.Id)
+					vector=vector[:presentCounts]
+					cv.Vector.([]*ColumnVector)[i].Vector= vector
 				}
 			}
 		}

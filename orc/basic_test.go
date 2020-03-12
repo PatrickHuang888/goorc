@@ -677,4 +677,31 @@ func TestColumnStructWithPresents(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, uint64(rows), n)
+
+	ropts := DefaultReaderOptions()
+	batch = schema.CreateReaderBatch(ropts)
+	w:= writer.(*structWriter)
+	presentBs := &bufSeeker{w.present.buf}
+	pKind := pb.Stream_PRESENT
+	pLength_ := uint64(w.present.buf.Len())
+	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
+	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+
+	intWriter:= w.childrenWriters[0].(*longV2Writer)
+	dataBs := &bufSeeker{intWriter.data.buf}
+	dKind := pb.Stream_DATA
+	dLength := uint64(intWriter.data.buf.Len())
+	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
+	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
+
+	intCr:= &crBase{schema:schema}
+	intReader:= &longV2Reader{crBase:intCr, data:data}
+	cr := &crBase{schema: schema, present: present}
+	reader := &structReader{crBase: cr, children:[]columnReader{intReader}}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector.([]*ColumnVector)[0].Vector)
 }

@@ -1050,7 +1050,6 @@ func (c *doubleReader) next(batch *ColumnVector) error {
 
 type structReader struct {
 	*crBase
-
 	children []columnReader
 }
 
