@@ -256,15 +256,15 @@ func createColumnWriter(schema *TypeDescription, opts *WriterOptions) (writer co
 	case pb.Type_LIST:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			// todo:
-			//streams[schema.Id][1] = newUnsignedIntV2Writer(schema.Id, pb.Stream_LENGTH, opts)
+			return nil, errors.New("not impl")
 			break
 		}
-		return nil, errors.New("encoding not impl")
+		return nil, errors.New("encoding error")
 
 	case pb.Type_MAP:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			// todo:
-			// streams[schema.Id][1] = newUnsignedIntV2Writer(schema.Id, pb.Stream_LENGTH, opts)
+			return nil, errors.New("not impl")
 			break
 		}
 		return nil, errors.New("encoding not impl")
@@ -274,7 +274,7 @@ func createColumnWriter(schema *TypeDescription, opts *WriterOptions) (writer co
 			return nil, errors.New("encoding error")
 		}
 		// todo:
-		//streams[schema.Id][1]= newByteStream(schema.Id, pb.Stream_DIRECT)
+		return nil, errors.New("not impl")
 	}
 	return
 }
@@ -377,9 +377,6 @@ type columnWriter interface {
 
 type cwBase struct {
 	schema *TypeDescription
-
-	//opts *WriterOptions
-
 	present *streamWriter
 }
 
@@ -510,8 +507,6 @@ func (c *dateV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
 	rows = uint64(len(values))
 
 	if c.schema.HasNulls {
-		//todo: batch.presents nil warning
-
 		if len(batch.Presents) != len(values) {
 			return 0, errors.New("rows of present != vector")
 		}
@@ -621,8 +616,6 @@ func (c *doubleWriter) write(batch *ColumnVector) (rows uint64, err error) {
 	rows = uint64(len(values))
 
 	if c.schema.HasNulls {
-		//todo: batch.presents nil warning
-
 		if len(batch.Presents) != len(values) {
 			return 0, errors.New("rows of present != vector")
 		}
@@ -675,8 +668,6 @@ func (c *binaryDirectV2Writer) write(batch *ColumnVector) (rows uint64, err erro
 	rows = uint64(len(values))
 
 	if c.schema.HasNulls {
-		//todo: batch.presents nil warning
-
 		if len(batch.Presents) != len(values) {
 			return 0, errors.New("rows of present != vector")
 		}
@@ -735,15 +726,7 @@ func newStringDictV2Writer(schema *TypeDescription, opts *WriterOptions) *string
 }
 
 func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	// todo:
-
-	/*values := batch.Vector.([]string)
-	rows = uint64(len(values))
-
-	var data []uint64
-	var dictData []byte
-	var lengthData []uint64*/
-
+	//todo:
 	return
 }
 
@@ -776,7 +759,6 @@ func (c *stringDirectV2Writer) write(batch *ColumnVector) (rows uint64, err erro
 	rows = uint64(len(values))
 
 	if c.schema.HasNulls {
-		// todo: presents nil warning
 		if len(batch.Presents) != len(values) {
 			return 0, errors.New("rows of present != vector")
 		}
