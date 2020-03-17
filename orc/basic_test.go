@@ -3,13 +3,13 @@ package orc
 import (
 	"bytes"
 	"fmt"
-	"github.com/patrickhuang888/goorc/orc/encoding"
 	"testing"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -491,8 +491,7 @@ func TestColumnBinaryV2WithPresents(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-// todo:
-/*func TestColumnDecimal64WithPresents(t *testing.T) {
+func TestColumnDecimal64WithPresents(t *testing.T) {
 	schema := &TypeDescription{Id: 0, Kind: pb.Type_DECIMAL, HasNulls:true}
 	wopts:= DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
@@ -500,29 +499,58 @@ func TestColumnBinaryV2WithPresents(t *testing.T) {
 	rows:= 100
 	values:= make([]Decimal64, rows)
 	for i := 0; i < rows; i++ {
-		values[i]= Decimal64{Precision:i, Scale:10}
+		values[i]= Decimal64{Precision:int64(i), Scale:10}
 	}
 	presents:= make([]bool, rows)
 	for i:=0; i<rows; i++ {
 		presents[i]= true
 	}
 	presents[0]=false
-	values[0]= nil
+	values[0]= Decimal64{}
 	presents[45]=false
-	values[45]= nil
+	values[45]= Decimal64{}
 	presents[98]= false
-	values[98]= nil
+	values[98]= Decimal64{}
 
 	batch.Presents= presents
 	batch.Vector= values
 
-	writer:= newBinaryDirectV2Writer(schema, wopts)
+	writer:= newDecimal64DirectV2Writer(schema, wopts)
 	n, err:=writer.write(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, uint64(rows), n)
-}*/
+
+	ropts := DefaultReaderOptions()
+	batch = schema.CreateReaderBatch(ropts)
+	presentBs := &bufSeeker{writer.present.buf}
+	pKind := pb.Stream_PRESENT
+	pLength_ := uint64(writer.present.buf.Len())
+	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
+	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+
+	dataBs := &bufSeeker{writer.data.buf}
+	dKind := pb.Stream_DATA
+	dLength := uint64(writer.data.buf.Len())
+	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
+	data := newVarIntStreamReader(ropts, dInfo, 0, dataBs)
+
+	secondaryBs := &bufSeeker{writer.secondary.buf}
+	sKind := pb.Stream_SECONDARY
+	sLength := uint64(writer.secondary.buf.Len())
+	sInfo := &pb.Stream{Column: &schema.Id, Kind: &sKind, Length: &sLength}
+	secondary := newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, false)
+
+	cr := &crBase{schema: schema, present: present}
+	reader := &decimal64DirectV2Reader{crBase: cr, data: data, secondary: secondary}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector)
+}
 
 func TestColumnDateWithPresents(t *testing.T) {
 	schema := &TypeDescription{Id: 0, Kind: pb.Type_DATE, HasNulls: true}
@@ -662,6 +690,8 @@ func TestColumnStructWithPresents(t *testing.T) {
 	presents[98] = false
 	batch.Presents = presents
 
+	//rethink: just write not null values
+	rows -=3
 	values := make([]int64, rows)
 	for i := 0; i < rows; i++ {
 		values[i] = int64(i)
@@ -703,5 +733,6 @@ func TestColumnStructWithPresents(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, presents, batch.Presents[:100])
+	// rethink: how struct present impl?
 	assert.Equal(t, values, batch.Vector.([]*ColumnVector)[0].Vector)
 }

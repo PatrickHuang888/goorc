@@ -947,7 +947,6 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 
 type decimal64DirectV2Reader struct {
 	*crBase
-
 	data      *varIntStreamReader
 	secondary *longV2StreamReader
 }
@@ -1061,7 +1060,7 @@ func (c *structReader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]*ColumnVector)
 
 	for i, child := range c.children {
-		// fixme: how to handle present ?
+		// rethink: how to handle present ?
 		// todo: cursor
 		if err := child.next(vector[i]); err != nil {
 			return err
@@ -1189,9 +1188,6 @@ func (r *floatStreamReader) finished() bool {
 type varIntStreamReader struct {
 	stream *streamReader
 
-	values []int64
-	pos    int
-
 	decoder *encoding.Base128VarInt
 }
 
@@ -1201,22 +1197,12 @@ func newVarIntStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, i
 }
 
 func (r *varIntStreamReader) next() (v int64, err error) {
-	if r.pos >= len(r.values) {
-		r.pos = 0
-		r.values = r.values[:0]
-
-		if err = r.decoder.ReadValues(r.stream, r.values); err != nil {
-			return 0, err
-		}
-	}
-
-	v = r.values[r.pos]
-	r.pos++
-	return
+		v,err = r.decoder.DecodeNext(r.stream)
+		return
 }
 
 func (r *varIntStreamReader) finished() bool {
-	return r.stream.finished() && (r.pos == len(r.values))
+	return r.stream.finished()
 }
 
 type longV2StreamReader struct {

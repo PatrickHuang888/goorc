@@ -1370,12 +1370,8 @@ func (e *Base128VarInt) Encode(out *bytes.Buffer, vs interface{}) error {
 	return nil
 }
 
-func (d *Base128VarInt) ReadValues(in BufferedReader, values []int64) (err error) {
-	v, err := binary.ReadVarint(in)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	values = append(values, v)
+func (d *Base128VarInt) DecodeNext(in BufferedReader) (value int64, err error) {
+	value, err = binary.ReadVarint(in)
 	return
 }
 

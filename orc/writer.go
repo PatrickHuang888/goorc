@@ -552,7 +552,7 @@ type decimal64DirectV2Writer struct {
 
 func newDecimal64DirectV2Writer(schema *TypeDescription, opts *WriterOptions) *decimal64DirectV2Writer {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newBase128VarIntStream(schema.Id, pb.Stream_DATA, opts)
+	data_ := newBase128VarIntStreamWriter(schema.Id, pb.Stream_DATA, opts)
 	secondary_ := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, false, opts)
 	return &decimal64DirectV2Writer{cw_, data_, secondary_}
 }
@@ -564,8 +564,6 @@ func (c *decimal64DirectV2Writer) write(batch *ColumnVector) (rows uint64, err e
 	rows = uint64(len(values))
 
 	if c.schema.HasNulls {
-		//todo: batch.presents nil warning
-
 		if len(batch.Presents) != len(values) {
 			return 0, errors.New("rows of present != vector")
 		}
@@ -1334,7 +1332,7 @@ func newBinaryV2Stream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *str
 	return &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: encoder, encodingBuf: &bytes.Buffer{}}
 }
 
-func newBase128VarIntStream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
+func newBase128VarIntStreamWriter(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
 	id_ := id
 	kind_ := pb.Stream_DATA
 	length_ := uint64(0)
