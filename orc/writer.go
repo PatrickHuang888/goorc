@@ -710,6 +710,61 @@ func (c *binaryDirectV2Writer) getStreams() []*streamWriter {
 	return ss
 }
 
+type stringV2Writer struct {
+	schema *TypeDescription
+	opts *WriterOptions
+	encoding *pb.ColumnEncoding_Kind
+	directW *stringDirectV2Writer
+	dictW *stringDictV2Writer
+}
+
+func (c *stringV2Writer) write(batch *ColumnVector) (rows uint64, err error){
+	if c.encoding==nil {
+		c.encoding= determineStringEncoding(batch)
+	}
+	if *c.encoding==pb.ColumnEncoding_DIRECT_V2 {
+		c.directW= newStringDirectV2Writer(c.schema, c.opts)
+		return c.directW.write(batch)
+	}
+	if *c.encoding==pb.ColumnEncoding_DICTIONARY_V2 {
+		c.dictW= newStringDictV2Writer(c.schema, c.opts)
+		return c.dictW.write(batch)
+	}
+	return 0, errors.New("column encoding error")
+}
+
+func (c *stringV2Writer) getStreams() []*streamWriter {
+	if *c.encoding==pb.ColumnEncoding_DIRECT_V2 {
+		return c.directW.getStreams()
+	}
+	if *c.encoding==pb.ColumnEncoding_DICTIONARY_V2 {
+		return c.dictW.getStreams()
+	}
+	return nil
+}
+
+//rethink: how string encoding determined, right now is key/data less than 50%
+const StringDictThreshold=0.5
+func determineStringEncoding(batch *ColumnVector) *pb.ColumnEncoding_Kind {
+	values := batch.Vector.([]string)
+	dict:= make(map[string]bool)
+	var keyCount int
+	for _, v := range values {
+		 _, exist:= dict[v]
+		 if !exist {
+		 	keyCount++
+		 	dict[v]= true
+		 }
+	}
+	var r pb.ColumnEncoding_Kind
+	if float64(keyCount)/float64(len(values)) < StringDictThreshold {
+		r= pb.ColumnEncoding_DICTIONARY_V2
+	}else {
+		r= pb.ColumnEncoding_DIRECT_V2
+	}
+	return &r
+}
+
 type stringDictV2Writer struct {
 	*cwBase
 	data      *streamWriter
@@ -726,7 +781,45 @@ func newStringDictV2Writer(schema *TypeDescription, opts *WriterOptions) *string
 }
 
 func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	//todo:
+	presents:=batch.Presents
+	vector := batch.Vector.([]string)
+	rows = uint64(len(vector))  // is there rows +=1 if !present?
+	var values []string
+
+	dict := make(map[string][]int)  // <string, [index address]>
+
+	if c.schema.HasNulls {
+		if len(presents) != len(vector) {
+			return 0, errors.New("rows of present != vector")
+		}
+
+		if _, err := c.present.writeValues(presents); err != nil {
+			return 0, err
+		}
+
+		for i, p := range batch.Presents {
+			if p {
+				values = append(values, vector[i])
+			}
+		}
+	}else {
+		values= vector
+	}
+
+	for i, v := range values {
+		index, _ := dict[v]
+		index = append(index, i)
+	}
+
+	if _, err := c.data.writeValues(contents); err != nil {
+		return 0, err
+	}
+
+	// rethink: if data write sucsessful and length write fail, because right now data is in memory
+	if _, err = c.length.writeValues(lengthVector); err != nil {
+		return 0, err
+	}
+
 	return
 }
 
