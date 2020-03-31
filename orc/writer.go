@@ -718,6 +718,10 @@ type stringV2Writer struct {
 	dictW *stringDictV2Writer
 }
 
+func newStringV2Writer(schema *TypeDescription, opts *WriterOptions, encoding *pb.ColumnEncoding_Kind)  *stringV2Writer{
+	return &stringV2Writer{schema:schema, opts:opts, encoding:encoding}
+}
+
 func (c *stringV2Writer) write(batch *ColumnVector) (rows uint64, err error){
 	if c.encoding==nil {
 		c.encoding= determineStringEncoding(batch)
@@ -768,16 +772,16 @@ func determineStringEncoding(batch *ColumnVector) *pb.ColumnEncoding_Kind {
 type stringDictV2Writer struct {
 	*cwBase
 	data      *streamWriter
-	secondary *streamWriter
+	dictData *streamWriter
 	length    *streamWriter
 }
 
 func newStringDictV2Writer(schema *TypeDescription, opts *WriterOptions) *stringDictV2Writer {
 	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
 	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, false, opts)
-	secondary_ := newStringContentsStream(schema.Id, pb.Stream_DICTIONARY_DATA, opts)
+	dictData_ := newStringContentsStream(schema.Id, pb.Stream_DICTIONARY_DATA, opts)
 	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
-	return &stringDictV2Writer{cwBase: cw_, data: data_, secondary: secondary_, length: length_}
+	return &stringDictV2Writer{cwBase: cw_, data: data_, dictData: dictData_, length: length_}
 }
 
 func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
@@ -785,8 +789,6 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 	vector := batch.Vector.([]string)
 	rows = uint64(len(vector))  // is there rows +=1 if !present?
 	var values []string
-
-	dict := make(map[string][]int)  // <string, [index address]>
 
 	if c.schema.HasNulls {
 		if len(presents) != len(vector) {
@@ -806,28 +808,57 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 		values= vector
 	}
 
-	for i, v := range values {
-		index, _ := dict[v]
-		index = append(index, i)
-	}
-
-	if _, err := c.data.writeValues(contents); err != nil {
-		return 0, err
+	d:= &dict{}
+	for _, v := range values {
+		d.put(v)
 	}
 
 	// rethink: if data write sucsessful and length write fail, because right now data is in memory
-	if _, err = c.length.writeValues(lengthVector); err != nil {
+	if _, err = c.data.writeValues(d.indexes); err != nil {
+		return 0, err
+	}
+	if _, err := c.dictData.writeValues(d.contents); err != nil {
+		return 0, err
+	}
+	if _, err := c.length.writeValues(d.lengths); err!=nil {
 		return 0, err
 	}
 
 	return
 }
 
+type dict struct {
+	contents [][]byte
+	lengths []uint64
+	indexes []uint64
+}
+
+func (d *dict) put(s string)  {
+	idx:= d.contains(s)
+	if idx==-1 {
+		d.contents= append(d.contents, []byte(s))
+		d.lengths= append(d.lengths, uint64(len(s)))
+		d.indexes= append(d.indexes, uint64(len(d.contents)-1))
+	}else {
+		d.indexes= append(d.indexes, uint64(idx))
+	}
+}
+
+func (d dict) contains(s string) int  {
+	for i, c := range d.contents {
+		// rethink: == on string
+		if string(c)==s {
+			return i
+		}
+	}
+	return -1
+}
+
 func (c *stringDictV2Writer) getStreams() []*streamWriter {
 	ss := make([]*streamWriter, 4)
 	ss[0] = c.present
 	ss[1] = c.data
-	ss[2] = c.secondary
+	ss[2] = c.dictData
 	ss[3] = c.length
 	return ss
 }
@@ -1118,6 +1149,7 @@ type streamWriter struct {
 	encoder     encoding.Encoder
 }
 
+// write and compress data to stream buffer in 1 or more chunk if compressed
 func (s *streamWriter) write(data *bytes.Buffer) (written uint64, err error) {
 	start := s.buf.Len()
 
