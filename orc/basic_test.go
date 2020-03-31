@@ -736,3 +736,35 @@ func TestColumnStructWithPresents(t *testing.T) {
 	// rethink: how struct present impl?
 	assert.Equal(t, values, batch.Vector.([]*ColumnVector)[0].Vector)
 }
+
+func TestColumnStringUsingDictWithPresents(t *testing.T) {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: true}
+	wopts := DefaultWriterOptions()
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows := 100
+	values := make([]string, rows)
+	for i := 0; i < rows; i++ {
+		values[i] = fmt.Sprintf("string %d", i%4)
+	}
+	presents := make([]bool, rows)
+	for i := 0; i < rows; i++ {
+		presents[i] = true
+	}
+	presents[0] = false
+	values[0] = ""
+	presents[45] = false
+	values[45] = ""
+	presents[98] = false
+	values[98] = ""
+
+	batch.Presents = presents
+	batch.Vector = values
+
+	writer := newStringV2Writer(schema, wopts, nil)
+	n, err := writer.write(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint64(rows), n)
+}
