@@ -12,6 +12,9 @@ type TypeDescription struct {
 	Kind          pb.Type_Kind
 	ChildrenNames []string
 	Children      []*TypeDescription
+
+	// although encoding is stripe related, but I think this should be set in schema
+	// maybe changed at nextStripe?
 	Encoding      pb.ColumnEncoding_Kind
 
 	HasNulls  bool // for writing

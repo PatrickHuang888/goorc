@@ -83,9 +83,6 @@ func (w *fileWriter) Close() error {
 
 func newWriter(schema *TypeDescription, opts *WriterOptions, out io.Writer) (*writer, error) {
 	schemas := schema.normalize()
-	for _, s := range schemas {
-		s.Encoding = getColumnEncoding(opts, s.Kind)
-	}
 
 	w := &writer{opts: opts, schemas: schemas, out: out}
 	n, err := w.writeHeader()
@@ -275,6 +272,9 @@ func createColumnWriter(schema *TypeDescription, opts *WriterOptions) (writer co
 		}
 		// todo:
 		return nil, errors.New("not impl")
+
+	default:
+		return nil, errors.New("column kind unknown")
 	}
 	return
 }
@@ -376,7 +376,7 @@ type columnWriter interface {
 }
 
 type cwBase struct {
-	schema *TypeDescription
+	schema  *TypeDescription
 	present *streamWriter
 }
 
@@ -711,69 +711,67 @@ func (c *binaryDirectV2Writer) getStreams() []*streamWriter {
 }
 
 type stringV2Writer struct {
-	schema *TypeDescription
-	opts *WriterOptions
-	encoding *pb.ColumnEncoding_Kind
+	schema  *TypeDescription
+	opts    *WriterOptions
 	directW *stringDirectV2Writer
-	dictW *stringDictV2Writer
+	dictW   *stringDictV2Writer
 }
 
-func newStringV2Writer(schema *TypeDescription, opts *WriterOptions, encoding *pb.ColumnEncoding_Kind)  *stringV2Writer{
-	return &stringV2Writer{schema:schema, opts:opts, encoding:encoding}
+func newStringV2Writer(schema *TypeDescription, opts *WriterOptions) *stringV2Writer {
+	return &stringV2Writer{schema: schema, opts: opts}
 }
 
-func (c *stringV2Writer) write(batch *ColumnVector) (rows uint64, err error){
-	if c.encoding==nil {
-		c.encoding= determineStringEncoding(batch)
-	}
-	if *c.encoding==pb.ColumnEncoding_DIRECT_V2 {
-		c.directW= newStringDirectV2Writer(c.schema, c.opts)
+func (c *stringV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
+	if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+		c.directW = newStringDirectV2Writer(c.schema, c.opts)
 		return c.directW.write(batch)
 	}
-	if *c.encoding==pb.ColumnEncoding_DICTIONARY_V2 {
-		c.dictW= newStringDictV2Writer(c.schema, c.opts)
+	if c.schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
+		c.dictW = newStringDictV2Writer(c.schema, c.opts)
 		return c.dictW.write(batch)
 	}
-	return 0, errors.New("column encoding error")
+	return 0, errors.New("column encoding not impl")
 }
 
 func (c *stringV2Writer) getStreams() []*streamWriter {
-	if *c.encoding==pb.ColumnEncoding_DIRECT_V2 {
+	if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 		return c.directW.getStreams()
 	}
-	if *c.encoding==pb.ColumnEncoding_DICTIONARY_V2 {
+	if c.schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
 		return c.dictW.getStreams()
 	}
 	return nil
 }
 
 //rethink: how string encoding determined, right now is key/data less than 50%
-const StringDictThreshold=0.5
-func determineStringEncoding(batch *ColumnVector) *pb.ColumnEncoding_Kind {
+const StringDictThreshold = 0.5
+
+// cannot determine on runtime, encoding should be determined at start of stripe
+func determineStringEncoding(batch *ColumnVector) pb.ColumnEncoding_Kind {
 	values := batch.Vector.([]string)
-	dict:= make(map[string]bool)
+	dict := make(map[string]bool)
 	var keyCount int
 	for _, v := range values {
-		 _, exist:= dict[v]
-		 if !exist {
-		 	keyCount++
-		 	dict[v]= true
-		 }
+		_, exist := dict[v]
+		if !exist {
+			keyCount++
+			dict[v] = true
+		}
 	}
 	var r pb.ColumnEncoding_Kind
 	if float64(keyCount)/float64(len(values)) < StringDictThreshold {
-		r= pb.ColumnEncoding_DICTIONARY_V2
-	}else {
-		r= pb.ColumnEncoding_DIRECT_V2
+		r = pb.ColumnEncoding_DICTIONARY_V2
+	} else {
+		r = pb.ColumnEncoding_DIRECT_V2
 	}
-	return &r
+	return r
 }
 
 type stringDictV2Writer struct {
 	*cwBase
-	data      *streamWriter
+	data     *streamWriter
 	dictData *streamWriter
-	length    *streamWriter
+	length   *streamWriter
 }
 
 func newStringDictV2Writer(schema *TypeDescription, opts *WriterOptions) *stringDictV2Writer {
@@ -785,9 +783,9 @@ func newStringDictV2Writer(schema *TypeDescription, opts *WriterOptions) *string
 }
 
 func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	presents:=batch.Presents
+	presents := batch.Presents
 	vector := batch.Vector.([]string)
-	rows = uint64(len(vector))  // is there rows +=1 if !present?
+	rows = uint64(len(vector)) // is there rows +=1 if !present?
 	var values []string
 
 	if c.schema.HasNulls {
@@ -804,11 +802,11 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 				values = append(values, vector[i])
 			}
 		}
-	}else {
-		values= vector
+	} else {
+		values = vector
 	}
 
-	d:= &dict{}
+	d := &dict{}
 	for _, v := range values {
 		d.put(v)
 	}
@@ -820,7 +818,7 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 	if _, err := c.dictData.writeValues(d.contents); err != nil {
 		return 0, err
 	}
-	if _, err := c.length.writeValues(d.lengths); err!=nil {
+	if _, err := c.length.writeValues(d.lengths); err != nil {
 		return 0, err
 	}
 
@@ -829,25 +827,25 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 
 type dict struct {
 	contents [][]byte
-	lengths []uint64
-	indexes []uint64
+	lengths  []uint64
+	indexes  []uint64
 }
 
-func (d *dict) put(s string)  {
-	idx:= d.contains(s)
-	if idx==-1 {
-		d.contents= append(d.contents, []byte(s))
-		d.lengths= append(d.lengths, uint64(len(s)))
-		d.indexes= append(d.indexes, uint64(len(d.contents)-1))
-	}else {
-		d.indexes= append(d.indexes, uint64(idx))
+func (d *dict) put(s string) {
+	idx := d.contains(s)
+	if idx == -1 {
+		d.contents = append(d.contents, []byte(s))
+		d.lengths = append(d.lengths, uint64(len(s)))
+		d.indexes = append(d.indexes, uint64(len(d.contents)-1))
+	} else {
+		d.indexes = append(d.indexes, uint64(idx))
 	}
 }
 
-func (d dict) contains(s string) int  {
+func (d dict) contains(s string) int {
 	for i, c := range d.contents {
 		// rethink: == on string
-		if string(c)==s {
+		if string(c) == s {
 			return i
 		}
 	}

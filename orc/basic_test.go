@@ -314,7 +314,7 @@ func TestDoubleColumnWithPresents(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestStringColumnEncodingDirectWithPresents(t *testing.T) {
+func TestColumnStringDirectV2WithPresents(t *testing.T) {
 	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: true}
 	wopts := DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
@@ -760,7 +760,7 @@ func TestColumnStringUsingDictWithPresents(t *testing.T) {
 	batch.Presents = presents
 	batch.Vector = values
 
-	writer := newStringV2Writer(schema, wopts, nil)
+	writer := newStringDictV2Writer(schema, wopts)
 	n, err := writer.write(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
