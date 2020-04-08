@@ -766,4 +766,41 @@ func TestColumnStringUsingDictWithPresents(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, uint64(rows), n)
+
+
+	ropts := DefaultReaderOptions()
+	batch = schema.CreateReaderBatch(ropts)
+
+	presentBs := &bufSeeker{writer.present.buf}
+	pKind := pb.Stream_PRESENT
+	pLength_ := uint64(writer.present.buf.Len())
+	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
+	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+
+	dataBs := &bufSeeker{writer.data.buf}
+	dKind := pb.Stream_DATA
+	dLength := uint64(writer.data.buf.Len())
+	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
+	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, false)
+
+	dDataBs := &bufSeeker{writer.dictData.buf}
+	dDataKind := pb.Stream_DICTIONARY_DATA
+	dDataLength := uint64(writer.dictData.buf.Len())
+	dDataInfo := &pb.Stream{Column: &schema.Id, Kind: &dDataKind, Length: &dDataLength}
+	dictData := newStringContentsStreamReader(ropts, dDataInfo, 0, dDataBs)
+
+	dictLengthBs := &bufSeeker{writer.length.buf}
+	dlKind := pb.Stream_LENGTH
+	dlLength := uint64(writer.length.buf.Len())
+	dlInfo := &pb.Stream{Column: &schema.Id, Kind: &dlKind, Length: &dlLength}
+	dictLength := newLongV2StreamReader(ropts, dlInfo, 0, dictLengthBs, false)
+
+	cr := &crBase{schema: schema, present: present}
+	reader := &stringDictV2Reader{crBase: cr, data: data, dictData:dictData, dictLength:dictLength}
+	err = reader.next(batch)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, values, batch.Vector)
 }

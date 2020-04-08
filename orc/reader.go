@@ -865,24 +865,34 @@ type stringDictV2Reader struct {
 	data       *longV2StreamReader
 	dictData   *stringContentsStreamReader
 	dictLength *longV2StreamReader
+
+	dict []string
+	lengths []uint64
 }
 
 func (c *stringDictV2Reader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+	var err error
 	vector := batch.Vector.([]string)
 	vector = vector[:0]
 
-	ls, err := c.dictLength.getAllUInts()
-	if err != nil {
+	if err = c.nextPresents(batch); err != nil {
 		return err
 	}
 
-	dict, err := c.dictData.getAll(ls)
-	if err != nil {
-		return err
+	// rethink: len(lengths)==0
+	if len(c.lengths)==0 {
+		c.lengths, err = c.dictLength.getAllUInts()
+		if err != nil {
+			return err
+		}
+	}
+
+	// rethink: len(dict)==0
+	if len(c.dict)==0 {
+		c.dict, err = c.dictData.getAll(c.lengths)
+		if err != nil {
+			return err
+		}
 	}
 
 	i := 0
@@ -892,10 +902,10 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			if v >= uint64(len(dict)) {
+			if v >= uint64(len(c.dict)) {
 				return errors.New("dict index error")
 			}
-			vector = append(vector, string(dict[v]))
+			vector = append(vector, c.dict[v])
 		} else {
 			vector = append(vector, "")
 		}
@@ -1251,7 +1261,7 @@ func (r *longV2StreamReader) nextUInt() (v uint64, err error) {
 // for small data like dict index, ignore stream.signed
 func (r *longV2StreamReader) getAllUInts() (vs []uint64, err error) {
 	for !r.stream.finished() {
-		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
+		if vs, err = r.decoder.Decode(r.stream, vs); err != nil {
 			return
 		}
 	}
