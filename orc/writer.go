@@ -142,7 +142,7 @@ func (w *writer) flushStripe(force bool) error {
 	}
 
 	if force || w.stripe.shouldFlushStripe() {
-		if err := w.stripe.writeFooter(w.out); err != nil {
+		if _, err := w.stripe.writeFooter(w.out); err != nil {
 			return err
 		}
 
@@ -355,37 +355,36 @@ func (s *stripeWriter) flush(out io.Writer) error {
 	return nil
 }
 
-func (s *stripeWriter) writeFooter(out io.Writer) error {
-	var err error
-	var stripeFooter pb.StripeFooter
+func (s *stripeWriter) writeFooter(out io.Writer) (footer *pb.StripeFooter, err error) {
+	footer= &pb.StripeFooter{}
 
 	for _, column := range s.columnWriters {
 		for _, stream := range column.getStreams() {
-			stripeFooter.Streams = append(stripeFooter.Streams, stream.info)
+			footer.Streams = append(footer.Streams, stream.info)
 		}
 	}
 	for _, schema := range s.schemas {
-		stripeFooter.Columns = append(stripeFooter.Columns, &pb.ColumnEncoding{Kind: &schema.Encoding})
+		footer.Columns = append(footer.Columns, &pb.ColumnEncoding{Kind: &schema.Encoding})
 	}
 
 	var footerBuf []byte
-	footerBuf, err = proto.Marshal(&stripeFooter)
+	footerBuf, err = proto.Marshal(footer)
 	if err != nil {
-		return errors.WithStack(err)
+		return nil, errors.WithStack(err)
 	}
 
 	var compressedFooterBuf []byte
 	if compressedFooterBuf, err = compressByteSlice(s.opts.CompressionKind, s.opts.ChunkSize, footerBuf); err != nil {
-		return err
+		return
 	}
 	*s.info.FooterLength = uint64(len(compressedFooterBuf))
 
 	if _, err := out.Write(compressedFooterBuf); err != nil {
-		return errors.WithStack(err)
+		return nil, errors.WithStack(err)
 	}
 
 	log.Infof("written stripe footer of length: %d", s.info.GetFooterLength())
-	return err
+	return
 }
 
 func (s *stripeWriter) reset() {

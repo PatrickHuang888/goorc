@@ -72,12 +72,13 @@ func TestDecimalWriter(t *testing.T) {
 	reader.Close()
 }
 
-var dummyOut= &bytes.Buffer{}
+var dummyOut= &bufSeeker{&bytes.Buffer{}}
 
 func TestStripeWriterBasic(t *testing.T) {
 	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding:pb.ColumnEncoding_DIRECT_V2}
+	schemas:= schema.normalize()
 	wopts := DefaultWriterOptions()
-	writer, err := newStripe(0, schema.normalize(), wopts)
+	writer, err := newStripe(0, schemas, wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -123,33 +124,25 @@ func TestStripeWriterBasic(t *testing.T) {
 	if err:= writer.flush(dummyOut);err!=nil {
 		t.Fatalf("%+v", err)
 	}
-	if err:= writer.writeFooter(dummyOut);err!=nil {
+	footer, err:= writer.writeFooter(dummyOut)
+	if err!=nil {
 		t.Fatalf("%+v", err)
 	}
 
-	/*ropts := DefaultReaderOptions()
-	reader, err := NewFileReader(workDir+"testTimestamp.orc", ropts)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
+	ropts := DefaultReaderOptions()
 
-	schema = reader.GetSchema()
-	stripes, err := reader.Stripes()
-	if err != nil {
+	sr := &stripeReader{in: dummyOut, opts: ropts, footer: footer, schemas: schemas, info: writer.info, idx: 0}
+	if err := sr.prepare(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	err = stripes[0].Next(rbatch)
-	if err != nil {
+	if err:= sr.Next(rbatch);err!=nil {
 		t.Fatalf("%+v", err)
 	}
 
 	values := rbatch.Vector.([]Timestamp)
 	assert.Equal(t, 12, len(values))
 	assert.Equal(t, vector, values)
-
-	reader.Close()*/
-
 }

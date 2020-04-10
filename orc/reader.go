@@ -56,11 +56,11 @@ type reader struct {
 	stripes []StripeReader
 }
 
-type fileReader struct {
+type fileFile struct {
 	f *os.File
 }
 
-func (fr fileReader) Size() (size int64, err error) {
+func (fr fileFile) Size() (size int64, err error) {
 	fi, err := fr.f.Stat()
 	if err != nil {
 		return 0, errors.WithStack(err)
@@ -68,7 +68,7 @@ func (fr fileReader) Size() (size int64, err error) {
 	return fi.Size(), nil
 }
 
-func (fr fileReader) Read(p []byte) (n int, err error) {
+func (fr fileFile) Read(p []byte) (n int, err error) {
 	n, err = fr.f.Read(p)
 	if err != nil {
 		return n, errors.WithStack(err)
@@ -76,11 +76,11 @@ func (fr fileReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-func (fr fileReader) Seek(offset int64, whence int) (int64, error) {
+func (fr fileFile) Seek(offset int64, whence int) (int64, error) {
 	return fr.f.Seek(offset, whence)
 }
 
-func (fr fileReader) Close() error {
+func (fr fileFile) Close() error {
 	if err := fr.f.Close(); err != nil {
 		return errors.WithStack(err)
 	}
@@ -92,7 +92,7 @@ func NewFileReader(path string, opts *ReaderOptions) (r Reader, err error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "open file %stream error", path)
 	}
-	fr := &fileReader{f: f}
+	fr := &fileFile{f: f}
 	return newReader(opts, fr)
 }
 
@@ -162,7 +162,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 			return nil, errors.Wrapf(err, "unmarshal currentStripe footer error")
 		}
 
-		sr := &stripeReader{f: r.f, opts: r.opts, footer: footer, schemas: r.schemas, info: stripeInfo, idx: i}
+		sr := &stripeReader{in: r.f, opts: r.opts, footer: footer, schemas: r.schemas, info: stripeInfo, idx: i}
 		if err := sr.prepare(); err != nil {
 			return ss, errors.WithStack(err)
 		}
@@ -183,7 +183,7 @@ type StripeReader interface {
 }
 
 type stripeReader struct {
-	f File
+	in io.ReadSeeker
 
 	schemas []*TypeDescription
 	opts    *ReaderOptions
@@ -377,7 +377,7 @@ func (s *stripeReader) prepare() error {
 		//sr := &streamReader{start: dataStart, info: streamInfo, buf: &bytes.Buffer{}, in: s.f, opts: s.opts}
 
 		if streamKind == pb.Stream_PRESENT {
-			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.f)
+			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
 			continue
 		}
 
@@ -392,7 +392,7 @@ func (s *stripeReader) prepare() error {
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
 				reader := s.columnReaders[id].(*longV2Reader)
 				if streamKind == pb.Stream_DATA {
-					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, true)
+					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, true)
 					break
 				}
 				return errors.New("stream kind error")
@@ -401,7 +401,7 @@ func (s *stripeReader) prepare() error {
 		case pb.Type_FLOAT:
 			reader := s.columnReaders[id].(*floatReader)
 			if streamKind == pb.Stream_DATA {
-				reader.data = newFloatStreamReader(s.opts, streamInfo, dataStart, s.f)
+				reader.data = newFloatStreamReader(s.opts, streamInfo, dataStart, s.in)
 				break
 			}
 			return errors.New("stream kind error")
@@ -409,7 +409,7 @@ func (s *stripeReader) prepare() error {
 		case pb.Type_DOUBLE:
 			reader := s.columnReaders[id].(*doubleReader)
 			if streamKind == pb.Stream_DATA {
-				reader.data = newDoubleStreamReader(s.opts, streamInfo, dataStart, s.f)
+				reader.data = newDoubleStreamReader(s.opts, streamInfo, dataStart, s.in)
 				break
 			}
 			return errors.New("stream kind error")
@@ -419,11 +419,11 @@ func (s *stripeReader) prepare() error {
 				reader := s.columnReaders[id].(*stringDirectV2Reader)
 
 				if streamKind == pb.Stream_DATA {
-					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.in)
 					break
 				}
 				if streamKind == pb.Stream_LENGTH {
-					reader.length = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					reader.length = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
 					break
 				}
 				return errors.New("stream kind error")
@@ -432,17 +432,17 @@ func (s *stripeReader) prepare() error {
 			if encoding == pb.ColumnEncoding_DICTIONARY_V2 {
 				reader := s.columnReaders[id].(*stringDictV2Reader)
 				if streamKind == pb.Stream_DATA {
-					data := newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					data := newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
 					reader.data = data
 					break
 				}
 				if streamKind == pb.Stream_DICTIONARY_DATA {
-					dictData := newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					dictData := newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.in)
 					reader.dictData = dictData
 					break
 				}
 				if streamKind == pb.Stream_LENGTH {
-					dictLength := newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					dictLength := newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
 					reader.dictLength = dictLength
 					break
 				}
@@ -452,7 +452,7 @@ func (s *stripeReader) prepare() error {
 		case pb.Type_BOOLEAN:
 			reader := s.columnReaders[id].(*boolReader)
 			if streamKind == pb.Stream_DATA {
-				reader.data = newBoolStreamReader(s.opts, streamInfo, dataStart, s.f)
+				reader.data = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
 				break
 			}
 			return errors.New("stream kind error")
@@ -460,7 +460,7 @@ func (s *stripeReader) prepare() error {
 		case pb.Type_BYTE: // tinyint
 			reader := s.columnReaders[id].(*byteReader)
 			if streamKind == pb.Stream_DATA {
-				reader.data = newByteStreamReader(s.opts, streamInfo, dataStart, s.f)
+				reader.data = newByteStreamReader(s.opts, streamInfo, dataStart, s.in)
 				break
 			}
 			return errors.New("stream kind error")
@@ -474,11 +474,11 @@ func (s *stripeReader) prepare() error {
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
 				reader := s.columnReaders[id].(*binaryV2Reader)
 				if streamKind == pb.Stream_DATA {
-					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.f)
+					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.in)
 					break
 				}
 				if streamKind == pb.Stream_LENGTH {
-					reader.length = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					reader.length = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
 					break
 				}
 				return errors.New("stream kind error")
@@ -493,11 +493,11 @@ func (s *stripeReader) prepare() error {
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
 				reader := s.columnReaders[id].(*decimal64DirectV2Reader)
 				if streamKind == pb.Stream_DATA {
-					reader.data = newVarIntStreamReader(s.opts, streamInfo, dataStart, s.f)
+					reader.data = newVarIntStreamReader(s.opts, streamInfo, dataStart, s.in)
 					break
 				}
 				if streamKind == pb.Stream_SECONDARY {
-					reader.secondary = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					reader.secondary = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
 					break
 				}
 				return errors.New("stream kind error")
@@ -512,7 +512,7 @@ func (s *stripeReader) prepare() error {
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
 				reader := s.columnReaders[id].(*dateV2Reader)
 				if streamKind == pb.Stream_DATA {
-					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
 					break
 				}
 				return errors.New("stream kind error")
@@ -528,11 +528,11 @@ func (s *stripeReader) prepare() error {
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
 				reader := s.columnReaders[id].(*timestampV2Reader)
 				if streamKind == pb.Stream_DATA {
-					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, true)
+					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, true)
 					break
 				}
 				if streamKind == pb.Stream_SECONDARY {
-					reader.secondary = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.f, false)
+					reader.secondary = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
 					break
 				}
 				return errors.New("stream kind error")
