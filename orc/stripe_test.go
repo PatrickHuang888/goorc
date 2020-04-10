@@ -1,6 +1,7 @@
 package orc
 
 import (
+	"bytes"
 	"os"
 	"testing"
 	"time"
@@ -71,14 +72,16 @@ func TestDecimalWriter(t *testing.T) {
 	reader.Close()
 }
 
-func TestTimestamp(t *testing.T) {
-	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP}
+var dummyOut= &bytes.Buffer{}
+
+func TestStripeWriterBasic(t *testing.T) {
+	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding:pb.ColumnEncoding_DIRECT_V2}
 	wopts := DefaultWriterOptions()
-	writer, err := NewFileWriter(workDir+"testTimestamp.orc", schema, wopts)
+	writer, err := newStripe(0, schema.normalize(), wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	wbatch := schema.CreateWriterBatch(wopts)
+	batch := schema.CreateWriterBatch(wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -110,13 +113,21 @@ func TestTimestamp(t *testing.T) {
 	v12, _ := time.Parse(layout, "2008-10-02 00:00:00")
 	vector = append(vector, GetTimestamp(v12))
 
-	wbatch.Vector = vector
-	if err := writer.Write(wbatch); err != nil {
+	batch.Vector = vector
+
+	if err := writer.writeColumn(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	writer.Close()
 
-	ropts := DefaultReaderOptions()
+	dummyOut.Reset()
+	if err:= writer.flush(dummyOut);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	if err:= writer.writeFooter(dummyOut);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+
+	/*ropts := DefaultReaderOptions()
 	reader, err := NewFileReader(workDir+"testTimestamp.orc", ropts)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -139,6 +150,6 @@ func TestTimestamp(t *testing.T) {
 	assert.Equal(t, 12, len(values))
 	assert.Equal(t, vector, values)
 
-	reader.Close()
+	reader.Close()*/
 
 }

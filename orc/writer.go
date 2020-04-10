@@ -17,6 +17,7 @@ import (
 const (
 	MIN_ROW_INDEX_STRIDE         = 1000
 	DEFAULT_STRIPE_SIZE          = 256 * 1024 * 1024
+	DefalutBufferSize            = 10 * 1024 * 2014
 	DEFAULT_INDEX_SIZE           = 100 * 1024
 	DEFAULT_PRESENT_SIZE         = 100 * 1024
 	DEFAULT_DATA_SIZE            = 1 * 1024 * 1024
@@ -31,8 +32,9 @@ var VERSION = []uint32{0, 12}
 type WriterOptions struct {
 	ChunkSize       int
 	CompressionKind pb.CompressionKind
-	StripeSize      uint64
-	FlushLater      bool //if true means every write, will write in memory,
+	StripeSize      uint64 // ~200MB
+	BufferSize      uint   // written data in memory
+	//FlushLater      bool //if true means every write, will write in memory,
 	// then flush out at some threshold,
 	//but if flush fail, previous write into memory would be lost
 }
@@ -42,6 +44,7 @@ func DefaultWriterOptions() *WriterOptions {
 	o.CompressionKind = pb.CompressionKind_ZLIB
 	o.StripeSize = DEFAULT_STRIPE_SIZE
 	o.ChunkSize = DEFAULT_CHUNK_SIZE
+	o.BufferSize= DefalutBufferSize
 	return o
 }
 
@@ -53,8 +56,9 @@ type Writer interface {
 	Close() error
 }
 
+// current version always write new file, no append
 func NewFileWriter(path string, schema *TypeDescription, opts *WriterOptions) (writer Writer, err error) {
-	// fixme: create new one, error when exist
+	// todo: overwrite exist file warning
 	log.Infof("open %stream", path)
 	f, err := os.Create(path)
 	if err != nil {
@@ -122,29 +126,33 @@ func (w *writer) Write(batch *ColumnVector) error {
 		return err
 	}
 
-	force := !w.opts.FlushLater
-	if err := w.flushStripe(force); err != nil {
+	if err := w.flushStripe(false); err != nil {
 		return err
 	}
 	return nil
 }
 
-// refactoring: whole stripe buffered in memory and flush out?
 func (w *writer) flushStripe(force bool) error {
-	if force || w.stripe.shouldFlush() {
+	if force || w.stripe.shouldFlushMemory() {
 		if err := w.stripe.flush(w.out); err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 
 		// todo: update column stats
+	}
 
+	if force || w.stripe.shouldFlushStripe() {
+		if err := w.stripe.writeFooter(w.out); err != nil {
+			return err
+		}
+
+		//next
 		w.offset += w.stripe.info.GetOffset() + w.stripe.info.GetIndexLength() + w.stripe.info.GetDataLength()
-		log.Debugf("flushed currentStripe %v", w.stripe.info)
 		w.stripeInfos = append(w.stripeInfos, w.stripe.info)
-
 		w.stripe.reset()
 		*w.stripe.info.Offset = w.offset
 	}
+
 	return nil
 }
 
@@ -163,7 +171,8 @@ func newStripe(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (
 	}
 
 	o := offset
-	info := &pb.StripeInformation{Offset: &o}
+	info := &pb.StripeInformation{Offset: &o, IndexLength:new(uint64), DataLength:new(uint64), FooterLength:new(uint64),
+		NumberOfRows:new(uint64)}
 	s := &stripeWriter{opts: opts, idxBuf: idxBuf, columnWriters: columns, info: info, schemas: schemas}
 	return s, nil
 }
@@ -290,6 +299,7 @@ type stripeWriter struct {
 	info *pb.StripeInformation
 }
 
+// write to memory
 func (s *stripeWriter) writeColumn(batch *ColumnVector) error {
 
 	writer := s.columnWriters[batch.Id]
@@ -298,64 +308,84 @@ func (s *stripeWriter) writeColumn(batch *ColumnVector) error {
 		return err
 	}
 
-	// todo: update stripe datalength
-
 	if !s.schemas[batch.Id].HasFather {
 		*s.info.NumberOfRows += rows
 	}
 	return nil
 }
 
-func (s *stripeWriter) shouldFlush() bool {
+func (s stripeWriter) getBufferedDataSize() uint {
+	var l uint
+	for _, cw := range s.columnWriters {
+		for _, sw := range cw.getStreams() {
+			l += uint(sw.buf.Len())
+		}
+	}
+	return l
+}
+
+func (s stripeWriter) shouldFlushMemory() bool {
+	return s.getBufferedDataSize() >= s.opts.BufferSize
+}
+
+func (s *stripeWriter) shouldFlushStripe() bool {
 	return s.info.GetIndexLength()+s.info.GetDataLength() >= s.opts.StripeSize
 }
 
 // stripe should be self-contained
-// enhance: if buffer is empty or just flushed, no need write a new stripe
 func (s *stripeWriter) flush(out io.Writer) error {
-	var stripeFooter pb.StripeFooter
-
-	// row number updated at write
 	*s.info.IndexLength = uint64(s.idxBuf.Len())
-	_, err := s.idxBuf.WriteTo(out)
-	if err != nil {
+	if _, err := s.idxBuf.WriteTo(out); err != nil {
 		return errors.WithStack(err)
 	}
-	log.Debugf("flush index with length %d", s.info.GetIndexLength())
+	log.Tracef("flush index of length %d", s.info.GetIndexLength())
 
 	for _, column := range s.columnWriters {
 		for _, stream := range column.getStreams() {
-			log.Tracef("flush stream %stream of column %d length %d", stream.info.GetKind().String(),
-				stream.info.GetColumn(), stream.info.GetLength())
 			if _, err := stream.flush(out); err != nil {
 				return err
 			}
-			// todo: update stripe datalength here?
-
-			stripeFooter.Streams = append(stripeFooter.Streams, stream.info)
+			log.Tracef("flushed stream %stream of column %d of length %d", stream.info.GetKind().String(),
+				stream.info.GetColumn(), stream.info.GetLength())
+			*s.info.DataLength+=stream.info.GetLength()
 		}
 	}
 
+	log.Infof("flush out stripe %s memory data", s.info.String())
+	return nil
+}
+
+func (s *stripeWriter) writeFooter(out io.Writer) error {
+	var err error
+	var stripeFooter pb.StripeFooter
+
+	for _, column := range s.columnWriters {
+		for _, stream := range column.getStreams() {
+			stripeFooter.Streams = append(stripeFooter.Streams, stream.info)
+		}
+	}
 	for _, schema := range s.schemas {
 		stripeFooter.Columns = append(stripeFooter.Columns, &pb.ColumnEncoding{Kind: &schema.Encoding})
 	}
 
-	// write footer
-	footerBuf, err := proto.Marshal(&stripeFooter)
+	var footerBuf []byte
+	footerBuf, err = proto.Marshal(&stripeFooter)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	compressedFooterBuf, err := compressByteSlice(s.opts.CompressionKind, s.opts.ChunkSize, footerBuf)
-	if err != nil {
+
+	var compressedFooterBuf []byte
+	if compressedFooterBuf, err = compressByteSlice(s.opts.CompressionKind, s.opts.ChunkSize, footerBuf); err != nil {
 		return err
 	}
 	*s.info.FooterLength = uint64(len(compressedFooterBuf))
+
 	if _, err := out.Write(compressedFooterBuf); err != nil {
 		return errors.WithStack(err)
 	}
-	log.Debugf("stripe footer wrote with length: %d", s.info.GetFooterLength())
 
-	return nil
+	log.Infof("written stripe footer of length: %d", s.info.GetFooterLength())
+	return err
 }
 
 func (s *stripeWriter) reset() {
