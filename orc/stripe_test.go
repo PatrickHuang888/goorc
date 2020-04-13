@@ -2,7 +2,6 @@ package orc
 
 import (
 	"bytes"
-	"os"
 	"testing"
 	"time"
 
@@ -10,19 +9,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var workDir = os.TempDir() + string(os.PathSeparator)
+var dummyOut= &bufSeeker{&bytes.Buffer{}}
 
-func TestDecimalWriter(t *testing.T) {
-	path := workDir + "TestOrcDecimal.orc"
+func TestStripeStructBasic(t *testing.T) {
 
 	schema := &TypeDescription{Kind: pb.Type_STRUCT}
-	x := &TypeDescription{Kind: pb.Type_DECIMAL}
+	x := &TypeDescription{Kind: pb.Type_DECIMAL, Encoding:pb.ColumnEncoding_DIRECT_V2}
 	schema.ChildrenNames = []string{"x"}
 	schema.Children = []*TypeDescription{x}
+	schemas:= schema.normalize()
+
 	wopts := DefaultWriterOptions()
-	writer, err := NewFileWriter(path, schema, wopts)
+	writer, err := newStripe(0, schemas, wopts)
 	if err != nil {
-		t.Fatalf("create writer error %+v", err)
+		t.Fatalf("%+v", err)
 	}
 
 	vector := make([]Decimal64, 19)
@@ -35,28 +35,27 @@ func TestDecimalWriter(t *testing.T) {
 	batch := schema.CreateWriterBatch(wopts)
 	batch.Vector.([]*ColumnVector)[0].Vector = vector
 
-	if err := writer.Write(batch); err != nil {
+	if err := writer.writeColumn(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
-
-	writer.Close()
+	dummyOut.Reset()
+	if err:= writer.flush(dummyOut);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	footer, err:= writer.writeFooter(dummyOut)
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
 
 	ropts := DefaultReaderOptions()
-	reader, err := NewFileReader(path, ropts)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	schema = reader.GetSchema()
-	stripes, err := reader.Stripes()
-	if err != nil {
+	sr := &stripeReader{in: dummyOut, opts: ropts, footer: footer, schemas: schemas, info: writer.info, idx: 0}
+	if err := sr.prepare(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	err = stripes[0].Next(rbatch)
-	if err != nil {
+	if err:= sr.Next(rbatch);err!=nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -68,13 +67,10 @@ func TestDecimalWriter(t *testing.T) {
 		assert.Equal(t, 10*int64(i-1), values[i].Precision)
 	}
 	assert.Equal(t, -2000, int(values[18].Precision))
-
-	reader.Close()
 }
 
-var dummyOut= &bufSeeker{&bytes.Buffer{}}
 
-func TestStripeWriterBasic(t *testing.T) {
+func TestStripeBasic(t *testing.T) {
 	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding:pb.ColumnEncoding_DIRECT_V2}
 	schemas:= schema.normalize()
 	wopts := DefaultWriterOptions()

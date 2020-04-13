@@ -302,12 +302,10 @@ func (s *stripeReader) prepare() error {
 			return errors.New("column encoding error")
 
 		case pb.Type_STRUCT:
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &structReader{crBase: c}
-				//children connecting at below
-				break
+			if encoding != pb.ColumnEncoding_DIRECT {
+				return errors.New("encoding error")
 			}
-			return errors.New("encoding error")
+			s.columnReaders[schema.Id] = &structReader{crBase: c}
 
 		case pb.Type_LIST:
 			if encoding == pb.ColumnEncoding_DIRECT {
