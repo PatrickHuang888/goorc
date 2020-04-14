@@ -25,6 +25,45 @@ func (bs *bufSeeker) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }
 
+func TestStreamReadWriteNoCompression(t *testing.T) {
+	data := &bytes.Buffer{}
+	for i := 0; i < 100; i++ {
+		data.WriteByte(byte(1))
+	}
+	for i := 0; i < 100; i++ {
+		data.WriteByte(byte(i))
+	}
+	bs := data.Bytes()
+
+	// expand to several chunks
+	opts := &WriterOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
+	k := pb.Stream_DATA
+	id := uint32(0)
+	l := uint64(0)
+	info := &pb.Stream{Kind: &k, Column: &id, Length: &l}
+	sw := &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts}
+	_, err := sw.write(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	in := &bufSeeker{&bytes.Buffer{}}
+	if _, err := sw.flush(in); err != nil {
+		t.Fatal(err)
+	}
+
+	vs := make([]byte, 500)
+	ropts := &ReaderOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
+	sr := &streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: in}
+
+	n, err := sr.Read(vs)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, 200, n)
+	assert.Equal(t, bs, vs[:n])
+}
+
 func TestStreamReadWrite(t *testing.T) {
 	data := &bytes.Buffer{}
 	for i := 0; i < 100; i++ {
@@ -492,31 +531,31 @@ func TestColumnBinaryV2WithPresents(t *testing.T) {
 }
 
 func TestColumnDecimal64WithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_DECIMAL, HasNulls:true}
-	wopts:= DefaultWriterOptions()
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_DECIMAL, HasNulls: true}
+	wopts := DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
-	rows:= 100
-	values:= make([]Decimal64, rows)
+	rows := 100
+	values := make([]Decimal64, rows)
 	for i := 0; i < rows; i++ {
-		values[i]= Decimal64{Precision:int64(i), Scale:10}
+		values[i] = Decimal64{Precision: int64(i), Scale: 10}
 	}
-	presents:= make([]bool, rows)
-	for i:=0; i<rows; i++ {
-		presents[i]= true
+	presents := make([]bool, rows)
+	for i := 0; i < rows; i++ {
+		presents[i] = true
 	}
-	presents[0]=false
-	values[0]= Decimal64{}
-	presents[45]=false
-	values[45]= Decimal64{}
-	presents[98]= false
-	values[98]= Decimal64{}
+	presents[0] = false
+	values[0] = Decimal64{}
+	presents[45] = false
+	values[45] = Decimal64{}
+	presents[98] = false
+	values[98] = Decimal64{}
 
-	batch.Presents= presents
-	batch.Vector= values
+	batch.Presents = presents
+	batch.Vector = values
 
-	writer:= newDecimal64DirectV2Writer(schema, wopts)
-	n, err:=writer.write(batch)
+	writer := newDecimal64DirectV2Writer(schema, wopts)
+	n, err := writer.write(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -690,7 +729,7 @@ func TestColumnStructWithPresents(t *testing.T) {
 	batch.Presents = presents
 
 	//rethink: just write not null values
-	rows -=3
+	rows -= 3
 	values := make([]int64, rows)
 	for i := 0; i < rows; i++ {
 		values[i] = int64(i)
@@ -709,24 +748,24 @@ func TestColumnStructWithPresents(t *testing.T) {
 
 	ropts := DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
-	w:= writer.(*structWriter)
+	w := writer.(*structWriter)
 	presentBs := &bufSeeker{w.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(w.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
 	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
-	intWriter:= w.childrenWriters[0].(*longV2Writer)
+	intWriter := w.childrenWriters[0].(*longV2Writer)
 	dataBs := &bufSeeker{intWriter.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(intWriter.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
 	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
 
-	intCr:= &crBase{schema:schema}
-	intReader:= &longV2Reader{crBase:intCr, data:data}
+	intCr := &crBase{schema: schema}
+	intReader := &longV2Reader{crBase: intCr, data: data}
 	cr := &crBase{schema: schema, present: present}
-	reader := &structReader{crBase: cr, children:[]columnReader{intReader}}
+	reader := &structReader{crBase: cr, children: []columnReader{intReader}}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -767,7 +806,6 @@ func TestColumnStringUsingDictWithPresents(t *testing.T) {
 	}
 	assert.Equal(t, uint64(rows), n)
 
-
 	ropts := DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 
@@ -796,7 +834,7 @@ func TestColumnStringUsingDictWithPresents(t *testing.T) {
 	dictLength := newLongV2StreamReader(ropts, dlInfo, 0, dictLengthBs, false)
 
 	cr := &crBase{schema: schema, present: present}
-	reader := &stringDictV2Reader{crBase: cr, data: data, dictData:dictData, dictLength:dictLength}
+	reader := &stringDictV2Reader{crBase: cr, data: data, dictData: dictData, dictLength: dictLength}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)

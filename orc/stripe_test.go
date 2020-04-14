@@ -9,15 +9,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var dummyOut= &bufSeeker{&bytes.Buffer{}}
+var dummyOut = &bufSeeker{&bytes.Buffer{}}
 
 func TestStripeStructBasic(t *testing.T) {
 
 	schema := &TypeDescription{Kind: pb.Type_STRUCT}
-	x := &TypeDescription{Kind: pb.Type_DECIMAL, Encoding:pb.ColumnEncoding_DIRECT_V2}
+	x := &TypeDescription{Kind: pb.Type_DECIMAL, Encoding: pb.ColumnEncoding_DIRECT_V2}
 	schema.ChildrenNames = []string{"x"}
 	schema.Children = []*TypeDescription{x}
-	schemas:= schema.normalize()
+	schemas := schema.normalize()
 
 	wopts := DefaultWriterOptions()
 	writer, err := newStripe(0, schemas, wopts)
@@ -39,11 +39,11 @@ func TestStripeStructBasic(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	dummyOut.Reset()
-	if err:= writer.flush(dummyOut);err!=nil {
+	if err := writer.flush(dummyOut); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	footer, err:= writer.writeFooter(dummyOut)
-	if err!=nil {
+	footer, err := writer.writeFooter(dummyOut)
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -55,7 +55,7 @@ func TestStripeStructBasic(t *testing.T) {
 
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	if err:= sr.Next(rbatch);err!=nil {
+	if err := sr.Next(rbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -69,10 +69,9 @@ func TestStripeStructBasic(t *testing.T) {
 	assert.Equal(t, -2000, int(values[18].Precision))
 }
 
-
 func TestStripeBasic(t *testing.T) {
-	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding:pb.ColumnEncoding_DIRECT_V2}
-	schemas:= schema.normalize()
+	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding: pb.ColumnEncoding_DIRECT_V2}
+	schemas := schema.normalize()
 	wopts := DefaultWriterOptions()
 	writer, err := newStripe(0, schemas, wopts)
 	if err != nil {
@@ -117,11 +116,11 @@ func TestStripeBasic(t *testing.T) {
 	}
 
 	dummyOut.Reset()
-	if err:= writer.flush(dummyOut);err!=nil {
+	if err := writer.flush(dummyOut); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	footer, err:= writer.writeFooter(dummyOut)
-	if err!=nil {
+	footer, err := writer.writeFooter(dummyOut)
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -134,7 +133,7 @@ func TestStripeBasic(t *testing.T) {
 
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	if err:= sr.Next(rbatch);err!=nil {
+	if err := sr.Next(rbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 

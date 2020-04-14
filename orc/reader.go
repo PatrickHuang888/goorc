@@ -26,6 +26,8 @@ type Reader interface {
 	NumberOfRows() uint64
 	Stripes() ([]StripeReader, error)
 	Close() error
+
+	Next(batch *ColumnVector) (err error)
 }
 
 type ReaderOptions struct {
@@ -54,6 +56,8 @@ type reader struct {
 
 	tail    *pb.FileTail
 	stripes []StripeReader
+
+	stripeIndex int
 }
 
 type fileFile struct {
@@ -166,7 +170,6 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		if err := sr.prepare(); err != nil {
 			return ss, errors.WithStack(err)
 		}
-		log.Debugf("get stripeR %d : %stream", sr.idx, sr.info.String())
 		ss = append(ss, sr)
 
 	}
@@ -176,6 +179,20 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 
 func (r *reader) Close() error {
 	return r.f.Close()
+}
+
+func (r *reader) Next(batch *ColumnVector) (err error) {
+	if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
+		return
+	}
+	// next stripe
+	if (r.stripeIndex < len(r.stripes)-1) && (batch.ReadRows == 0) {
+		r.stripeIndex++
+		if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
+			return
+		}
+	}
+	return
 }
 
 type StripeReader interface {
@@ -380,7 +397,7 @@ func (s *stripeReader) prepare() error {
 		}
 
 		schema := s.schemas[id]
-		encoding:= s.footer.GetColumns()[id].GetKind()
+		encoding := s.footer.GetColumns()[id].GetKind()
 		switch schema.Kind {
 		case pb.Type_SHORT:
 			fallthrough
@@ -666,6 +683,7 @@ func (c *byteReader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -697,6 +715,7 @@ func (c *dateV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -738,6 +757,7 @@ func (c *timestampV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -772,6 +792,7 @@ func (c *boolReader) next(batch *ColumnVector) error {
 	}
 
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -813,6 +834,7 @@ func (c *binaryV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor = c.cursor + uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -854,6 +876,7 @@ func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -864,7 +887,7 @@ type stringDictV2Reader struct {
 	dictData   *stringContentsStreamReader
 	dictLength *longV2StreamReader
 
-	dict []string
+	dict    []string
 	lengths []uint64
 }
 
@@ -878,7 +901,7 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 	}
 
 	// rethink: len(lengths)==0
-	if len(c.lengths)==0 {
+	if len(c.lengths) == 0 {
 		c.lengths, err = c.dictLength.getAllUInts()
 		if err != nil {
 			return err
@@ -886,7 +909,7 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 	}
 
 	// rethink: len(dict)==0
-	if len(c.dict)==0 {
+	if len(c.dict) == 0 {
 		c.dict, err = c.dictData.getAll(c.lengths)
 		if err != nil {
 			return err
@@ -911,6 +934,7 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -952,6 +976,7 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 	log.Debugf("column %d read %d data values", c.schema.Id, len(vector))
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -992,6 +1017,7 @@ func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -1023,6 +1049,7 @@ func (c *floatReader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -1054,6 +1081,7 @@ func (c *doubleReader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
+	batch.ReadRows = uint(len(vector))
 	return nil
 }
 
@@ -1075,6 +1103,8 @@ func (c *structReader) next(batch *ColumnVector) error {
 		if err := child.next(vector[i]); err != nil {
 			return err
 		}
+		// fixme: assigned readrows like this?
+		batch.ReadRows = vector[i].ReadRows
 	}
 
 	return nil
@@ -1207,8 +1237,8 @@ func newVarIntStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, i
 }
 
 func (r *varIntStreamReader) next() (v int64, err error) {
-		v,err = r.decoder.DecodeNext(r.stream)
-		return
+	v, err = r.decoder.DecodeNext(r.stream)
+	return
 }
 
 func (r *varIntStreamReader) finished() bool {
@@ -1248,7 +1278,7 @@ func (r *longV2StreamReader) nextUInt() (v uint64, err error) {
 			return
 		}
 
-		log.Debugf("decoded %d long values from chunk", len(r.values))
+		log.Tracef("decoded %d long values from chunk", len(r.values))
 	}
 
 	v = r.values[r.pos]
@@ -1380,16 +1410,16 @@ func (s *streamReader) readAChunk() error {
 	}
 
 	if s.opts.CompressionKind == pb.CompressionKind_NONE { // no header
-		l := int64(DEFAULT_CHUNK_SIZE)
-		if int64(s.info.GetLength()) < l {
-			l = int64(s.info.GetLength())
+		l := s.opts.ChunkSize
+		if s.info.GetLength()-s.readLength < l {
+			l = s.info.GetLength() - s.readLength
 		}
 		log.Tracef("no compression copy %d from stream", l)
-		_, err := io.CopyN(s.buf, s.in, l)
+		_, err := io.CopyN(s.buf, s.in, int64(l))
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		s.readLength += uint64(l)
+		s.readLength += l
 		return nil
 	}
 
@@ -1577,7 +1607,7 @@ func extractFileTail(f File) (tail *pb.FileTail, err error) {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 
-	log.Debugf("Footer: %stream\n", footer.String())
+	log.Debugf("read file footer: %s", footer.String())
 
 	fl := uint64(size)
 	psl := uint64(psLen)
@@ -1594,7 +1624,7 @@ func extractPostScript(buf []byte) (ps *pb.PostScript, err error) {
 		return nil, errors.Wrapf(err, "check orc version error")
 	}
 
-	fmt.Printf("Postscript: %stream\n", ps.String())
+	log.Debugf("read file postscript: %s", ps.String())
 
 	return ps, err
 }

@@ -17,6 +17,10 @@ type ColumnVector struct {
 	Kind     pb.Type_Kind
 	Presents []bool
 	Vector   interface{}
+
+	// assigned when every next(), that is reader user can know how many rows read after next()
+	// because vector is no type
+	ReadRows uint
 }
 
 func (cv ColumnVector) check() error {
@@ -38,8 +42,8 @@ func (cv ColumnVector) check() error {
 				}
 				if len(vector) > presentCounts {
 					log.Warnf("column %d vector data large than prensents in struct column, extra data will be discard", childVector.Id)
-					vector=vector[:presentCounts]
-					cv.Vector.([]*ColumnVector)[i].Vector= vector
+					vector = vector[:presentCounts]
+					cv.Vector.([]*ColumnVector)[i].Vector = vector
 				}
 			}
 		}

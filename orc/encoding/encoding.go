@@ -276,7 +276,7 @@ type BytesContent struct {
 func (bd *BytesContent) DecodeNext(in BufferedReader, byteLength int) (value []byte, err error) {
 	value= make([]byte, byteLength)
 	if _, err = io.ReadFull(in, value); err != nil {
-		return value, errors.WithStack(err)
+		return value, err
 	}
 	return
 }

@@ -15,7 +15,7 @@ type TypeDescription struct {
 
 	// although encoding is stripe related, but I think this should be set in schema
 	// maybe changed at nextStripe?
-	Encoding      pb.ColumnEncoding_Kind
+	Encoding pb.ColumnEncoding_Kind
 
 	HasNulls  bool // for writing
 	HasFather bool
@@ -130,6 +130,9 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 }
 
 func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *ColumnVector) {
+	// refactor: how and when normalized
+	td.normalize()
+
 	var vector interface{}
 	switch td.Kind {
 	case pb.Type_BOOLEAN:
@@ -198,8 +201,11 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *Column
 	return
 }
 
-// vector data provided by writer
+// should normalize first
 func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) (batch *ColumnVector) {
+	// refactor: how and when normalized
+	td.normalize()
+
 	if td.Kind == pb.Type_STRUCT {
 		var vector []*ColumnVector
 		for _, v := range td.Children {

@@ -44,7 +44,7 @@ func DefaultWriterOptions() *WriterOptions {
 	o.CompressionKind = pb.CompressionKind_ZLIB
 	o.StripeSize = DEFAULT_STRIPE_SIZE
 	o.ChunkSize = DEFAULT_CHUNK_SIZE
-	o.BufferSize= DefalutBufferSize
+	o.BufferSize = DefalutBufferSize
 	return o
 }
 
@@ -54,6 +54,13 @@ type Writer interface {
 	Write(batch *ColumnVector) error
 
 	Close() error
+}
+
+type fileWriter struct {
+	path string
+	f    *os.File
+
+	*writer
 }
 
 // current version always write new file, no append
@@ -74,18 +81,11 @@ func NewFileWriter(path string, schema *TypeDescription, opts *WriterOptions) (w
 	return writer, nil
 }
 
-type fileWriter struct {
-	path string
-	f    *os.File
-
-	*writer
-}
-
 func (w *fileWriter) Close() error {
-	return w.close(w.f)
+	return w.close()
 }
 
-func newWriter(schema *TypeDescription, opts *WriterOptions, out io.Writer) (*writer, error) {
+func newWriter(schema *TypeDescription, opts *WriterOptions, out io.WriteCloser) (*writer, error) {
 	schemas := schema.normalize()
 
 	w := &writer{opts: opts, schemas: schemas, out: out}
@@ -118,7 +118,7 @@ type writer struct {
 
 	ps *pb.PostScript
 
-	out io.Writer
+	out io.WriteCloser
 }
 
 func (w *writer) Write(batch *ColumnVector) error {
@@ -171,8 +171,8 @@ func newStripe(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (
 	}
 
 	o := offset
-	info := &pb.StripeInformation{Offset: &o, IndexLength:new(uint64), DataLength:new(uint64), FooterLength:new(uint64),
-		NumberOfRows:new(uint64)}
+	info := &pb.StripeInformation{Offset: &o, IndexLength: new(uint64), DataLength: new(uint64), FooterLength: new(uint64),
+		NumberOfRows: new(uint64)}
 	s := &stripeWriter{opts: opts, idxBuf: idxBuf, columnWriters: columns, info: info, schemas: schemas}
 	return s, nil
 }
@@ -347,16 +347,16 @@ func (s *stripeWriter) flush(out io.Writer) error {
 			}
 			log.Tracef("flushed stream %stream of column %d of length %d", stream.info.GetKind().String(),
 				stream.info.GetColumn(), stream.info.GetLength())
-			*s.info.DataLength+=stream.info.GetLength()
+			*s.info.DataLength += stream.info.GetLength()
 		}
 	}
 
-	log.Infof("flush out stripe %s memory data", s.info.String())
+	log.Infof("flushed out stripe memory data...")
 	return nil
 }
 
 func (s *stripeWriter) writeFooter(out io.Writer) (footer *pb.StripeFooter, err error) {
-	footer= &pb.StripeFooter{}
+	footer = &pb.StripeFooter{}
 
 	for _, column := range s.columnWriters {
 		for _, stream := range column.getStreams() {
@@ -383,13 +383,16 @@ func (s *stripeWriter) writeFooter(out io.Writer) (footer *pb.StripeFooter, err 
 		return nil, errors.WithStack(err)
 	}
 
-	log.Infof("written stripe footer of length: %d", s.info.GetFooterLength())
+	log.Infof("written out stripe footer %s", s.info.String())
 	return
 }
 
 func (s *stripeWriter) reset() {
-	s.info.Reset()
+	s.info = &pb.StripeInformation{Offset: new(uint64), IndexLength: new(uint64), DataLength: new(uint64),
+		FooterLength: new(uint64), NumberOfRows: new(uint64)}
+
 	s.idxBuf.Reset()
+
 	for _, column := range s.columnWriters {
 		for _, stream := range column.getStreams() {
 			stream.reset()
@@ -1237,7 +1240,7 @@ func (w *writer) writeHeader() (uint64, error) {
 var HEADER_LENGTH = uint64(3)
 var MAGIC = "ORC"
 
-func (w *writer) writeFileTail(out io.Writer) error {
+func (w *writer) writeFileTail() error {
 	// Encode footer
 	// todo: rowsinstrde
 	ft := &pb.Footer{HeaderLength: &HEADER_LENGTH, ContentLength: new(uint64), NumberOfRows: new(uint64)}
@@ -1263,10 +1266,10 @@ func (w *writer) writeFileTail(out io.Writer) error {
 	}
 	ftl := uint64(len(ftCmpBuf))
 
-	if _, err := out.Write(ftCmpBuf); err != nil {
+	if _, err := w.out.Write(ftCmpBuf); err != nil {
 		return errors.WithStack(err)
 	}
-	log.Debugf("Encode file footer with length: %d", ftl)
+	log.Infof("write out file footer %s with length: %d", ft.String(), ftl)
 
 	// postscript
 	ps := &pb.PostScript{}
@@ -1280,27 +1283,28 @@ func (w *writer) writeFileTail(out io.Writer) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	n, err := out.Write(psb)
+	var n int
+	n, err = w.out.Write(psb)
 	if err != nil {
-		return errors.Wrap(err, "write PS error")
+		return errors.WithStack(err)
 	}
-	log.Debugf("Encode postscript with length %d", n)
+	log.Infof("write out postscript with length %d", n)
 	// last byte is ps length
-	if _, err = out.Write([]byte{byte(n)}); err != nil {
+	if _, err = w.out.Write([]byte{byte(n)}); err != nil {
 		return errors.WithStack(err)
 	}
 
 	return nil
 }
 
-func (w *writer) close(out io.WriteCloser) error {
+func (w *writer) close() error {
 	if err := w.flushStripe(true); err != nil {
 		return err
 	}
-	if err := w.writeFileTail(out); err != nil {
+	if err := w.writeFileTail(); err != nil {
 		return err
 	}
-	out.Close()
+	w.out.Close()
 	return nil
 }
 
@@ -1402,10 +1406,11 @@ func decChunkHeader(h []byte) (length int, orig bool) {
 	return int(h[2])<<15 | int(h[1])<<7 | int(h[0])>>1, h[0]&0x01 == 0x01
 }
 
-// compress byte slice into chunk slice, used in currentStripe footer, tail footer
-// thinking should be smaller than chunksize
+// used in currentStripe footer, tail footer
 func compressByteSlice(kind pb.CompressionKind, chunkSize int, b []byte) (compressed []byte, err error) {
 	switch kind {
+	case pb.CompressionKind_NONE:
+		compressed = b
 	case pb.CompressionKind_ZLIB:
 		src := bytes.NewBuffer(b)
 		dst := bytes.NewBuffer(make([]byte, len(b)))
@@ -1416,7 +1421,7 @@ func compressByteSlice(kind pb.CompressionKind, chunkSize int, b []byte) (compre
 		return dst.Bytes(), nil
 
 	default:
-		return nil, errors.New("compression other than zlib not impl")
+		return nil, errors.New("compression not impl")
 	}
 	return
 }
