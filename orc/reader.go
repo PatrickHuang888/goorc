@@ -147,8 +147,8 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 
 		// footer
 		footerOffset := int64(offset + indexLength + dataLength)
-		if _, err := r.f.Seek(footerOffset, 0); err != nil {
-			return nil, errors.WithStack(err)
+		if _, err = r.f.Seek(footerOffset, 0); err != nil {
+			return
 		}
 		footerBuf := make([]byte, stripeInfo.GetFooterLength())
 		if _, err = io.ReadFull(r.f, footerBuf); err != nil {
@@ -157,7 +157,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		if ps.GetCompression() != pb.CompressionKind_NONE {
 			fb := &bytes.Buffer{}
 			if err = decompressBuffer(r.tail.GetPostscript().GetCompression(), fb, bytes.NewBuffer(footerBuf)); err != nil {
-				return nil, err
+				return
 			}
 			footerBuf = fb.Bytes()
 		}

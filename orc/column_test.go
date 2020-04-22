@@ -48,7 +48,7 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 	}
 
 	in := &bufSeeker{&bytes.Buffer{}}
-	if _, err := sw.flush(in); err != nil {
+	if _, err := sw.writeTo(in); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,7 +87,7 @@ func TestStreamReadWrite(t *testing.T) {
 	}
 
 	in := &bufSeeker{&bytes.Buffer{}}
-	if _, err := sw.flush(in); err != nil {
+	if _, err := sw.writeTo(in); err != nil {
 		t.Fatal(err)
 	}
 

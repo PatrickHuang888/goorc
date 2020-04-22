@@ -39,7 +39,7 @@ func TestStripeStructBasic(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	dummyOut.Reset()
-	if err := writer.flush(dummyOut); err != nil {
+	if err := writer.writeout(dummyOut); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	footer, err := writer.writeFooter(dummyOut)
@@ -116,7 +116,7 @@ func TestStripeBasic(t *testing.T) {
 	}
 
 	dummyOut.Reset()
-	if err := writer.flush(dummyOut); err != nil {
+	if err := writer.writeout(dummyOut); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	footer, err := writer.writeFooter(dummyOut)

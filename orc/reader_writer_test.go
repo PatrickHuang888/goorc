@@ -60,7 +60,7 @@ func (df *dummyFile) Reset() {
 	df.end = 0
 }
 
-var df = &dummyFile{array: make([]byte, 1_000_000)}
+var df = &dummyFile{array: make([]byte, 2_000_000)}
 
 func TestBasicNoCompression(t *testing.T) {
 	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
@@ -83,6 +83,104 @@ func TestBasicNoCompression(t *testing.T) {
 	if err := writer.Write(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
+	if err := writer.close(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	ropts := DefaultReaderOptions()
+	rbatch := schema.CreateReaderBatch(ropts)
+
+	reader, err := newReader(ropts, df)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	reader.stripes, err = reader.Stripes()
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := reader.Next(rbatch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint(rows), rbatch.ReadRows)
+	assert.Equal(t, vector, rbatch.Vector)
+}
+
+func TestBasicZlibCompression(t *testing.T) {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
+	wopts := DefaultWriterOptions()
+	wopts.CompressionKind = pb.CompressionKind_ZLIB
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows := 10_000
+	vector := make([]string, rows)
+	for i := 0; i < rows; i++ {
+		vector[i] = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
+	}
+	batch.Vector = vector
+
+	df.Reset()
+	writer, err := newWriter(schema, wopts, df)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.Write(batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.close(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	/*ropts := DefaultReaderOptions()
+	rbatch := schema.CreateReaderBatch(ropts)
+
+	reader, err := newReader(ropts, df)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	reader.stripes, err = reader.Stripes()
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := reader.Next(rbatch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, uint(rows), rbatch.ReadRows)
+	assert.Equal(t, vector, rbatch.Vector)*/
+}
+
+func TestBasicMultipleStripes(t *testing.T) {
+	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
+	wopts := DefaultWriterOptions()
+	wopts.CompressionKind = pb.CompressionKind_ZLIB
+	wopts.StripeSize = 100_000
+	batch := schema.CreateWriterBatch(wopts)
+
+	rows := 30_000
+	vector := make([]string, rows)
+	for i := 0; i < rows; i++ {
+		vector[i] = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
+	}
+	batch.Vector = vector
+
+	df.Reset()
+	writer, err := newWriter(schema, wopts, df)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.Write(batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	if err := writer.Write(batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	batch.Vector = vector[:1000]
+
+	if err := writer.Write(batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
 	if err := writer.close(); err != nil {
 		t.Fatalf("%+v", err)
 	}

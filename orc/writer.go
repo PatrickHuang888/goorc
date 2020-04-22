@@ -126,32 +126,32 @@ func (w *writer) Write(batch *ColumnVector) error {
 		return err
 	}
 
-	if err := w.flushStripe(false); err != nil {
+	if err := w.stripe.writeout(w.out); err != nil {
 		return err
 	}
+	// todo: update column stats
+
+	if w.stripe.size() > w.opts.StripeSize {
+		if err := w.nextStripe(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func (w *writer) flushStripe(force bool) error {
-	if force || w.stripe.shouldFlushMemory() {
-		if err := w.stripe.flush(w.out); err != nil {
-			return err
-		}
-
-		// todo: update column stats
+func (w *writer) nextStripe() error {
+	if _, err := w.stripe.writeFooter(w.out); err != nil {
+		return err
 	}
 
-	if force || w.stripe.shouldFlushStripe() {
-		if _, err := w.stripe.writeFooter(w.out); err != nil {
-			return err
-		}
-
-		//next
-		w.offset += w.stripe.info.GetOffset() + w.stripe.info.GetIndexLength() + w.stripe.info.GetDataLength()
-		w.stripeInfos = append(w.stripeInfos, w.stripe.info)
-		w.stripe.reset()
-		*w.stripe.info.Offset = w.offset
-	}
+	//next
+	info := w.stripe.info
+	stripeLength := info.GetIndexLength() + info.GetDataLength() + info.GetFooterLength()
+	w.offset += stripeLength
+	w.stripeInfos = append(w.stripeInfos, w.stripe.info)
+	w.stripe.reset()
+	*w.stripe.info.Offset = w.offset
 
 	return nil
 }
@@ -328,30 +328,37 @@ func (s stripeWriter) shouldFlushMemory() bool {
 	return s.getBufferedDataSize() >= s.opts.BufferSize
 }
 
-func (s *stripeWriter) shouldFlushStripe() bool {
-	return s.info.GetIndexLength()+s.info.GetDataLength() >= s.opts.StripeSize
+func (s stripeWriter) size() uint64 {
+	return s.info.GetIndexLength() + s.info.GetDataLength()
 }
 
 // stripe should be self-contained
-func (s *stripeWriter) flush(out io.Writer) error {
+func (s *stripeWriter) writeout(out io.Writer) error {
+	var n int64
+	var err error
+
 	*s.info.IndexLength = uint64(s.idxBuf.Len())
 	if _, err := s.idxBuf.WriteTo(out); err != nil {
 		return errors.WithStack(err)
 	}
+
 	log.Tracef("flush index of length %d", s.info.GetIndexLength())
 
 	for _, column := range s.columnWriters {
 		for _, stream := range column.getStreams() {
-			if _, err := stream.flush(out); err != nil {
+
+			if n, err = stream.writeTo(out); err != nil {
 				return err
 			}
-			log.Tracef("flushed stream %stream of column %d of length %d", stream.info.GetKind().String(),
-				stream.info.GetColumn(), stream.info.GetLength())
-			*s.info.DataLength += stream.info.GetLength()
+			*stream.info.Length += uint64(n)
+
+			log.Debugf("writeout stream %s column %d length %d", stream.info.GetKind().String(),
+				stream.info.GetColumn(), n)
+
+			*s.info.DataLength += uint64(n)
 		}
 	}
 
-	log.Infof("flushed out stripe memory data...")
 	return nil
 }
 
@@ -377,13 +384,15 @@ func (s *stripeWriter) writeFooter(out io.Writer) (footer *pb.StripeFooter, err 
 	if compressedFooterBuf, err = compressByteSlice(s.opts.CompressionKind, s.opts.ChunkSize, footerBuf); err != nil {
 		return
 	}
-	*s.info.FooterLength = uint64(len(compressedFooterBuf))
 
-	if _, err := out.Write(compressedFooterBuf); err != nil {
+	var n int
+	if n, err = out.Write(compressedFooterBuf); err != nil {
 		return nil, errors.WithStack(err)
 	}
 
-	log.Infof("written out stripe footer %s", s.info.String())
+	*s.info.FooterLength = uint64(n)
+
+	log.Infof("write out stripe footer %s", footer.String())
 	return
 }
 
@@ -1204,23 +1213,35 @@ func (s *streamWriter) write(data *bytes.Buffer) (written uint64, err error) {
 }
 
 func (s *streamWriter) writeValues(values interface{}) (written uint64, err error) {
+	// s.info.Get.. and s.info.Kind.St... invoked even with trace level
 	log.Tracef("writing: stream id %d - %s writing", s.info.GetColumn(), s.info.Kind.String())
 	if err = s.encoder.Encode(s.encodingBuf, values); err != nil {
 		return 0, err
 	}
-	return s.write(s.encodingBuf)
+
+	switch s.opts.CompressionKind {
+	case pb.CompressionKind_NONE:
+		if _, err = s.encodingBuf.WriteTo(s.buf); err != nil {
+			return 0, err
+		}
+	case pb.CompressionKind_ZLIB:
+		if err = zlibCompressing(s.opts.ChunkSize, s.buf, s.encodingBuf); err != nil {
+			return 0, err
+		}
+
+	default:
+		return 0, errors.New("compression kind error")
+	}
+	return 0, nil
 }
 
-func (s *streamWriter) flush(w io.Writer) (n int64, err error) {
-	n, err = s.buf.WriteTo(w)
-	if err != nil {
-		return n, errors.WithStack(err)
-	}
-	return
+func (s *streamWriter) writeTo(w io.Writer) (n int64, err error) {
+	return s.buf.WriteTo(w)
 }
 
 func (s *streamWriter) reset() {
-	s.info.Reset()
+	*s.info.Length = 0
+
 	s.buf.Reset()
 	s.encodingBuf.Reset()
 }
@@ -1269,7 +1290,7 @@ func (w *writer) writeFileTail() error {
 	if _, err := w.out.Write(ftCmpBuf); err != nil {
 		return errors.WithStack(err)
 	}
-	log.Infof("write out file footer %s with length: %d", ft.String(), ftl)
+	log.Infof("write out file tail %s with length: %d", ft.String(), ftl)
 
 	// postscript
 	ps := &pb.PostScript{}
@@ -1298,13 +1319,18 @@ func (w *writer) writeFileTail() error {
 }
 
 func (w *writer) close() error {
-	if err := w.flushStripe(true); err != nil {
-		return err
+	if w.stripe.size() != 0 {
+		if _, err := w.stripe.writeFooter(w.out); err != nil {
+			return err
+		}
 	}
+
 	if err := w.writeFileTail(); err != nil {
 		return err
 	}
+
 	w.out.Close()
+
 	return nil
 }
 
