@@ -10,10 +10,6 @@ import (
 	"testing"
 )
 
-func init() {
-	log.SetLevel(log.DebugLevel)
-}
-
 type dummyFile struct {
 	array              []byte
 	start, offset, end int64
@@ -28,6 +24,7 @@ func (df dummyFile) Size() (int64, error) {
 }
 
 func (df *dummyFile) Seek(offset int64, whence int) (int64, error) {
+	log.Tracef("dummy file set offset %d, end %d", offset, df.end)
 	if offset > df.end {
 		return 0, errors.New("offset beyond end")
 	}
@@ -36,15 +33,17 @@ func (df *dummyFile) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (df *dummyFile) Read(p []byte) (n int, err error) {
+	log.Tracef("dummy file read, offset %d, end %d", df.offset, df.end)
 	n = copy(p, df.array[df.offset:df.end])
 	df.offset += int64(n)
 	if n == 0 {
-		return 0, io.EOF
+		return 0, errors.WithStack(io.EOF)
 	}
 	return
 }
 
 func (df *dummyFile) Write(p []byte) (n int, err error) {
+	log.Tracef("dummy file write, offset %d, end %d", df.offset, df.end)
 	n = len(p)
 	if cap(df.array) < int(df.end)+n {
 		return 0, errors.New("capacity not enough")
@@ -123,14 +122,20 @@ func TestBasicZlibCompression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
+
 	if err := writer.Write(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
+
+	if err := writer.Write(batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
 	if err := writer.close(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	/*ropts := DefaultReaderOptions()
+	ropts := DefaultReaderOptions()
 	rbatch := schema.CreateReaderBatch(ropts)
 
 	reader, err := newReader(ropts, df)
@@ -141,11 +146,22 @@ func TestBasicZlibCompression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := reader.Next(rbatch); err != nil {
-		t.Fatalf("%+v", err)
+
+	var totalRows uint
+	var readResults []string
+	for {
+		if err := reader.Next(rbatch); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if rbatch.ReadRows== 0 {
+			break
+		}
+		totalRows+=rbatch.ReadRows
+		readResults= append(readResults, rbatch.Vector.([]string)...)
 	}
-	assert.Equal(t, uint(rows), rbatch.ReadRows)
-	assert.Equal(t, vector, rbatch.Vector)*/
+	assert.Equal(t, 20000, int(totalRows))
+	assert.Equal(t, vector, readResults[:10_000])
+	assert.Equal(t, vector, readResults[10_000:20_000])
 }
 
 func TestBasicMultipleStripes(t *testing.T) {
@@ -153,6 +169,7 @@ func TestBasicMultipleStripes(t *testing.T) {
 	wopts := DefaultWriterOptions()
 	wopts.CompressionKind = pb.CompressionKind_ZLIB
 	wopts.StripeSize = 100_000
+	wopts.ChunkSize = 50_000
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 30_000
@@ -186,19 +203,36 @@ func TestBasicMultipleStripes(t *testing.T) {
 	}
 
 	ropts := DefaultReaderOptions()
+	ropts.RowSize=100_000
 	rbatch := schema.CreateReaderBatch(ropts)
 
 	reader, err := newReader(ropts, df)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
+
 	reader.stripes, err = reader.Stripes()
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := reader.Next(rbatch); err != nil {
-		t.Fatalf("%+v", err)
+
+	var totalRows int
+	var readResults []string
+	for {
+		if err := reader.Next(rbatch); err != nil {
+			t.Fatalf("%+v", err)
+		}
+
+		if rbatch.ReadRows==0 {
+			break
+		}
+
+		totalRows+= int(rbatch.ReadRows)
+		readResults= append(readResults, rbatch.Vector.([]string)...)
 	}
-	assert.Equal(t, uint(rows), rbatch.ReadRows)
-	assert.Equal(t, vector, rbatch.Vector)
+
+	assert.Equal(t, 61000, totalRows)
+	assert.Equal(t, vector, readResults[:30_000])
+	assert.Equal(t, vector, readResults[30_000:60_000])
+	assert.Equal(t, vector[:1000], readResults[60_000:61_000])
 }

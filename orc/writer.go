@@ -121,18 +121,15 @@ type writer struct {
 	out io.WriteCloser
 }
 
+// because stripe data in file is stream sequence, so every data should write to memory first
+// before write to file
 func (w *writer) Write(batch *ColumnVector) error {
 	if err := w.stripe.writeColumn(batch); err != nil {
 		return err
 	}
 
-	if err := w.stripe.writeout(w.out); err != nil {
-		return err
-	}
-	// todo: update column stats
-
 	if w.stripe.size() > w.opts.StripeSize {
-		if err := w.nextStripe(); err != nil {
+		if err := w.flushStripe(); err != nil {
 			return err
 		}
 	}
@@ -140,15 +137,17 @@ func (w *writer) Write(batch *ColumnVector) error {
 	return nil
 }
 
-func (w *writer) nextStripe() error {
+func (w *writer) flushStripe() error {
+	if err := w.stripe.writeout(w.out); err != nil {
+		return err
+	}
+
 	if _, err := w.stripe.writeFooter(w.out); err != nil {
 		return err
 	}
 
 	//next
-	info := w.stripe.info
-	stripeLength := info.GetIndexLength() + info.GetDataLength() + info.GetFooterLength()
-	w.offset += stripeLength
+	w.offset += w.stripe.size()
 	w.stripeInfos = append(w.stripeInfos, w.stripe.info)
 	w.stripe.reset()
 	*w.stripe.info.Offset = w.offset
@@ -296,7 +295,7 @@ type stripeWriter struct {
 
 	idxBuf *bytes.Buffer // index area buffer
 
-	info *pb.StripeInformation
+	info *pb.StripeInformation  // data in info not update every write,
 }
 
 // write to memory
@@ -311,6 +310,17 @@ func (s *stripeWriter) writeColumn(batch *ColumnVector) error {
 	if !s.schemas[batch.Id].HasFather {
 		*s.info.NumberOfRows += rows
 	}
+
+	// todo: update index length
+	*s.info.DataLength= 0
+	for _, c := range s.columnWriters {
+		for _, stream := range c.getStreams() {
+			*s.info.DataLength+= stream.info.GetLength()
+		}
+	}
+
+	// todo: update column stats
+
 	return nil
 }
 
@@ -328,34 +338,28 @@ func (s stripeWriter) shouldFlushMemory() bool {
 	return s.getBufferedDataSize() >= s.opts.BufferSize
 }
 
+// no footer length
 func (s stripeWriter) size() uint64 {
-	return s.info.GetIndexLength() + s.info.GetDataLength()
+	return s.info.GetIndexLength() + s.info.GetDataLength()+s.info.GetFooterLength()
 }
 
 // stripe should be self-contained
 func (s *stripeWriter) writeout(out io.Writer) error {
-	var n int64
-	var err error
-
-	*s.info.IndexLength = uint64(s.idxBuf.Len())
+	// todo: index length
 	if _, err := s.idxBuf.WriteTo(out); err != nil {
 		return errors.WithStack(err)
 	}
-
 	log.Tracef("flush index of length %d", s.info.GetIndexLength())
 
 	for _, column := range s.columnWriters {
 		for _, stream := range column.getStreams() {
 
-			if n, err = stream.writeTo(out); err != nil {
+			if _, err := stream.writeOut(out); err != nil {
 				return err
 			}
-			*stream.info.Length += uint64(n)
 
-			log.Debugf("writeout stream %s column %d length %d", stream.info.GetKind().String(),
-				stream.info.GetColumn(), n)
+			log.Debugf("flush stream %s", stream.info.String())
 
-			*s.info.DataLength += uint64(n)
 		}
 	}
 
@@ -367,9 +371,12 @@ func (s *stripeWriter) writeFooter(out io.Writer) (footer *pb.StripeFooter, err 
 
 	for _, column := range s.columnWriters {
 		for _, stream := range column.getStreams() {
-			footer.Streams = append(footer.Streams, stream.info)
+			if stream.info.GetLength() != 0 {
+				footer.Streams = append(footer.Streams, stream.info)
+			}
 		}
 	}
+
 	for _, schema := range s.schemas {
 		footer.Columns = append(footer.Columns, &pb.ColumnEncoding{Kind: &schema.Encoding})
 	}
@@ -450,7 +457,7 @@ func (c *structWriter) write(batch *ColumnVector) (rows uint64, err error) {
 	}
 
 	if c.schema.HasNulls && batch.Presents != nil {
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
+		if err := c.present.writeValues(batch.Presents); err != nil {
 			return 0, err
 		}
 	}
@@ -497,7 +504,7 @@ func (c *timestampDirectV2Writer) write(batch *ColumnVector) (rows uint64, err e
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
+		if err := c.present.writeValues(batch.Presents); err != nil {
 			return 0, err
 		}
 
@@ -514,10 +521,10 @@ func (c *timestampDirectV2Writer) write(batch *ColumnVector) (rows uint64, err e
 		}
 	}
 
-	if _, err := c.data.writeValues(seconds); err != nil {
+	if err := c.data.writeValues(seconds); err != nil {
 		return 0, err
 	}
-	if _, err = c.secondary.writeValues(nanos); err != nil {
+	if err = c.secondary.writeValues(nanos); err != nil {
 		return 0, err
 	}
 	return
@@ -552,7 +559,7 @@ func (c *dateV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
+		if err := c.present.writeValues(batch.Presents); err != nil {
 			return 0, err
 		}
 
@@ -567,7 +574,7 @@ func (c *dateV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
 		}
 	}
 
-	if _, err := c.data.writeValues(vector); err != nil {
+	if err := c.data.writeValues(vector); err != nil {
 		return 0, err
 	}
 	return
@@ -604,7 +611,7 @@ func (c *decimal64DirectV2Writer) write(batch *ColumnVector) (rows uint64, err e
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
+		if err := c.present.writeValues(batch.Presents); err != nil {
 			return 0, err
 		}
 
@@ -621,11 +628,11 @@ func (c *decimal64DirectV2Writer) write(batch *ColumnVector) (rows uint64, err e
 		}
 	}
 
-	if _, err := c.data.writeValues(precisions); err != nil {
+	if err := c.data.writeValues(precisions); err != nil {
 		return 0, err
 	}
 
-	if _, err = c.secondary.writeValues(scales); err != nil {
+	if err = c.secondary.writeValues(scales); err != nil {
 		return 0, err
 	}
 
@@ -661,7 +668,7 @@ func (c *doubleWriter) write(batch *ColumnVector) (rows uint64, err error) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
+		if err := c.present.writeValues(batch.Presents); err != nil {
 			return 0, err
 		}
 
@@ -675,7 +682,7 @@ func (c *doubleWriter) write(batch *ColumnVector) (rows uint64, err error) {
 		vector = values
 	}
 
-	if _, err := c.data.writeValues(vector); err != nil {
+	if err := c.data.writeValues(vector); err != nil {
 		return 0, err
 	}
 
@@ -713,8 +720,8 @@ func (c *binaryDirectV2Writer) write(batch *ColumnVector) (rows uint64, err erro
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if err = c.present.writeValues(batch.Presents); err != nil {
+			return
 		}
 
 		for i, p := range batch.Presents {
@@ -730,12 +737,12 @@ func (c *binaryDirectV2Writer) write(batch *ColumnVector) (rows uint64, err erro
 		}
 	}
 
-	if _, err := c.data.writeValues(vector); err != nil {
-		return 0, err
+	if err = c.data.writeValues(vector); err != nil {
+		return
 	}
 
-	if _, err = c.length.writeValues(lengthVector); err != nil {
-		return 0, err
+	if err = c.length.writeValues(lengthVector); err != nil {
+		return
 	}
 
 	// rethink: presents, data, length writing transaction
@@ -834,8 +841,8 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if _, err := c.present.writeValues(presents); err != nil {
-			return 0, err
+		if err = c.present.writeValues(presents); err != nil {
+			return
 		}
 
 		for i, p := range batch.Presents {
@@ -853,14 +860,14 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 	}
 
 	// rethink: if data write sucsessful and length write fail, because right now data is in memory
-	if _, err = c.data.writeValues(d.indexes); err != nil {
-		return 0, err
+	if err = c.data.writeValues(d.indexes); err != nil {
+		return
 	}
-	if _, err := c.dictData.writeValues(d.contents); err != nil {
-		return 0, err
+	if err = c.dictData.writeValues(d.contents); err != nil {
+		return
 	}
-	if _, err := c.length.writeValues(d.lengths); err != nil {
-		return 0, err
+	if err = c.length.writeValues(d.lengths); err != nil {
+		return
 	}
 
 	return
@@ -926,8 +933,8 @@ func (c *stringDirectV2Writer) write(batch *ColumnVector) (rows uint64, err erro
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if err = c.present.writeValues(batch.Presents); err != nil {
+			return
 		}
 
 		for i, p := range batch.Presents {
@@ -944,13 +951,13 @@ func (c *stringDirectV2Writer) write(batch *ColumnVector) (rows uint64, err erro
 		}
 	}
 
-	if _, err := c.data.writeValues(contents); err != nil {
-		return 0, err
+	if err = c.data.writeValues(contents); err != nil {
+		return
 	}
 
 	// rethink: if data write sucsessful and length write fail, because right now data is in memory
-	if _, err = c.length.writeValues(lengthVector); err != nil {
-		return 0, err
+	if err = c.length.writeValues(lengthVector); err != nil {
+		return
 	}
 
 	return
@@ -988,8 +995,8 @@ func (c *boolWriter) write(batch *ColumnVector) (rows uint64, err error) {
 			return 0, errors.New("present error")
 		}
 
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if err = c.present.writeValues(batch.Presents); err != nil {
+			return
 		}
 
 		for i, p := range batch.Presents {
@@ -1002,8 +1009,8 @@ func (c *boolWriter) write(batch *ColumnVector) (rows uint64, err error) {
 		vector = values
 	}
 
-	if _, err := c.data.writeValues(vector); err != nil {
-		return 0, err
+	if err = c.data.writeValues(vector); err != nil {
+		return
 	}
 
 	return
@@ -1041,8 +1048,8 @@ func (c *byteWriter) write(batch *ColumnVector) (rows uint64, err error) {
 			return 0, errors.New("presents error")
 		}
 
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if err = c.present.writeValues(batch.Presents); err != nil {
+			return
 		}
 
 		for i, p := range batch.Presents {
@@ -1055,8 +1062,8 @@ func (c *byteWriter) write(batch *ColumnVector) (rows uint64, err error) {
 		vector = values
 	}
 
-	if _, err := c.data.writeValues(vector); err != nil {
-		return 0, err
+	if err = c.data.writeValues(vector); err != nil {
+		return
 	}
 
 	return
@@ -1094,8 +1101,8 @@ func (c *longV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
 		}
 
 		log.Tracef("writing: long column write %d presents", len(batch.Presents))
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if err = c.present.writeValues(batch.Presents); err != nil {
+			return
 		}
 
 		for i, p := range batch.Presents {
@@ -1110,8 +1117,8 @@ func (c *longV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
 		}
 	}
 
-	if _, err := c.data.writeValues(vector); err != nil {
-		return 0, err
+	if err = c.data.writeValues(vector); err != nil {
+		return
 	}
 
 	return
@@ -1143,8 +1150,8 @@ func (c *floatWriter) write(batch *ColumnVector) (rows uint64, err error) {
 		}
 
 		log.Tracef("writing: float column write %d presents", len(batch.Presents))
-		if _, err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if err = c.present.writeValues(batch.Presents); err != nil {
+			return
 		}
 
 		for i, p := range batch.Presents {
@@ -1157,8 +1164,8 @@ func (c *floatWriter) write(batch *ColumnVector) (rows uint64, err error) {
 		vector = values
 	}
 
-	if _, err := c.data.writeValues(vector); err != nil {
-		return 0, err
+	if err = c.data.writeValues(vector); err != nil {
+		return
 	}
 
 	return
@@ -1189,54 +1196,44 @@ type streamWriter struct {
 }
 
 // write and compress data to stream buffer in 1 or more chunk if compressed
-func (s *streamWriter) write(data *bytes.Buffer) (written uint64, err error) {
-	start := s.buf.Len()
-
-	switch s.opts.CompressionKind {
+func compress(kind pb.CompressionKind, chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error {
+	switch kind {
 	case pb.CompressionKind_NONE:
-		if _, err = data.WriteTo(s.buf); err != nil {
-			return 0, err
+		n, err := src.WriteTo(dst)
+		log.Tracef("no compression write %d", n)
+		if err != nil {
+			return err
 		}
 	case pb.CompressionKind_ZLIB:
-		if err = zlibCompressing(s.opts.ChunkSize, s.buf, data); err != nil {
-			return 0, err
+		if err := zlibCompressing(chunkSize, dst, src); err != nil {
+			return err
 		}
 
 	default:
-		return 0, errors.New("compression kind error")
+		return errors.New("compression kind error")
 	}
-	end := s.buf.Len()
-
-	l := uint64(end - start)
-	*s.info.Length += l
-	return l, nil
+	return nil
 }
 
-func (s *streamWriter) writeValues(values interface{}) (written uint64, err error) {
-	// s.info.Get.. and s.info.Kind.St... invoked even with trace level
-	log.Tracef("writing: stream id %d - %s writing", s.info.GetColumn(), s.info.Kind.String())
+func (s *streamWriter) writeValues(values interface{}) (err error) {
+	s.encodingBuf.Reset()
 	if err = s.encoder.Encode(s.encodingBuf, values); err != nil {
-		return 0, err
+		return
 	}
 
-	switch s.opts.CompressionKind {
-	case pb.CompressionKind_NONE:
-		if _, err = s.encodingBuf.WriteTo(s.buf); err != nil {
-			return 0, err
-		}
-	case pb.CompressionKind_ZLIB:
-		if err = zlibCompressing(s.opts.ChunkSize, s.buf, s.encodingBuf); err != nil {
-			return 0, err
-		}
-
-	default:
-		return 0, errors.New("compression kind error")
+	if err = compress(s.opts.CompressionKind, s.opts.ChunkSize, s.buf, s.encodingBuf); err != nil {
+		return
 	}
-	return 0, nil
+
+	*s.info.Length = uint64(s.buf.Len())
+
+	// s.info.Get.. and s.info.Kind.St... invoked even with trace level
+	log.Debugf("stream id %d - %s wrote", s.info.GetColumn(), s.info.Kind.String())
+	return
 }
 
-func (s *streamWriter) writeTo(w io.Writer) (n int64, err error) {
-	return s.buf.WriteTo(w)
+func (s *streamWriter) writeOut(out io.Writer) (n int64, err error) {
+	return s.buf.WriteTo(out)
 }
 
 func (s *streamWriter) reset() {
@@ -1290,7 +1287,7 @@ func (w *writer) writeFileTail() error {
 	if _, err := w.out.Write(ftCmpBuf); err != nil {
 		return errors.WithStack(err)
 	}
-	log.Infof("write out file tail %s with length: %d", ft.String(), ftl)
+	log.Infof("write out file tail %s (length: %d)", ft.String(), ftl)
 
 	// postscript
 	ps := &pb.PostScript{}
@@ -1309,7 +1306,7 @@ func (w *writer) writeFileTail() error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	log.Infof("write out postscript with length %d", n)
+	log.Infof("write out postscript (length %d)", n)
 	// last byte is ps length
 	if _, err = w.out.Write([]byte{byte(n)}); err != nil {
 		return errors.WithStack(err)
@@ -1320,7 +1317,7 @@ func (w *writer) writeFileTail() error {
 
 func (w *writer) close() error {
 	if w.stripe.size() != 0 {
-		if _, err := w.stripe.writeFooter(w.out); err != nil {
+		if err := w.flushStripe(); err != nil {
 			return err
 		}
 	}
@@ -1335,6 +1332,8 @@ func (w *writer) close() error {
 }
 
 // zlib compress src valueBuf into dst, maybe to several chunks
+// if whole src compressed then split to chunks, then cannot skip chunk decompress,
+// so it should be compressing each chunk
 func zlibCompressing(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error {
 	var start int
 	remaining := src.Len()
@@ -1347,6 +1346,8 @@ func zlibCompressing(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error 
 		return errors.WithStack(err)
 	}
 
+	log.Tracef("start zlib compressing, chunksize %d remaining %d", chunkSize, remaining)
+
 	for remaining > chunkSize {
 
 		if _, err = compressor.Write(srcBytes[start : start+chunkSize]); err != nil {
@@ -1356,24 +1357,24 @@ func zlibCompressing(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error 
 			return errors.WithStack(err)
 		}
 
-		if cBuf.Len() > chunkSize {
+		if cBuf.Len() > chunkSize { // original
 			header := encChunkHeader(chunkSize, true)
 			if _, err = dst.Write(header); err != nil {
 				return errors.WithStack(err)
 			}
-			log.Tracef("compress-writing original chunksize %d has  %d bytes to write", chunkSize, remaining)
+
+			log.Tracef("compressing original, write out %d, remaining %d", chunkSize, remaining-chunkSize)
 			if _, err = dst.Write(srcBytes[start : start+chunkSize]); err != nil {
 				return errors.WithStack(err)
 			}
-			cBuf.Reset()
 
 		} else {
 			header := encChunkHeader(cBuf.Len(), false)
 			if _, err = dst.Write(header); err != nil {
 				return errors.WithStack(err)
 			}
-			log.Tracef("compress-writing zlib chunkSize %d has %d bytes to write, after compressed has %d bytes",
-				chunkSize, remaining, cBuf.Len())
+
+			log.Tracef("compressing zlib, write out after compressing %d, remaining %d", cBuf.Len(), remaining-chunkSize)
 			if _, err = cBuf.WriteTo(dst); err != nil {
 				return errors.WithStack(err)
 			}
@@ -1384,34 +1385,35 @@ func zlibCompressing(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error 
 		compressor.Reset(cBuf)
 	}
 
-	if _, err := compressor.Write(srcBytes[start : start+remaining]); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := compressor.Close(); err != nil {
-		return errors.WithStack(err)
+	if remaining > 0 {
+		if _, err := compressor.Write(srcBytes[start : start+remaining]); err != nil {
+			return errors.WithStack(err)
+		}
+		if err := compressor.Close(); err != nil {
+			return errors.WithStack(err)
+		}
+
+		if cBuf.Len() > remaining {
+			header := encChunkHeader(remaining, true)
+			if _, err = dst.Write(header); err != nil {
+				return errors.WithStack(err)
+			}
+			log.Tracef("compressing original, last write %d", remaining)
+			if _, err = dst.Write(srcBytes[start : start+remaining]); err != nil {
+				return errors.WithStack(err)
+			}
+		} else {
+			header := encChunkHeader(cBuf.Len(), false)
+			if _, err = dst.Write(header); err != nil {
+				return errors.WithStack(err)
+			}
+			log.Tracef("compressing zlib,  last writing %d", cBuf.Len())
+			if _, err = cBuf.WriteTo(dst); err != nil {
+				return errors.WithStack(err)
+			}
+		}
 	}
 
-	if cBuf.Len() > remaining {
-		header := encChunkHeader(remaining, true)
-		if _, err = dst.Write(header); err != nil {
-			return errors.WithStack(err)
-		}
-		log.Tracef("compress-writing original has %d bytes to write", remaining)
-		if _, err = dst.Write(srcBytes[start : start+remaining]); err != nil {
-			return errors.WithStack(err)
-		}
-	} else {
-		header := encChunkHeader(cBuf.Len(), false)
-		if _, err = dst.Write(header); err != nil {
-			return errors.WithStack(err)
-		}
-		log.Tracef("compress-writing zlib has %d bytes to write, after compressed has %d bytes", remaining, cBuf.Len())
-		if _, err = cBuf.WriteTo(dst); err != nil {
-			return errors.WithStack(err)
-		}
-	}
-
-	src.Reset()
 	return nil
 }
 

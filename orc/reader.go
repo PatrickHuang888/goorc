@@ -126,6 +126,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 
 		// row index
 		indexOffset := offset
+		log.Tracef("seek index of stripe %d", i)
 		if _, err = r.f.Seek(int64(indexOffset), 0); err != nil {
 			return nil, errors.WithStack(err)
 		}
@@ -146,6 +147,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		}
 
 		// footer
+		log.Tracef("seek stripe footer of %d", i)
 		footerOffset := int64(offset + indexLength + dataLength)
 		if _, err = r.f.Seek(footerOffset, 0); err != nil {
 			return
@@ -165,6 +167,7 @@ func (r *reader) Stripes() (ss []StripeReader, err error) {
 		if err = proto.Unmarshal(footerBuf, footer); err != nil {
 			return nil, errors.Wrapf(err, "unmarshal currentStripe footer error")
 		}
+		log.Debugf("extracted stripe footer %d: %s", i, footer.String())
 
 		sr := &stripeReader{in: r.f, opts: r.opts, footer: footer, schemas: r.schemas, info: stripeInfo, idx: i}
 		if err := sr.prepare(); err != nil {
@@ -185,6 +188,7 @@ func (r *reader) Next(batch *ColumnVector) (err error) {
 	if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
 		return
 	}
+
 	// next stripe
 	if (r.stripeIndex < len(r.stripes)-1) && (batch.ReadRows == 0) {
 		r.stripeIndex++
@@ -611,9 +615,14 @@ func (s *stripeReader) prepare() error {
 // a stripeR is typically  ~200MB
 func (s *stripeReader) Next(batch *ColumnVector) error {
 
-	c := s.columnReaders[batch.Id]
+	err := s.columnReaders[batch.Id].next(batch)
+	if err != nil {
+		return err
+	}
 
-	return c.next(batch)
+	log.Debugf("read stripe %d column %d has read %d", s.idx, batch.Id, batch.ReadRows)
+
+	return nil
 }
 
 type columnReader interface {
@@ -641,6 +650,8 @@ func (c *crBase) String() string {
 }
 
 func (c *crBase) nextPresents(batch *ColumnVector) (err error) {
+	// rethink: writer always init present stream writer first,
+	// while reader's present stream init at prepare()
 	if c.present != nil {
 		batch.Presents = batch.Presents[:0]
 		for i := 0; !c.present.finished() && i < cap(batch.Presents); i++ {
@@ -650,7 +661,7 @@ func (c *crBase) nextPresents(batch *ColumnVector) (err error) {
 			}
 			batch.Presents = append(batch.Presents, v)
 		}
-		log.Debugf("column %d read %d presents values", c.schema.Id, len(batch.Presents))
+		log.Tracef("column %d has read %d presents values", c.schema.Id, len(batch.Presents))
 	}
 	return nil
 }
@@ -1278,7 +1289,7 @@ func (r *longV2StreamReader) nextUInt() (v uint64, err error) {
 			return
 		}
 
-		log.Tracef("decoded %d long values from chunk", len(r.values))
+		log.Tracef("stream long read column %d has read %d values", r.stream.info.GetColumn(), len(r.values))
 	}
 
 	v = r.values[r.pos]
@@ -1395,6 +1406,8 @@ func (s *streamReader) Read(p []byte) (n int, err error) {
 		}
 	}
 
+	log.Tracef("stream %s reading, has read %d", s.info.String(), s.readLength)
+
 	n, err = s.buf.Read(p)
 	if err != nil {
 		return n, errors.WithStack(err)
@@ -1405,7 +1418,8 @@ func (s *streamReader) Read(p []byte) (n int, err error) {
 // read a chunk to s.buf
 func (s *streamReader) readAChunk() error {
 
-	if _, err := s.in.Seek(int64(s.start+s.readLength), 0); err != nil {
+	seek := int64(s.start + s.readLength)
+	if _, err := s.in.Seek(seek, 0); err != nil {
 		return errors.WithStack(err)
 	}
 
@@ -1414,7 +1428,7 @@ func (s *streamReader) readAChunk() error {
 		if s.info.GetLength()-s.readLength < l {
 			l = s.info.GetLength() - s.readLength
 		}
-		log.Tracef("no compression copy %d from stream", l)
+		log.Tracef("read a chunk, no compression copy %d from stream", l)
 		_, err := io.CopyN(s.buf, s.in, int64(l))
 		if err != nil {
 			return errors.WithStack(err)
@@ -1428,23 +1442,23 @@ func (s *streamReader) readAChunk() error {
 		return errors.WithStack(err)
 	}
 	s.readLength += 3
-	original := (head[0] & 0x01) == 1
-	chunkLength := uint64(head[2])<<15 | uint64(head[1])<<7 | uint64(head[0])>>1
+	chunkLength, original := decChunkHeader(head)
 
-	if chunkLength > s.opts.ChunkSize {
+	log.Tracef("read a chunk, stream %s, compressing kind %s, chunkLength %d, original %t, seek position %d",
+		s.info.String(), s.opts.CompressionKind, chunkLength, original, seek)
+
+	if uint64(chunkLength) > s.opts.ChunkSize {
 		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, s.opts.ChunkSize)
 	}
 
 	if original {
-		log.Tracef("stream reading original chunkLength %d", chunkLength)
 		if _, err := io.CopyN(s.buf, s.in, int64(chunkLength)); err != nil {
 			return errors.WithStack(err)
 		}
-		s.readLength += chunkLength
+		s.readLength += uint64(chunkLength)
 		return nil
 	}
 
-	log.Tracef("stream reading compressing kind %s chunkLength %d", s.opts.CompressionKind, chunkLength)
 	readBuf := bytes.NewBuffer(make([]byte, chunkLength))
 	readBuf.Reset()
 	if _, err := io.CopyN(readBuf, s.in, int64(chunkLength)); err != nil {
@@ -1455,38 +1469,10 @@ func (s *streamReader) readAChunk() error {
 		return err
 	}
 
-	s.readLength += chunkLength
+	s.readLength += uint64(chunkLength)
 
 	return nil
 }
-
-/*func (r *streamReader) ReadAChunk(valueBuf *bytes.Buffer) (n int, err error) {
-	if _, err := r.f.Seek(int64(r.start+r.readLength), 0); err != nil {
-		return 0, errors.WithStack(err)
-	}
-
-	l, err := readAChunk()
-	log.Debugf("read %d", n)
-	if err != nil {
-		return int(l), err
-	}
-	r.readLength += l
-	n = int(l)
-
-	return
-}*/
-
-/*// read whole streamR into memory
-func (stream *streamReader) readWhole(opts *ReaderOptions, f *os.File) (err error) {
-
-	for stream.readLength < stream.length {
-		err = stream.readAChunk()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}*/
 
 func (s streamReader) finished() bool {
 	return s.readLength >= s.info.GetLength() && s.buf.Len() == 0
@@ -1724,14 +1710,18 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 // data should be compressed
 func decompressChunkData(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
 	switch kind {
+
 	case pb.CompressionKind_ZLIB:
 		r := flate.NewReader(src)
 		n, err = dst.ReadFrom(r)
-		r.Close()
 		if err != nil {
 			return 0, errors.WithStack(err)
 		}
-		return n, nil
+		if err = r.Close(); err != nil {
+			return n, errors.WithStack(err)
+		}
+		return
+
 	default:
 		return 0, errors.New("compression kind other than zlib not impl")
 	}
@@ -1741,7 +1731,6 @@ func decompressChunkData(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.
 
 // buffer should be compressed, maybe contains several chunks
 func decompressBuffer(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (err error) {
-	assertx(kind != pb.CompressionKind_NONE)
 	switch kind {
 	case pb.CompressionKind_ZLIB:
 		for src.Len() > 0 {
@@ -1749,16 +1738,17 @@ func decompressBuffer(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buf
 			if _, err = src.Read(header); err != nil {
 				return errors.WithStack(err)
 			}
-			original := header[0]&0x01 == 1
-			chunkLength := int64(header[2])<<15 | int64(header[1])<<7 | int64(header[0])>>1
+
+			chunkLength, original := decChunkHeader(header)
+
 			if original {
-				if _, err = io.CopyN(dst, src, chunkLength); err != nil {
+				if _, err = io.CopyN(dst, src, int64(chunkLength)); err != nil {
 					return errors.WithStack(err)
 				}
 			} else {
 				buf := bytes.NewBuffer(make([]byte, chunkLength))
 				buf.Reset()
-				if _, err = io.CopyN(buf, src, chunkLength); err != nil {
+				if _, err = io.CopyN(buf, src, int64(chunkLength)); err != nil {
 					return errors.WithStack(err)
 				}
 				r := flate.NewReader(buf)

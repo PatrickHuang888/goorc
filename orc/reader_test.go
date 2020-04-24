@@ -2,14 +2,9 @@ package orc
 
 import (
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
-
-func init() {
-	logrus.SetLevel(logrus.TraceLevel)
-}
 
 func TestNoCompression(t *testing.T) {
 	opts := DefaultReaderOptions()

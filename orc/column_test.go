@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	log.SetLevel(log.TraceLevel)
+	log.SetLevel(log.DebugLevel)
 }
 
 type bufSeeker struct {
@@ -25,81 +25,90 @@ func (bs *bufSeeker) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }
 
-func TestStreamReadWriteNoCompression(t *testing.T) {
-	data := &bytes.Buffer{}
-	for i := 0; i < 100; i++ {
-		data.WriteByte(byte(1))
-	}
-	for i := 0; i < 100; i++ {
-		data.WriteByte(byte(i))
-	}
-	bs := data.Bytes()
+type testEncoder struct {
+}
 
-	// expand to several chunks
-	opts := &WriterOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
+func (e *testEncoder) Encode(out *bytes.Buffer, values interface{}) error  {
+	_, err:= out.Write(values.([]byte))
+	return err
+}
+
+func TestStreamReadWriteNoCompression(t *testing.T) {
+	data := make([]byte, 200)
+	for i := 0; i < 200; i++ {
+		data[i]= byte(1)
+	}
+
+	// with no compression, default chunksize is buffer size
+	opts := &WriterOptions{CompressionKind: pb.CompressionKind_NONE}
 	k := pb.Stream_DATA
 	id := uint32(0)
 	l := uint64(0)
 	info := &pb.Stream{Kind: &k, Column: &id, Length: &l}
-	sw := &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts}
-	_, err := sw.write(data)
-	if err != nil {
+
+	sw := &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: &testEncoder{},
+		encodingBuf: &bytes.Buffer{}}
+
+	if err := sw.writeValues(data);err != nil {
 		t.Fatal(err)
 	}
 
-	in := &bufSeeker{&bytes.Buffer{}}
-	if _, err := sw.writeTo(in); err != nil {
+	out := &bufSeeker{&bytes.Buffer{}}
+	if _, err := sw.writeOut(out); err != nil {
 		t.Fatal(err)
 	}
 
 	vs := make([]byte, 500)
 	ropts := &ReaderOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
-	sr := &streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: in}
+	*info.Length= uint64(out.Len())
+	sr := &streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
 
 	n, err := sr.Read(vs)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, 200, n)
-	assert.Equal(t, bs, vs[:n])
+	assert.Equal(t, data, vs[:n])
 }
 
-func TestStreamReadWrite(t *testing.T) {
+func TestReadWriteMultipleChunksWithCompression(t *testing.T) {
 	data := &bytes.Buffer{}
 	for i := 0; i < 100; i++ {
 		data.WriteByte(byte(1))
 	}
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 200; i++ {
 		data.WriteByte(byte(i))
 	}
 	bs := data.Bytes()
 
 	// expand to several chunks
-	opts := &WriterOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_ZLIB}
+	opts := &WriterOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
 	k := pb.Stream_DATA
 	id := uint32(0)
 	l := uint64(0)
 	info := &pb.Stream{Kind: &k, Column: &id, Length: &l}
-	sw := &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts}
-	_, err := sw.write(data)
-	if err != nil {
+	sw := &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: &testEncoder{},
+		encodingBuf: &bytes.Buffer{}}
+
+	if err := sw.writeValues(bs);err != nil {
 		t.Fatal(err)
 	}
 
-	in := &bufSeeker{&bytes.Buffer{}}
-	if _, err := sw.writeTo(in); err != nil {
+	out := &bufSeeker{&bytes.Buffer{}}
+	if _, err := sw.writeOut(out); err != nil {
 		t.Fatal(err)
 	}
 
 	vs := make([]byte, 500)
-	ropts := &ReaderOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_ZLIB}
-	sr := &streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: in}
+	ropts := &ReaderOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
+	*info.Length= uint64(out.Len())
+	sr := &streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
 
 	n, err := sr.Read(vs)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, 200, n)
+	assert.Equal(t, 300, n)
 	assert.Equal(t, bs, vs[:n])
 }
 
