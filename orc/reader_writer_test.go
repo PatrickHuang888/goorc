@@ -147,7 +147,7 @@ func TestBasicZlibCompression(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	var totalRows uint
+	var totalRows int
 	var readResults []string
 	for {
 		if err := reader.Next(rbatch); err != nil {
@@ -159,7 +159,7 @@ func TestBasicZlibCompression(t *testing.T) {
 		totalRows+=rbatch.ReadRows
 		readResults= append(readResults, rbatch.Vector.([]string)...)
 	}
-	assert.Equal(t, 20000, int(totalRows))
+	assert.Equal(t, 20000, totalRows)
 	assert.Equal(t, vector, readResults[:10_000])
 	assert.Equal(t, vector, readResults[10_000:20_000])
 }

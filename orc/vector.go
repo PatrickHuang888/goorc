@@ -20,7 +20,7 @@ type ColumnVector struct {
 
 	// assigned when every next(), that is reader user can know how many rows read after next()
 	// because vector is no type
-	ReadRows uint
+	ReadRows int
 }
 
 func (cv ColumnVector) check() error {

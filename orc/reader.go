@@ -27,7 +27,7 @@ type Reader interface {
 	Stripes() ([]StripeReader, error)
 	Close() error
 
-	Next(batch *ColumnVector) (err error)
+	Next(batch *ColumnVector) error
 }
 
 type ReaderOptions struct {
@@ -92,12 +92,27 @@ func (fr fileFile) Close() error {
 }
 
 func NewFileReader(path string, opts *ReaderOptions) (r Reader, err error) {
-	f, err := os.Open(path)
+	var f *os.File
+	f, err = os.Open(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "open file %stream error", path)
+		return nil, errors.Wrapf(err, "open file %s error", path)
 	}
+	log.Infof("open file %s", path)
 	fr := &fileFile{f: f}
-	return newReader(opts, fr)
+
+	var r_ *reader
+	r_, err = newReader(opts, fr)
+	if err != nil {
+		return
+	}
+
+	r_.stripes, err = r_.Stripes()
+	if err != nil {
+		return
+	}
+
+	r = r_
+	return
 }
 
 func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
@@ -107,8 +122,12 @@ func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
 	}
 
 	schemas := unmarshallSchema(tail.Footer.Types)
-	opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
+
 	opts.CompressionKind = tail.Postscript.GetCompression()
+	if opts.CompressionKind != pb.CompressionKind_NONE { // compression_none no block size
+		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
+	}
+
 	r = &reader{f: f, tail: tail, opts: opts, schemas: schemas}
 	return
 }
@@ -620,7 +639,7 @@ func (s *stripeReader) Next(batch *ColumnVector) error {
 		return err
 	}
 
-	log.Debugf("read stripe %d column %d has read %d", s.idx, batch.Id, batch.ReadRows)
+	log.Debugf("stripe %d column %d has read %d", s.idx, batch.Id, batch.ReadRows)
 
 	return nil
 }
@@ -694,7 +713,7 @@ func (c *byteReader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -726,7 +745,7 @@ func (c *dateV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -768,7 +787,7 @@ func (c *timestampV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -803,7 +822,7 @@ func (c *boolReader) next(batch *ColumnVector) error {
 	}
 
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -845,7 +864,7 @@ func (c *binaryV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor = c.cursor + uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -887,7 +906,7 @@ func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -945,7 +964,7 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -987,7 +1006,7 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 	log.Debugf("column %d read %d data values", c.schema.Id, len(vector))
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -1028,7 +1047,7 @@ func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -1060,7 +1079,7 @@ func (c *floatReader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 
@@ -1092,7 +1111,7 @@ func (c *doubleReader) next(batch *ColumnVector) error {
 
 	c.cursor += uint64(i)
 	batch.Vector = vector
-	batch.ReadRows = uint(len(vector))
+	batch.ReadRows = len(vector)
 	return nil
 }
 

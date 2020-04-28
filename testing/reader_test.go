@@ -1,44 +1,54 @@
-package orc
+package testing
 
 import (
-	"fmt"
+	"github.com/patrickhuang888/goorc/orc"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func TestNoCompression(t *testing.T) {
-	opts := DefaultReaderOptions()
-	reader, err := NewFileReader("../testing/basicLongNoCompression.orc", opts)
+func init() {
+	log.SetLevel(log.DebugLevel)
+}
+
+func TestInterOpNoCompression(t *testing.T) {
+	opts := orc.DefaultReaderOptions()
+	reader, err := orc.NewFileReader("basicLongNoCompression.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 
 	schema := reader.GetSchema()
-	stripes, err := reader.Stripes()
+	batch := schema.CreateReaderBatch(opts)
+
+	err = reader.Next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	batch := schema.CreateReaderBatch(opts)
-	for _, stripe := range stripes {
+	assert.Equal(t, 90, batch.ReadRows)
 
-		err = stripe.Next(batch)
-		if err != nil {
-			t.Fatalf("%+v", err)
-		}
+	values := batch.Vector.([]int64)
 
-		values := batch.Vector.([]int64)
-		if len(values) == 0 {
-			break
+	min:= values[0]
+	max:= values[0]
+	for _, v := range values {
+		if v < min {
+			min = v
 		}
+		if v > max {
+			max = v
+		}
+	}
+	assert.Equal(t, 1, int(min))
+	assert.Equal(t, 2000, int(max))
 
-		for _, v := range values {
-			fmt.Println(v)
-		}
+	if err = reader.Close(); err != nil {
+		t.Fatalf("%+v", err)
 	}
 }
 
-func TestPatchBaseNegativeMinNoCmp(t *testing.T) {
+func TestInterOpPatchBaseNegativeMinNoCmpression(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1,
 		3, 17, 71, 35, 2,
@@ -91,8 +101,8 @@ func TestPatchBaseNegativeMinNoCmp(t *testing.T) {
 		4, 3, 3, 2, 2,
 		16}
 
-	opts := DefaultReaderOptions()
-	reader, err := NewFileReader("../testing/patchBaseNegativeMin.orc", opts)
+	opts := orc.DefaultReaderOptions()
+	reader, err := orc.NewFileReader("patchBaseNegativeMin.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -113,7 +123,7 @@ func TestPatchBaseNegativeMinNoCmp(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestPatchBaseNegativeMin2NoCmp(t *testing.T) {
+func TestInterOpPatchBaseNegativeMin2NoCmppression(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1, 3, 17, 71, 35, 2, 1, 139, 2, 2,
 		3, 1783, 475, 2, 1, 1, 3, 1, 3, 2, 32, 1, 2, 3, 1, 8, 30, 1, 3, 414, 1,
@@ -128,8 +138,8 @@ func TestPatchBaseNegativeMin2NoCmp(t *testing.T) {
 		1, 13, 2, 3, 4, 1, 3, 1, 1, 2, 1, 1, 2, 4, 2, 207, 1, 1, 2, 4, 3, 3, 2,
 		2, 16}
 
-	opts := DefaultReaderOptions()
-	reader, err := NewFileReader("../testing/patchBaseNegativeMin2.orc", opts)
+	opts := orc.DefaultReaderOptions()
+	reader, err := orc.NewFileReader("patchBaseNegativeMin2.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
@@ -153,7 +163,7 @@ func TestPatchBaseNegativeMin2NoCmp(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestPatchBaseNegativeMin3(t *testing.T) {
+func TestInterOpPatchBaseNegativeMin3NoCompression(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1, 3, 17, 71, 35, 2, 1, 139, 2, 2,
 		3, 1783, 475, 2, 1, 1, 3, 1, 3, 2, 32, 1, 2, 3, 1, 8, 30, 1, 3, 414, 1,
@@ -168,8 +178,8 @@ func TestPatchBaseNegativeMin3(t *testing.T) {
 		1, 13, 2, 3, 4, 1, 3, 1, 1, 2, 1, 1, 2, 4, 2, 207, 1, 1, 2, 4, 3, 3, 2,
 		2, 16}
 
-	opts := DefaultReaderOptions()
-	reader, err := NewFileReader("../testing/patchBaseNegativeMin3.orc", opts)
+	opts := orc.DefaultReaderOptions()
+	reader, err := orc.NewFileReader("patchBaseNegativeMin3.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
