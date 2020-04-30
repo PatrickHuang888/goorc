@@ -142,7 +142,7 @@ func TestLongColumnRWwithNoPresents(t *testing.T) {
 	dataStream := &streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
 	data := &longV2StreamReader{decoder: &encoding.IntRleV2{Signed: true}, stream: dataStream}
 	reader := &longV2Reader{crBase: cr, data: data}
-	err = reader.next(rbatch)
+	err = reader.next(rbatch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -203,7 +203,7 @@ func TestLongColumnRWwithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &longV2Reader{crBase: cr, data: data}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -245,7 +245,7 @@ func TestBoolColumnRWwithoutPresents(t *testing.T) {
 	dataStream := &streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
 	data := &boolStreamReader{decoder: &encoding.BoolRunLength{&encoding.ByteRunLength{}}, stream: dataStream}
 	reader := &boolReader{crBase: cr, data: data, numberOfRows: uint64(rows)}
-	err = reader.next(rbatch)
+	err = reader.next(rbatch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -299,7 +299,7 @@ func TestFloatColumnWithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &floatReader{crBase: cr, data: data}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -354,7 +354,7 @@ func TestDoubleColumnWithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &doubleReader{crBase: cr, data: data}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -415,7 +415,7 @@ func TestColumnStringDirectV2WithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &stringDirectV2Reader{crBase: cr, data: data, length: length}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -470,7 +470,7 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &byteReader{crBase: cr, data: data}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -531,7 +531,7 @@ func TestColumnBinaryV2WithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &binaryV2Reader{crBase: cr, data: data, length: length}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -592,7 +592,7 @@ func TestColumnDecimal64WithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &decimal64DirectV2Reader{crBase: cr, data: data, secondary: secondary}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -647,7 +647,7 @@ func TestColumnDateWithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &dateV2Reader{crBase: cr, data: data}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -704,7 +704,7 @@ func TestColumnTimestampWithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &timestampV2Reader{crBase: cr, data: data, secondary: secondary}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -775,7 +775,7 @@ func TestColumnStructWithPresents(t *testing.T) {
 	intReader := &longV2Reader{crBase: intCr, data: data}
 	cr := &crBase{schema: schema, present: present}
 	reader := &structReader{crBase: cr, children: []columnReader{intReader}}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -844,7 +844,7 @@ func TestColumnStringUsingDictWithPresents(t *testing.T) {
 
 	cr := &crBase{schema: schema, present: present}
 	reader := &stringDictV2Reader{crBase: cr, data: data, dictData: dictData, dictLength: dictLength}
-	err = reader.next(batch)
+	err = reader.next(batch, nil)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}

@@ -112,6 +112,11 @@ func NewFileReader(path string, opts *ReaderOptions) (r Reader, err error) {
 	}
 
 	r = r_
+
+	if err=normalizeSchema(r.GetSchema()); err!=nil {
+		return
+	}
+
 	return
 }
 
@@ -416,6 +421,8 @@ func (s *stripeReader) prepare() error {
 
 		if streamKind == pb.Stream_PRESENT {
 			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
+			s.schemas[id].HasNulls=true
+			dataStart += length
 			continue
 		}
 
@@ -634,7 +641,7 @@ func (s *stripeReader) prepare() error {
 // a stripeR is typically  ~200MB
 func (s *stripeReader) Next(batch *ColumnVector) error {
 
-	err := s.columnReaders[batch.Id].next(batch)
+	err := s.columnReaders[batch.Id].next(batch, nil)
 	if err != nil {
 		return err
 	}
@@ -645,7 +652,8 @@ func (s *stripeReader) Next(batch *ColumnVector) error {
 }
 
 type columnReader interface {
-	next(batch *ColumnVector) error
+	// parent presents used for struct has presents, and do next in child
+	next(batch *ColumnVector, parentPresents []bool) error
 }
 
 type crBase struct {
@@ -680,7 +688,7 @@ func (c *crBase) nextPresents(batch *ColumnVector) (err error) {
 			}
 			batch.Presents = append(batch.Presents, v)
 		}
-		log.Tracef("column %d has read %d presents values", c.schema.Id, len(batch.Presents))
+		log.Debugf("column %d has read %d presents values", c.schema.Id, len(batch.Presents))
 	}
 	return nil
 }
@@ -690,24 +698,47 @@ type byteReader struct {
 	data *byteStreamReader
 }
 
-func (c *byteReader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *byteReader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]byte)
 	vector = vector[:0]
-
 	i := 0
-	for ; i < cap(vector) && !c.data.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.next()
-			if err != nil {
-				return err
+
+	if len(parentPresents) == 0 {
+
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		i := 0
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				v, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, 0)
 			}
-			vector = append(vector, v)
-		} else {
-			vector = append(vector, 0)
+		}
+
+	} else {
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent presents data")
+			}
+
+			if parentPresents[i] {
+				v, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, 0)
+			}
 		}
 	}
 
@@ -722,24 +753,46 @@ type dateV2Reader struct {
 	data *longV2StreamReader
 }
 
-func (c *dateV2Reader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *dateV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]Date)
 	vector = vector[:0]
-
 	i := 0
-	for ; i < cap(vector) && !c.data.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.nextInt64()
-			if err != nil {
-				return err
+
+	if len(parentPresents) == 0 {
+
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				v, err := c.data.nextInt64()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, fromDays(v))
+			} else {
+				vector = append(vector, Date{})
 			}
-			vector = append(vector, fromDays(v))
-		} else {
-			vector = append(vector, Date{})
+		}
+
+	} else {
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("not parent present data ")
+			}
+
+			if parentPresents[i] {
+				v, err := c.data.nextInt64()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, fromDays(v))
+			} else {
+				vector = append(vector, Date{})
+			}
 		}
 	}
 
@@ -756,28 +809,57 @@ type timestampV2Reader struct {
 	secondary *longV2StreamReader
 }
 
-func (c *timestampV2Reader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *timestampV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]Timestamp)
 	vector = vector[:0]
-
 	i := 0
-	for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			seconds, err := c.data.nextInt64()
-			if err != nil {
-				return err
+
+	if len(parentPresents) == 0 {
+
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				seconds, err := c.data.nextInt64()
+				if err != nil {
+					return err
+				}
+				nanos, err := c.secondary.nextUInt()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, Timestamp{seconds, uint32(nanos)})
+			} else {
+				vector = append(vector, Timestamp{})
 			}
-			nanos, err := c.secondary.nextUInt()
-			if err != nil {
-				return err
+		}
+
+	} else {
+
+		//check should no presents
+
+		for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent present")
 			}
-			vector = append(vector, Timestamp{seconds, uint32(nanos)})
-		} else {
-			vector = append(vector, Timestamp{})
+
+			if batch.Presents[i] {
+				seconds, err := c.data.nextInt64()
+				if err != nil {
+					return err
+				}
+				nanos, err := c.secondary.nextUInt()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, Timestamp{seconds, uint32(nanos)})
+			} else {
+				vector = append(vector, Timestamp{})
+			}
+
 		}
 	}
 
@@ -797,28 +879,47 @@ type boolReader struct {
 	data         *boolStreamReader
 }
 
-func (c *boolReader) next(batch *ColumnVector) error {
+func (c *boolReader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]bool)
 	vector = vector[:0]
 
-	// ??
-	// because bools extend to byte, may not know the real rows from read,
-	// so using number of rows
-	for i := 0; c.cursor < c.numberOfRows && i < cap(vector); i++ {
-		if len(batch.Presents) != 0 {
-			assertx(i <= len(batch.Presents))
+	if len(parentPresents) == 0 {
+		// because bools extend to byte, may not know the real rows from read,
+		// so using number of rows ？？
+		for i := 0; c.cursor < c.numberOfRows && i < cap(vector); i++ {
+
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				v, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, false)
+			}
+			c.cursor++
 		}
 
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.next()
-			if err != nil {
-				return err
+	} else {
+
+		for i := 0; c.cursor < c.numberOfRows && i < cap(vector); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent present")
 			}
-			vector = append(vector, v)
-		} else {
-			vector = append(vector, false)
+
+			if parentPresents[i] {
+				v, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, false)
+			}
+
+			c.cursor++
 		}
-		c.cursor++
 	}
 
 	batch.Vector = vector
@@ -832,29 +933,55 @@ type binaryV2Reader struct {
 	data   *stringContentsStreamReader
 }
 
-func (c *binaryV2Reader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *binaryV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([][]byte)
 	vector = vector[:0]
-
 	i := 0
-	for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			l, err := c.length.nextUInt()
-			if err != nil {
-				return err
+
+	if len(parentPresents) == 0 {
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				l, err := c.length.nextUInt()
+				if err != nil {
+					return err
+				}
+				v, err := c.data.nextBytes(l)
+				if err != nil {
+					return err
+				}
+				// default utf-8
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, nil)
 			}
-			v, err := c.data.nextBytes(l)
-			if err != nil {
-				return err
+		}
+
+	} else {
+
+		for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent present")
 			}
-			// default utf-8
-			vector = append(vector, v)
-		} else {
-			vector = append(vector, nil)
+
+			if parentPresents[i] {
+				l, err := c.length.nextUInt()
+				if err != nil {
+					return err
+				}
+				v, err := c.data.nextBytes(l)
+				if err != nil {
+					return err
+				}
+				// default utf-8
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, nil)
+			}
 		}
 	}
 
@@ -874,29 +1001,56 @@ type stringDirectV2Reader struct {
 	length *longV2StreamReader
 }
 
-func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *stringDirectV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]string)
 	vector = vector[:0]
-
 	i := 0
-	for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			l, err := c.length.nextUInt()
-			if err != nil {
-				return err
+
+	if len(parentPresents) == 0 {
+
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				l, err := c.length.nextUInt()
+				if err != nil {
+					return err
+				}
+				v, err := c.data.next(l)
+				if err != nil {
+					return err
+				}
+				// default utf-8
+				vector = append(vector, string(v))
+			} else {
+				vector = append(vector, "")
 			}
-			v, err := c.data.next(l)
-			if err != nil {
-				return err
+		}
+
+	} else {
+
+		for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent present")
 			}
-			// default utf-8
-			vector = append(vector, string(v))
-		} else {
-			vector = append(vector, "")
+
+			if parentPresents[i] {
+				l, err := c.length.nextUInt()
+				if err != nil {
+					return err
+				}
+				v, err := c.data.next(l)
+				if err != nil {
+					return err
+				}
+				// default utf-8
+				vector = append(vector, string(v))
+			} else {
+				vector = append(vector, "")
+			}
 		}
 	}
 
@@ -921,14 +1075,11 @@ type stringDictV2Reader struct {
 	lengths []uint64
 }
 
-func (c *stringDictV2Reader) next(batch *ColumnVector) error {
+func (c *stringDictV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
 	var err error
 	vector := batch.Vector.([]string)
 	vector = vector[:0]
-
-	if err = c.nextPresents(batch); err != nil {
-		return err
-	}
+	i := 0
 
 	// rethink: len(lengths)==0
 	if len(c.lengths) == 0 {
@@ -946,19 +1097,46 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 		}
 	}
 
-	i := 0
-	for ; i < cap(vector) && !c.data.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.nextUInt()
-			if err != nil {
-				return err
+	if len(parentPresents) == 0 {
+		if err = c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				v, err := c.data.nextUInt()
+				if err != nil {
+					return err
+				}
+				if v >= uint64(len(c.dict)) {
+					return errors.New("dict index error")
+				}
+				vector = append(vector, c.dict[v])
+			} else {
+				vector = append(vector, "")
 			}
-			if v >= uint64(len(c.dict)) {
-				return errors.New("dict index error")
+		}
+
+	} else {
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent present")
 			}
-			vector = append(vector, c.dict[v])
-		} else {
-			vector = append(vector, "")
+
+			if parentPresents[i] {
+				v, err := c.data.nextUInt()
+				if err != nil {
+					return err
+				}
+				if v >= uint64(len(c.dict)) {
+					return errors.New("dict index error")
+				}
+				vector = append(vector, c.dict[v])
+			} else {
+				vector = append(vector, "")
+			}
 		}
 	}
 
@@ -973,26 +1151,52 @@ type longV2Reader struct {
 	data *longV2StreamReader
 }
 
-func (c *longV2Reader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *longV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]int64)
 	vector = vector[:0]
 	i := 0
-	for ; !c.data.finished() && i < cap(vector); i++ {
-		if len(batch.Presents) == 0 {
-			v, err := c.data.nextInt64()
-			if err != nil {
-				return err
+
+	if len(parentPresents) == 0 {
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; !c.data.finished() && i < cap(vector); i++ {
+
+			if len(batch.Presents) == 0 {
+				v, err := c.data.nextInt64()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+
+			} else {
+
+				if i >= len(batch.Presents) {
+					return errors.Errorf("no more present data")
+				}
+
+				if batch.Presents[i] {
+					v, err := c.data.nextInt64()
+					if err != nil {
+						return err
+					}
+					vector = append(vector, v)
+				} else {
+					vector = append(vector, 0)
+				}
 			}
-			vector = append(vector, v)
-		} else {
-			if i >= len(batch.Presents) {
-				return errors.Errorf("no more present data")
+		}
+
+	} else {
+
+		for ; !c.data.finished() && i < cap(vector); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.Errorf("no parent present %d", i)
 			}
-			if batch.Presents[i] {
+
+			if parentPresents[i] {
 				v, err := c.data.nextInt64()
 				if err != nil {
 					return err
@@ -1003,7 +1207,7 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 			}
 		}
 	}
-	log.Debugf("column %d read %d data values", c.schema.Id, len(vector))
+
 	c.cursor += uint64(i)
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
@@ -1016,28 +1220,53 @@ type decimal64DirectV2Reader struct {
 	secondary *longV2StreamReader
 }
 
-func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *decimal64DirectV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]Decimal64)
 	vector = vector[:0]
-
 	i := 0
-	for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			precision, err := c.data.next()
-			if err != nil {
-				return err
+
+	if len(parentPresents)==0 {
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				precision, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				scala, err := c.secondary.nextUInt()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, Decimal64{precision, uint16(scala)})
+			} else {
+				vector = append(vector, Decimal64{})
 			}
-			scala, err := c.secondary.nextUInt()
-			if err != nil {
-				return err
+		}
+
+	}else {
+
+		for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent present")
 			}
-			vector = append(vector, Decimal64{precision, uint16(scala)})
-		} else {
-			vector = append(vector, Decimal64{})
+
+			if parentPresents[i] {
+				precision, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				scala, err := c.secondary.nextUInt()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, Decimal64{precision, uint16(scala)})
+			} else {
+				vector = append(vector, Decimal64{})
+			}
 		}
 	}
 
@@ -1056,24 +1285,45 @@ type floatReader struct {
 	data *floatStreamReader
 }
 
-func (c *floatReader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *floatReader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]float32)
 	vector = vector[:0]
-
 	i := 0
-	for ; i < cap(vector) && !c.data.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.next()
-			if err != nil {
-				return err
+
+	if len(parentPresents)==0 {
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				v, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, 0)
 			}
-			vector = append(vector, v)
-		} else {
-			vector = append(vector, 0)
+		}
+
+	}else {
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent present")
+			}
+
+			if parentPresents[i] {
+				v, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, 0)
+			}
 		}
 	}
 
@@ -1088,24 +1338,45 @@ type doubleReader struct {
 	data *doubleStreamReader
 }
 
-func (c *doubleReader) next(batch *ColumnVector) error {
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
+func (c *doubleReader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]float64)
 	vector = vector[:0]
-
 	i := 0
-	for ; i < cap(vector) && !c.data.finished(); i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.next()
-			if err != nil {
-				return err
+
+	if len(parentPresents)== 0 {
+		if err := c.nextPresents(batch); err != nil {
+			return err
+		}
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+				v, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, 0)
 			}
-			vector = append(vector, v)
-		} else {
-			vector = append(vector, 0)
+		}
+
+	}else {
+
+		for ; i < cap(vector) && !c.data.finished(); i++ {
+
+			if i >= len(parentPresents) {
+				return errors.New("no parent present")
+			}
+
+			if parentPresents[i] {
+				v, err := c.data.next()
+				if err != nil {
+					return err
+				}
+				vector = append(vector, v)
+			} else {
+				vector = append(vector, 0)
+			}
 		}
 	}
 
@@ -1120,7 +1391,9 @@ type structReader struct {
 	children []columnReader
 }
 
-func (c *structReader) next(batch *ColumnVector) error {
+func (c *structReader) next(batch *ColumnVector, parentPresents []bool) error {
+	// rethink: cursor
+
 	if err := c.nextPresents(batch); err != nil {
 		return err
 	}
@@ -1128,13 +1401,18 @@ func (c *structReader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]*ColumnVector)
 
 	for i, child := range c.children {
-		// rethink: how to handle present ?
-		// todo: cursor
-		if err := child.next(vector[i]); err != nil {
+		if err := child.next(vector[i], batch.Presents); err != nil {
 			return err
 		}
-		// fixme: assigned readrows like this?
-		batch.ReadRows = vector[i].ReadRows
+	}
+
+	// reassure: no present, so readrows same as children readrows?
+	if len(batch.Presents) == 0 {
+		batch.ReadRows = vector[0].ReadRows
+		// no cursor ?
+	} else {
+		batch.ReadRows = len(batch.Presents)
+		c.cursor += uint64(len(batch.Presents))
 	}
 
 	return nil
@@ -1540,11 +1818,6 @@ func preOrderWalkSchema(node *TypeDescription) (types []*pb.Type) {
 
 func extractFileTail(f File) (tail *pb.FileTail, err error) {
 
-	/*fi, err := f.Stat()
-	if err != nil {
-		return nil, errors.Wrapf(err, "get file status error")
-	}
-	size := fi.Size()*/
 	size, err := f.Size()
 	if err != nil {
 		return nil, err

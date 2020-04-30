@@ -2,6 +2,7 @@ package orc
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
@@ -17,27 +18,31 @@ type TypeDescription struct {
 	// maybe changed at nextStripe?
 	Encoding pb.ColumnEncoding_Kind
 
-	HasNulls  bool // for writing
+	HasNulls  bool
 	HasFather bool
 }
 
-func (td *TypeDescription) Print() {
-	fmt.Printf("Id %d, Kind %stream\n", td.Id, td.Kind.String())
+func (td TypeDescription) String() string{
+	sb:= strings.Builder{}
+	sb.WriteString(fmt.Sprintf("Id %d, Kind %s ", td.Id, td.Kind.String()))
 	if td.ChildrenNames != nil && len(td.ChildrenNames) != 0 {
-		fmt.Println("ChildrenNames: ")
+		sb.WriteString(fmt.Sprint("ChildrenNames: "))
 	}
-	for i, cn := range td.ChildrenNames {
 
+	for i, cn := range td.ChildrenNames {
 		if i == len(td.ChildrenNames)-1 {
-			fmt.Printf("%stream \n", cn)
+			sb.WriteString(fmt.Sprintf("%s ", cn))
 		} else {
-			fmt.Printf("%stream, ", cn)
+			sb.WriteString(fmt.Sprintf("%s, ", cn))
 		}
 	}
+
 	for _, n := range td.Children {
-		fmt.Printf("Children of %d:", td.Id)
-		n.Print()
+		sb.WriteString(fmt.Sprintf("Children of %d:", td.Id))
+		sb.WriteString(n.String())
 	}
+
+	return sb.String()
 }
 
 func doId(node *TypeDescription) error {
@@ -47,10 +52,14 @@ func doId(node *TypeDescription) error {
 }
 
 func doFatherFlag(node *TypeDescription) error {
-	if node.HasNulls {
-		return errors.New("child node cannot has nulls")
-	}
 	node.HasFather = true
+	return nil
+}
+
+func leafNoNulls(node *TypeDescription) error {
+	if node.Children==nil && node.HasNulls{
+		return errors.Errorf("leaft node %d cannot has nulls", node.Id)
+	}
 	return nil
 }
 
@@ -76,14 +85,22 @@ func traverse(node *TypeDescription, do action) error {
 var nodeId uint32
 
 func normalizeSchema(root *TypeDescription) error {
-	nodeId = 0
-	if err := traverse(root, doId); err != nil {
-		return err
+	// set id for write
+	if len(root.Children)!=0 && root.Children[0].Id==0 {
+		nodeId = 0
+		if err := traverse(root, doId); err != nil {
+			return err
+		}
 	}
 
 	if err := traverse(root, doFatherFlag); err != nil {
 		return err
 	}
+
+	if err:=traverse(root, leafNoNulls); err!=nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -131,7 +148,7 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 
 func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *ColumnVector) {
 	// refactor: how and when normalized
-	td.normalize()
+	//td.normalize()
 
 	var vector interface{}
 	switch td.Kind {

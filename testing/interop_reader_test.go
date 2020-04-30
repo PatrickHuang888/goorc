@@ -8,10 +8,10 @@ import (
 )
 
 func init() {
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(log.TraceLevel)
 }
 
-func TestInterOpNoCompression(t *testing.T) {
+func TestBasicNoCompression(t *testing.T) {
 	opts := orc.DefaultReaderOptions()
 	reader, err := orc.NewFileReader("basicLongNoCompression.orc", opts)
 	if err != nil {
@@ -48,7 +48,7 @@ func TestInterOpNoCompression(t *testing.T) {
 	}
 }
 
-func TestInterOpPatchBaseNegativeMinNoCmpression(t *testing.T) {
+func TestPatchBaseNegativeMinNoCmpression(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1,
 		3, 17, 71, 35, 2,
@@ -123,7 +123,7 @@ func TestInterOpPatchBaseNegativeMinNoCmpression(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestInterOpPatchBaseNegativeMin2NoCmppression(t *testing.T) {
+func TestPatchBaseNegativeMin2NoCmppression(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1, 3, 17, 71, 35, 2, 1, 139, 2, 2,
 		3, 1783, 475, 2, 1, 1, 3, 1, 3, 2, 32, 1, 2, 3, 1, 8, 30, 1, 3, 414, 1,
@@ -163,7 +163,7 @@ func TestInterOpPatchBaseNegativeMin2NoCmppression(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestInterOpPatchBaseNegativeMin3NoCompression(t *testing.T) {
+func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1, 3, 17, 71, 35, 2, 1, 139, 2, 2,
 		3, 1783, 475, 2, 1, 1, 3, 1, 3, 2, 32, 1, 2, 3, 1, 8, 30, 1, 3, 414, 1,
@@ -199,6 +199,43 @@ func TestInterOpPatchBaseNegativeMin3NoCompression(t *testing.T) {
 	reader.Close()
 
 	assert.Equal(t, values, batch.Vector)
+}
+
+func TestStructs(t *testing.T)  {
+	opts := orc.DefaultReaderOptions()
+
+	reader, err := orc.NewFileReader("testStructs.0.12.orc", opts)
+	if err != nil {
+		t.Errorf("create reader error: %+v", err)
+	}
+
+	schema := reader.GetSchema()
+	log.Debugf("schema: %s", schema.String())
+
+	batch:=schema.CreateReaderBatch(opts)
+
+	if err:= reader.Next(batch);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+
+	assert.Equal(t, 1024, batch.ReadRows)
+
+	if err:=reader.Close();err!=nil {
+		t.Fatalf("%+v", err)
+	}
+
+	cl1:= batch.Vector.([]*orc.ColumnVector)[0]
+	for i:=0; i<1024; i++ {
+		if i<200 || (i>= 400 && i <600) || i >=800 {
+			assert.Equal(t, false, cl1.Presents[i])
+		}else {
+			assert.Equal(t, true, cl1.Presents[i])
+			cl2:=  cl1.Vector.([]*orc.ColumnVector)[0]
+			vv:= cl2.Vector.([]int64)
+			assert.Equal(t, i, int(vv[i]))
+		}
+	}
+
 }
 
 /*func BenchmarkReader(b *testing.B) {
