@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
@@ -34,7 +35,8 @@ type ReaderOptions struct {
 	CompressionKind pb.CompressionKind
 	ChunkSize       uint64
 	RowSize         int
-	//HasNulls        bool
+
+	Loc *time.Location
 }
 
 func DefaultReaderOptions() *ReaderOptions {
@@ -830,7 +832,7 @@ func (c *timestampV2Reader) next(batch *ColumnVector, parentPresents []bool) err
 				if err != nil {
 					return err
 				}
-				vector = append(vector, Timestamp{seconds, uint32(nanos)})
+				vector = append(vector, Timestamp{seconds, uint32(encoding.DecodingNano(nanos))})
 			} else {
 				vector = append(vector, Timestamp{})
 			}
@@ -855,7 +857,7 @@ func (c *timestampV2Reader) next(batch *ColumnVector, parentPresents []bool) err
 				if err != nil {
 					return err
 				}
-				vector = append(vector, Timestamp{seconds, uint32(nanos)})
+				vector = append(vector, Timestamp{seconds, uint32(encoding.DecodingNano(nanos))})
 			} else {
 				vector = append(vector, Timestamp{})
 			}

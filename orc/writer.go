@@ -511,13 +511,13 @@ func (c *timestampDirectV2Writer) write(batch *ColumnVector) (rows uint64, err e
 		for i, p := range batch.Presents {
 			if p {
 				seconds = append(seconds, encoding.Zigzag(values[i].Seconds))
-				nanos = append(nanos, uint64(values[i].Nanos))
+				nanos = append(nanos, encoding.EncodingNano(uint64(values[i].Nanos)))
 			}
 		}
 	} else {
 		for _, v := range values {
 			seconds = append(seconds, encoding.Zigzag(v.Seconds))
-			nanos = append(nanos, uint64(v.Nanos))
+			nanos = append(nanos, encoding.EncodingNano(uint64(v.Nanos)))
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
+	"time"
 )
 
 func init() {
@@ -30,8 +31,8 @@ func TestBasicNoCompression(t *testing.T) {
 
 	values := batch.Vector.([]int64)
 
-	min:= values[0]
-	max:= values[0]
+	min := values[0]
+	max := values[0]
 	for _, v := range values {
 		if v < min {
 			min = v
@@ -201,7 +202,7 @@ func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestStructs(t *testing.T)  {
+func TestStructs(t *testing.T) {
 	opts := orc.DefaultReaderOptions()
 
 	reader, err := orc.NewFileReader("testStructs.0.12.orc", opts)
@@ -212,30 +213,99 @@ func TestStructs(t *testing.T)  {
 	schema := reader.GetSchema()
 	log.Debugf("schema: %s", schema.String())
 
-	batch:=schema.CreateReaderBatch(opts)
+	batch := schema.CreateReaderBatch(opts)
 
-	if err:= reader.Next(batch);err!=nil {
+	if err := reader.Next(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	assert.Equal(t, 1024, batch.ReadRows)
 
-	if err:=reader.Close();err!=nil {
+	if err := reader.Close(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	cl1:= batch.Vector.([]*orc.ColumnVector)[0]
-	for i:=0; i<1024; i++ {
-		if i<200 || (i>= 400 && i <600) || i >=800 {
+	cl1 := batch.Vector.([]*orc.ColumnVector)[0]
+	for i := 0; i < 1024; i++ {
+		if i < 200 || (i >= 400 && i < 600) || i >= 800 {
 			assert.Equal(t, false, cl1.Presents[i])
-		}else {
+		} else {
 			assert.Equal(t, true, cl1.Presents[i])
-			cl2:=  cl1.Vector.([]*orc.ColumnVector)[0]
-			vv:= cl2.Vector.([]int64)
+			cl2 := cl1.Vector.([]*orc.ColumnVector)[0]
+			vv := cl2.Vector.([]int64)
 			assert.Equal(t, i, int(vv[i]))
 		}
 	}
 
+}
+
+func TestTimestamp(t *testing.T) {
+	opts := orc.DefaultReaderOptions()
+
+	reader, err := orc.NewFileReader("testTimestamp.0.12.orc", opts)
+	if err != nil {
+		t.Errorf("create reader error: %+v", err)
+	}
+
+	schema := reader.GetSchema()
+	log.Debugf("schema: %s", schema.String())
+
+	batch := schema.CreateReaderBatch(opts)
+
+	if err := reader.Next(batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	var values []string
+	t1 := "2037-01-01 00:00:00.000999"
+	values = append(values, t1)
+	t2 := "2003-01-01 00:00:00.000000222"
+	values = append(values, t2)
+	t3 := "1999-01-01 00:00:00.999999999"
+	values = append(values, t3)
+	t4 := "1995-01-01 00:00:00.688888888"
+	values = append(values, t4)
+	t5 := "2002-01-01 00:00:00.1"
+	values = append(values, t5)
+	t6 := "2010-03-02 00:00:00.000009001"
+	values = append(values, t6)
+	t7 := "2005-01-01 00:00:00.000002229"
+	values = append(values, t7)
+	t8 := "2006-01-01 00:00:00.900203003"
+	values = append(values, t8)
+	t9 := "2003-01-01 00:00:00.800000007"
+	values = append(values, t9)
+	t10 := "1996-08-02 00:00:00.723100809"
+	values = append(values, t10)
+	t11 := "1998-11-02 00:00:00.857340643"
+	values = append(values, t11)
+	t12 := "2008-10-02 00:00:00"
+	values = append(values, t12)
+
+	assert.Equal(t, len(values), batch.ReadRows)
+
+	layout := "2006-01-02 15:04:05.999999999"
+	loc, _ := time.LoadLocation("US/Pacific")  //data write with us/pacific locale
+	assert.Equal(t, t1, batch.Vector.([]orc.Timestamp)[0].Time(loc).Format(layout))
+	assert.Equal(t, t2, batch.Vector.([]orc.Timestamp)[1].Time(loc).Format(layout))
+	assert.Equal(t, t3, batch.Vector.([]orc.Timestamp)[2].Time(loc).Format(layout))
+	assert.Equal(t, t4, batch.Vector.([]orc.Timestamp)[3].Time(loc).Format(layout))
+	assert.Equal(t, t5, batch.Vector.([]orc.Timestamp)[4].Time(loc).Format(layout))
+	assert.Equal(t, t6, batch.Vector.([]orc.Timestamp)[5].Time(loc).Format(layout))
+	assert.Equal(t, t7, batch.Vector.([]orc.Timestamp)[6].Time(loc).Format(layout))
+	assert.Equal(t, t8, batch.Vector.([]orc.Timestamp)[7].Time(loc).Format(layout))
+	assert.Equal(t, t9, batch.Vector.([]orc.Timestamp)[8].Time(loc).Format(layout))
+
+	// data written has daylight saving
+	v10 := batch.Vector.([]orc.Timestamp)[9].Time(loc).Format(layout)
+	assert.Equal(t, t10, v10)
+
+	assert.Equal(t, t11, batch.Vector.([]orc.Timestamp)[10].Time(loc).Format(layout))
+	assert.Equal(t, t12, batch.Vector.([]orc.Timestamp)[11].Time(loc).Format(layout))
+
+	if err := reader.Close(); err != nil {
+		t.Fatalf("%+v", err)
+	}
 }
 
 /*func BenchmarkReader(b *testing.B) {

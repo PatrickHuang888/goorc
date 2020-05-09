@@ -106,14 +106,17 @@ type Timestamp struct {
 }
 
 // return seconds from 2015, Jan, 1 and nano seconds
-func GetTime(ts Timestamp) (t time.Time) {
-	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	return time.Unix(base+ts.Seconds, int64(ts.Nanos)).UTC()
+func (ts Timestamp) Time(loc *time.Location) time.Time {
+	if loc==nil {
+		loc= time.UTC
+	}
+	base := time.Date(2015, time.January, 1, 0, 0, 0, 0, loc).Unix()
+	return time.Unix(base+ts.Seconds, int64(ts.Nanos)).In(loc)
 }
 
 func GetTimestamp(t time.Time) Timestamp {
 	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	return Timestamp{t.Unix() - base, uint32(t.Nanosecond())}
+	return Timestamp{t.UTC().Unix() - base, uint32(t.Nanosecond())}
 }
 
 /*func (*TimestampColumn) T() pb.Type_Kind {

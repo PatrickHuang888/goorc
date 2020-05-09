@@ -514,13 +514,13 @@ func TestZigzag(t *testing.T) {
 }*/
 
 func TestTimestampTrailing(t *testing.T) {
-	assert.Equal(t, uint64(0x0a), encodingNano(1000))
-	assert.Equal(t, uint64(0x0c), encodingNano(100000))
+	assert.Equal(t, uint64(0x0a), EncodingNano(1000))
+	assert.Equal(t, uint64(0x0c), EncodingNano(100000))
 }
 
 func TestNanoEncoding(t *testing.T) {
-	assert.Equal(t, uint64(0x0a), encodingNano(uint64(1000)))
-	assert.Equal(t, uint64(0x0c), encodingNano(uint64(100000)))
+	assert.Equal(t, uint64(0x0a), EncodingNano(uint64(1000)))
+	assert.Equal(t, uint64(0x0c), EncodingNano(uint64(100000)))
 }
 
 func TestBoolRunLength (t *testing.T) {

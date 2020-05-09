@@ -13,7 +13,6 @@ func TestMarshal(t *testing.T) {
 	children := []*TypeDescription{{Kind: pb.Type_INT, Id: 1}, {Kind: pb.Type_MAP, Id: 2}}
 	root := &TypeDescription{Kind: pb.Type_STRUCT, Id: 0,
 		ChildrenNames: names, Children: children}
-	root.Print()
 
 	msl := new(jsonpb.Marshaler)
 	pbTypes := marshallSchema(root)
@@ -28,6 +27,5 @@ func TestMarshal(t *testing.T) {
 	}
 
 	root = unmarshallSchema(pbTypes)[0]
-	root.Print()
 
 }

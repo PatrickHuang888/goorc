@@ -1560,7 +1560,7 @@ func Convert(u uint64) int64 {
 	return x
 }
 
-func encodingNano(nanos uint64) (encoded uint64) {
+func EncodingNano(nanos uint64) (encoded uint64) {
 	if nanos == 0 {
 		return 0
 	} else if nanos%100 != 0 {
@@ -1576,7 +1576,7 @@ func encodingNano(nanos uint64) (encoded uint64) {
 	}
 }
 
-func decodingNano(encoded uint64) (nano uint) {
+func DecodingNano(encoded uint64) (nano uint) {
 	zeros := 0x07 & encoded
 	nano = uint(encoded >> 3)
 	if zeros != 0 {
