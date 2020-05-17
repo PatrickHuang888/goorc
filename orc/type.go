@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 )
 
+// todo: check reader, if parent has present stream, children should not have present stream
 type TypeDescription struct {
 	Id            uint32
 	Kind          pb.Type_Kind
@@ -58,7 +59,7 @@ func doFatherFlag(node *TypeDescription) error {
 
 func leafNoNulls(node *TypeDescription) error {
 	if node.Children==nil && node.HasNulls{
-		return errors.Errorf("leaft node %d cannot has nulls", node.Id)
+		return errors.Errorf("leaf node %d cannot has nulls", node.Id)
 	}
 	return nil
 }

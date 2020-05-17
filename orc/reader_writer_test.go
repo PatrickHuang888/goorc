@@ -93,14 +93,11 @@ func TestBasicNoCompression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	reader.stripes, err = reader.Stripes()
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
+
 	if err := reader.Next(rbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, uint(rows), rbatch.ReadRows)
+	assert.Equal(t, rows, rbatch.ReadRows)
 	assert.Equal(t, vector, rbatch.Vector)
 }
 
@@ -139,10 +136,6 @@ func TestBasicZlibCompression(t *testing.T) {
 	rbatch := schema.CreateReaderBatch(ropts)
 
 	reader, err := newReader(ropts, df)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	reader.stripes, err = reader.Stripes()
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -207,11 +200,6 @@ func TestBasicMultipleStripes(t *testing.T) {
 	rbatch := schema.CreateReaderBatch(ropts)
 
 	reader, err := newReader(ropts, df)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	reader.stripes, err = reader.Stripes()
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}

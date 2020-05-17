@@ -23,6 +23,11 @@ type ColumnVector struct {
 	ReadRows int
 }
 
+type batchInternal struct {
+	*ColumnVector
+	presentsFromParent bool  // for struct writer
+}
+
 func (cv ColumnVector) check() error {
 	if cv.Kind == pb.Type_STRUCT && cv.Presents != nil {
 		var presentCounts int
@@ -55,11 +60,15 @@ func (cv ColumnVector) check() error {
 // hive 0.13 support 38 digits
 type Decimal64 struct {
 	Precision int64
-	Scale     uint16
+	Scale     int
 }
 
 func (d Decimal64) String() string {
 	return fmt.Sprintf("precision %d, scale %d", d.Precision, d.Scale)
+}
+
+func (d Decimal64) Float64() float64  {
+	return float64(d.Precision) * float64(10*d.Scale)
 }
 
 /*type Decimal64Column struct {
@@ -105,13 +114,22 @@ type Timestamp struct {
 	Nanos   uint32
 }
 
-// return seconds from 2015, Jan, 1 and nano seconds
 func (ts Timestamp) Time(loc *time.Location) time.Time {
 	if loc==nil {
 		loc= time.UTC
 	}
 	base := time.Date(2015, time.January, 1, 0, 0, 0, 0, loc).Unix()
 	return time.Unix(base+ts.Seconds, int64(ts.Nanos)).In(loc)
+}
+
+func (ts Timestamp) GetMilliSeconds() int64  {
+	// todo:
+	return 0
+}
+
+func (ts Timestamp) GetMilliSecondsUtc() int64  {
+	// todo:
+	return 0
 }
 
 func GetTimestamp(t time.Time) Timestamp {

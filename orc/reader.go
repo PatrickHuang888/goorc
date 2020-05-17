@@ -24,11 +24,14 @@ const (
 
 type Reader interface {
 	GetSchema() *TypeDescription
+
 	NumberOfRows() uint64
-	Stripes() ([]StripeReader, error)
+
 	Close() error
 
 	Next(batch *ColumnVector) error
+
+	GetStatistics() []*pb.ColumnStatistics
 }
 
 type ReaderOptions struct {
@@ -51,15 +54,17 @@ type File interface {
 }
 
 type reader struct {
-	f File
-
-	schemas []*TypeDescription
 	opts    *ReaderOptions
+	schemas []*TypeDescription
 
-	tail    *pb.FileTail
-	stripes []StripeReader
+	stripes []*stripeReader
 
 	stripeIndex int
+
+	f File
+
+	numberOfRows uint64
+	stats        []*pb.ColumnStatistics
 }
 
 type fileFile struct {
@@ -102,20 +107,8 @@ func NewFileReader(path string, opts *ReaderOptions) (r Reader, err error) {
 	log.Infof("open file %s", path)
 	fr := &fileFile{f: f}
 
-	var r_ *reader
-	r_, err = newReader(opts, fr)
+	r, err = newReader(opts, fr)
 	if err != nil {
-		return
-	}
-
-	r_.stripes, err = r_.Stripes()
-	if err != nil {
-		return
-	}
-
-	r = r_
-
-	if err=normalizeSchema(r.GetSchema()); err!=nil {
 		return
 	}
 
@@ -128,6 +121,11 @@ func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
 		return nil, errors.Wrap(err, "read file tail error")
 	}
 
+	//check
+	if tail.GetFooter().GetNumberOfRows() == 0 {
+		return nil, errors.New("file footer error, number of rows 0")
+	}
+
 	schemas := unmarshallSchema(tail.Footer.Types)
 
 	opts.CompressionKind = tail.Postscript.GetCompression()
@@ -135,7 +133,15 @@ func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
 		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
 	}
 
-	r = &reader{f: f, tail: tail, opts: opts, schemas: schemas}
+	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: tail.GetFooter().GetNumberOfRows(),
+		stats: tail.Footer.GetStatistics()}
+
+	r.initStripes(tail.Footer.GetStripes())
+
+	if err = normalizeSchema(r.GetSchema()); err != nil {
+		return
+	}
+
 	return
 }
 
@@ -143,67 +149,80 @@ func (r *reader) GetSchema() *TypeDescription {
 	return r.schemas[0]
 }
 
-func (r *reader) Stripes() (ss []StripeReader, err error) {
-	for i, stripeInfo := range r.tail.Footer.Stripes {
+func (r *reader) initStripes(infos []*pb.StripeInformation) error {
+	var err error
+
+	for i, stripeInfo := range infos {
+
+		//check
+		if stripeInfo.GetNumberOfRows() == 0 {
+			return errors.Errorf("stripe number of rows 0 err, %s", stripeInfo.String())
+		}
+
 		offset := stripeInfo.GetOffset()
 		indexLength := stripeInfo.GetIndexLength()
 		dataLength := stripeInfo.GetDataLength()
-		ps := r.tail.GetPostscript()
 
 		// row index
 		indexOffset := offset
 		log.Tracef("seek index of stripe %d", i)
 		if _, err = r.f.Seek(int64(indexOffset), 0); err != nil {
-			return nil, errors.WithStack(err)
+			return errors.WithStack(err)
 		}
 		indexBuf := make([]byte, indexLength)
 		if _, err = io.ReadFull(r.f, indexBuf); err != nil {
-			return nil, errors.WithStack(err)
+			return errors.WithStack(err)
 		}
-		if ps.GetCompression() != pb.CompressionKind_NONE {
+		if r.opts.CompressionKind != pb.CompressionKind_NONE {
 			ib := &bytes.Buffer{}
-			if err = decompressBuffer(ps.GetCompression(), ib, bytes.NewBuffer(indexBuf)); err != nil {
-				return nil, err
+			if err = decompressBuffer(r.opts.CompressionKind, ib, bytes.NewBuffer(indexBuf)); err != nil {
+				return err
 			}
 			indexBuf = ib.Bytes()
 		}
 		index := &pb.RowIndex{}
 		if err = proto.Unmarshal(indexBuf, index); err != nil {
-			return nil, errors.Wrapf(err, "unmarshal strip index error")
+			return errors.Wrapf(err, "unmarshal strip index error")
 		}
 
 		// footer
 		log.Tracef("seek stripe footer of %d", i)
 		footerOffset := int64(offset + indexLength + dataLength)
 		if _, err = r.f.Seek(footerOffset, 0); err != nil {
-			return
+			return errors.WithStack(err)
 		}
 		footerBuf := make([]byte, stripeInfo.GetFooterLength())
 		if _, err = io.ReadFull(r.f, footerBuf); err != nil {
-			return nil, errors.WithStack(err)
+			return errors.WithStack(err)
 		}
-		if ps.GetCompression() != pb.CompressionKind_NONE {
+		if r.opts.CompressionKind != pb.CompressionKind_NONE {
 			fb := &bytes.Buffer{}
-			if err = decompressBuffer(r.tail.GetPostscript().GetCompression(), fb, bytes.NewBuffer(footerBuf)); err != nil {
-				return
+			if err = decompressBuffer(r.opts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
+				return err
 			}
 			footerBuf = fb.Bytes()
 		}
 		footer := &pb.StripeFooter{}
 		if err = proto.Unmarshal(footerBuf, footer); err != nil {
-			return nil, errors.Wrapf(err, "unmarshal currentStripe footer error")
+			return errors.Wrapf(err, "unmarshal currentStripe footer error")
 		}
 		log.Debugf("extracted stripe footer %d: %s", i, footer.String())
 
-		sr := &stripeReader{in: r.f, opts: r.opts, footer: footer, schemas: r.schemas, info: stripeInfo, idx: i}
-		if err := sr.prepare(); err != nil {
-			return ss, errors.WithStack(err)
+
+		var sr *stripeReader
+		if sr, err = newStripeReader(r.f, r.schemas[0], r.opts, i, stripeInfo, footer); err != nil {
+			return err
 		}
-		ss = append(ss, sr)
+
+		r.stripes = append(r.stripes, sr)
 
 	}
 
-	return
+	return nil
+}
+
+func (r reader) GetStatistics() []*pb.ColumnStatistics {
+	return r.stats
 }
 
 func (r *reader) Close() error {
@@ -211,22 +230,18 @@ func (r *reader) Close() error {
 }
 
 func (r *reader) Next(batch *ColumnVector) (err error) {
-	if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
+	if err = r.stripes[r.stripeIndex].next(batch); err != nil {
 		return
 	}
 
 	// next stripe
 	if (r.stripeIndex < len(r.stripes)-1) && (batch.ReadRows == 0) {
 		r.stripeIndex++
-		if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
+		if err = r.stripes[r.stripeIndex].next(batch); err != nil {
 			return
 		}
 	}
 	return
-}
-
-type StripeReader interface {
-	Next(batch *ColumnVector) error
 }
 
 type stripeReader struct {
@@ -235,24 +250,33 @@ type stripeReader struct {
 	schemas []*TypeDescription
 	opts    *ReaderOptions
 
-	info   *pb.StripeInformation
-	footer *pb.StripeFooter
-
 	columnReaders []columnReader
-	idx           int
+
+	idx int
+}
+
+func newStripeReader(in io.ReadSeeker, schema *TypeDescription, opts *ReaderOptions, idx int, info *pb.StripeInformation,
+	footer *pb.StripeFooter) (reader *stripeReader, err error){
+
+	schemas:= schema.normalize()
+	reader= &stripeReader{in:in, schemas: schemas, opts:opts, idx:idx}
+
+	err= reader.prepare(info, footer)
+
+	return
 }
 
 // stripe {index{},column{[present],data,[length]},footer}
-func (s *stripeReader) prepare() error {
+func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFooter) error {
 
 	//prepare column reader
 	s.columnReaders = make([]columnReader, len(s.schemas))
 	columns := make([]*crBase, len(s.schemas))
 	// id==i
 	for _, schema := range s.schemas {
-		encoding := s.footer.GetColumns()[schema.Id].GetKind()
+		encoding := footer.GetColumns()[schema.Id].GetKind()
 
-		c := &crBase{schema: schema}
+		c := &crBase{schema: schema, numberOfRows: info.GetNumberOfRows()}
 		columns[schema.Id] = c
 
 		switch schema.Kind {
@@ -291,7 +315,7 @@ func (s *stripeReader) prepare() error {
 			if encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("bool column encoding error")
 			}
-			s.columnReaders[schema.Id] = &boolReader{crBase: c, numberOfRows: s.info.GetNumberOfRows()}
+			s.columnReaders[schema.Id] = &boolReader{crBase: c}
 
 		case pb.Type_BYTE: // tinyint
 			if encoding != pb.ColumnEncoding_DIRECT {
@@ -403,10 +427,10 @@ func (s *stripeReader) prepare() error {
 
 	// setup streams
 	// streams has sequence
-	indexStart := s.info.GetOffset()
-	dataStart := indexStart + s.info.GetIndexLength()
+	indexStart := info.GetOffset()
+	dataStart := indexStart + info.GetIndexLength()
 
-	for _, streamInfo := range s.footer.GetStreams() {
+	for _, streamInfo := range footer.GetStreams() {
 
 		id := streamInfo.GetColumn()
 		streamKind := streamInfo.GetKind()
@@ -423,13 +447,13 @@ func (s *stripeReader) prepare() error {
 
 		if streamKind == pb.Stream_PRESENT {
 			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
-			s.schemas[id].HasNulls=true
+			s.schemas[id].HasNulls = true
 			dataStart += length
 			continue
 		}
 
 		schema := s.schemas[id]
-		encoding := s.footer.GetColumns()[id].GetKind()
+		encoding := footer.GetColumns()[id].GetKind()
 		switch schema.Kind {
 		case pb.Type_SHORT:
 			fallthrough
@@ -641,9 +665,9 @@ func (s *stripeReader) prepare() error {
 
 // entry of stripeR reader
 // a stripeR is typically  ~200MB
-func (s *stripeReader) Next(batch *ColumnVector) error {
+func (s *stripeReader) next(batch *ColumnVector) error {
 
-	err := s.columnReaders[batch.Id].next(batch, nil)
+	err := s.columnReaders[batch.Id].next(batch)
 	if err != nil {
 		return err
 	}
@@ -654,41 +678,41 @@ func (s *stripeReader) Next(batch *ColumnVector) error {
 }
 
 type columnReader interface {
-	// parent presents used for struct has presents, and do next in child
-	next(batch *ColumnVector, parentPresents []bool) error
+	next(batch *ColumnVector) error
 }
 
 type crBase struct {
 	schema *TypeDescription
 
-	//opts         *ReaderOptions
-
 	present *boolStreamReader
 
-	//numberOfRows uint64
-	cursor uint64
+	numberOfRows uint64 // base column reader are in stripe, this from stripe info
+	cursor       uint64
 }
 
 func (c *crBase) String() string {
 	sb := strings.Builder{}
 	fmt.Fprintf(&sb, "id %d, ", c.schema.Id)
 	fmt.Fprintf(&sb, "kind %stream, ", c.schema.Kind.String())
-	fmt.Fprintf(&sb, "encoding %stream, ", c.schema.Encoding.String())
+	fmt.Fprintf(&sb, "encoding %s, ", c.schema.Encoding.String())
+	fmt.Fprintf(&sb, "number of rows %d, ", c.numberOfRows)
 	fmt.Fprintf(&sb, "read cursor %d", c.cursor)
 	return sb.String()
 }
 
-func (c *crBase) nextPresents(batch *ColumnVector) (err error) {
+func (c *crBase) nextPresents(batch *ColumnVector) error {
 	// rethink: writer always init present stream writer first,
 	// while reader's present stream init at prepare()
 	if c.present != nil {
 		batch.Presents = batch.Presents[:0]
-		for i := 0; !c.present.finished() && i < cap(batch.Presents); i++ {
+		count := c.cursor
+		for i := 0; count < c.numberOfRows && i < cap(batch.Presents); i++ {
 			v, err := c.present.next()
 			if err != nil {
 				return err
 			}
 			batch.Presents = append(batch.Presents, v)
+			count++
 		}
 		log.Debugf("column %d has read %d presents values", c.schema.Id, len(batch.Presents))
 	}
@@ -700,51 +724,30 @@ type byteReader struct {
 	data *byteStreamReader
 }
 
-func (c *byteReader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *byteReader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]byte)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents) == 0 {
-
-		if err := c.nextPresents(batch); err != nil {
-			return err
-		}
-
-		i := 0
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				v, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, 0)
-			}
-		}
-
-	} else {
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent presents data")
-			}
-
-			if parentPresents[i] {
-				v, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, 0)
-			}
-		}
+	if err := c.nextPresents(batch); err != nil {
+		return err
 	}
 
-	c.cursor += uint64(i)
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, v)
+
+		} else {
+			vector = append(vector, 0)
+		}
+
+		c.cursor++
+	}
+
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -755,50 +758,30 @@ type dateV2Reader struct {
 	data *longV2StreamReader
 }
 
-func (c *dateV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *dateV2Reader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]Date)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents) == 0 {
-
-		if err := c.nextPresents(batch); err != nil {
-			return err
-		}
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				v, err := c.data.nextInt64()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, fromDays(v))
-			} else {
-				vector = append(vector, Date{})
-			}
-		}
-
-	} else {
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("not parent present data ")
-			}
-
-			if parentPresents[i] {
-				v, err := c.data.nextInt64()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, fromDays(v))
-			} else {
-				vector = append(vector, Date{})
-			}
-		}
+	if err := c.nextPresents(batch); err != nil {
+		return err
 	}
 
-	c.cursor += uint64(i)
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.nextInt64()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, fromDays(v))
+
+		} else {
+			vector = append(vector, Date{})
+		}
+
+		c.cursor++
+	}
+
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -811,65 +794,38 @@ type timestampV2Reader struct {
 	secondary *longV2StreamReader
 }
 
-func (c *timestampV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *timestampV2Reader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]Timestamp)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents) == 0 {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
 
-		if err := c.nextPresents(batch); err != nil {
-			return err
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			seconds, err := c.data.nextInt64()
+			if err != nil {
+				return err
+			}
+			nanos, err := c.secondary.nextUInt()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, Timestamp{seconds, uint32(encoding.DecodingNano(nanos))})
+
+		} else {
+			vector = append(vector, Timestamp{})
 		}
 
-		for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				seconds, err := c.data.nextInt64()
-				if err != nil {
-					return err
-				}
-				nanos, err := c.secondary.nextUInt()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, Timestamp{seconds, uint32(encoding.DecodingNano(nanos))})
-			} else {
-				vector = append(vector, Timestamp{})
-			}
-		}
-
-	} else {
-
-		//check should no presents
-
-		for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent present")
-			}
-
-			if batch.Presents[i] {
-				seconds, err := c.data.nextInt64()
-				if err != nil {
-					return err
-				}
-				nanos, err := c.secondary.nextUInt()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, Timestamp{seconds, uint32(encoding.DecodingNano(nanos))})
-			} else {
-				vector = append(vector, Timestamp{})
-			}
-
-		}
+		c.cursor++
 	}
 
 	if (c.data.finished() && !c.secondary.finished()) || (c.secondary.finished() && !c.data.finished()) {
 		return errors.New("read error")
 	}
 
-	c.cursor += uint64(i)
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -877,51 +833,30 @@ func (c *timestampV2Reader) next(batch *ColumnVector, parentPresents []bool) err
 
 type boolReader struct {
 	*crBase
-	numberOfRows uint64
-	data         *boolStreamReader
+	data *boolStreamReader
 }
 
-func (c *boolReader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *boolReader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]bool)
 	vector = vector[:0]
 
-	if len(parentPresents) == 0 {
-		// because bools extend to byte, may not know the real rows from read,
-		// so using number of rows ？？
-		for i := 0; c.cursor < c.numberOfRows && i < cap(vector); i++ {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
 
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				v, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, false)
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
+			if err != nil {
+				return err
 			}
-			c.cursor++
+			vector = append(vector, v)
+		} else {
+			vector = append(vector, false)
 		}
 
-	} else {
-
-		for i := 0; c.cursor < c.numberOfRows && i < cap(vector); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent present")
-			}
-
-			if parentPresents[i] {
-				v, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, false)
-			}
-
-			c.cursor++
-		}
+		c.cursor++
 	}
 
 	batch.Vector = vector
@@ -935,63 +870,38 @@ type binaryV2Reader struct {
 	data   *stringContentsStreamReader
 }
 
-func (c *binaryV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *binaryV2Reader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([][]byte)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents) == 0 {
-		if err := c.nextPresents(batch); err != nil {
-			return err
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			l, err := c.length.nextUInt()
+			if err != nil {
+				return err
+			}
+			v, err := c.data.nextBytes(l)
+			if err != nil {
+				return err
+			}
+			// default utf-8
+			vector = append(vector, v)
+
+		} else {
+			vector = append(vector, nil)
 		}
 
-		for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				l, err := c.length.nextUInt()
-				if err != nil {
-					return err
-				}
-				v, err := c.data.nextBytes(l)
-				if err != nil {
-					return err
-				}
-				// default utf-8
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, nil)
-			}
-		}
-
-	} else {
-
-		for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent present")
-			}
-
-			if parentPresents[i] {
-				l, err := c.length.nextUInt()
-				if err != nil {
-					return err
-				}
-				v, err := c.data.nextBytes(l)
-				if err != nil {
-					return err
-				}
-				// default utf-8
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, nil)
-			}
-		}
+		c.cursor++
 	}
 
 	if (c.length.finished() && !c.data.finished()) || (c.data.finished() && !c.length.finished()) {
 		return errors.New("read error")
 	}
 
-	c.cursor = c.cursor + uint64(i)
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -1003,64 +913,38 @@ type stringDirectV2Reader struct {
 	length *longV2StreamReader
 }
 
-func (c *stringDirectV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]string)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents) == 0 {
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
 
-		if err := c.nextPresents(batch); err != nil {
-			return err
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			l, err := c.length.nextUInt()
+			if err != nil {
+				return err
+			}
+			v, err := c.data.next(l)
+			if err != nil {
+				return err
+			}
+			// default utf-8
+			vector = append(vector, string(v))
+
+		} else {
+			vector = append(vector, "")
 		}
 
-		for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				l, err := c.length.nextUInt()
-				if err != nil {
-					return err
-				}
-				v, err := c.data.next(l)
-				if err != nil {
-					return err
-				}
-				// default utf-8
-				vector = append(vector, string(v))
-			} else {
-				vector = append(vector, "")
-			}
-		}
-
-	} else {
-
-		for ; i < cap(vector) && !c.data.finished() && !c.length.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent present")
-			}
-
-			if parentPresents[i] {
-				l, err := c.length.nextUInt()
-				if err != nil {
-					return err
-				}
-				v, err := c.data.next(l)
-				if err != nil {
-					return err
-				}
-				// default utf-8
-				vector = append(vector, string(v))
-			} else {
-				vector = append(vector, "")
-			}
-		}
+		c.cursor++
 	}
 
 	if (c.length.finished() && !c.data.finished()) || (c.data.finished() && !c.length.finished()) {
 		return errors.New("read error")
 	}
 
-	c.cursor += uint64(i)
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -1077,11 +961,10 @@ type stringDictV2Reader struct {
 	lengths []uint64
 }
 
-func (c *stringDictV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 	var err error
 	vector := batch.Vector.([]string)
 	vector = vector[:0]
-	i := 0
 
 	// rethink: len(lengths)==0
 	if len(c.lengths) == 0 {
@@ -1099,50 +982,29 @@ func (c *stringDictV2Reader) next(batch *ColumnVector, parentPresents []bool) er
 		}
 	}
 
-	if len(parentPresents) == 0 {
-		if err = c.nextPresents(batch); err != nil {
-			return err
-		}
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				v, err := c.data.nextUInt()
-				if err != nil {
-					return err
-				}
-				if v >= uint64(len(c.dict)) {
-					return errors.New("dict index error")
-				}
-				vector = append(vector, c.dict[v])
-			} else {
-				vector = append(vector, "")
-			}
-		}
-
-	} else {
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent present")
-			}
-
-			if parentPresents[i] {
-				v, err := c.data.nextUInt()
-				if err != nil {
-					return err
-				}
-				if v >= uint64(len(c.dict)) {
-					return errors.New("dict index error")
-				}
-				vector = append(vector, c.dict[v])
-			} else {
-				vector = append(vector, "")
-			}
-		}
+	if err = c.nextPresents(batch); err != nil {
+		return err
 	}
 
-	c.cursor += uint64(i)
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.nextUInt()
+			if err != nil {
+				return err
+			}
+			if v >= uint64(len(c.dict)) {
+				return errors.New("dict index error")
+			}
+			vector = append(vector, c.dict[v])
+
+		} else {
+			vector = append(vector, "")
+		}
+
+		c.cursor++
+	}
+
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -1153,64 +1015,30 @@ type longV2Reader struct {
 	data *longV2StreamReader
 }
 
-func (c *longV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *longV2Reader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]int64)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents) == 0 {
-		if err := c.nextPresents(batch); err != nil {
-			return err
-		}
-
-		for ; !c.data.finished() && i < cap(vector); i++ {
-
-			if len(batch.Presents) == 0 {
-				v, err := c.data.nextInt64()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-
-			} else {
-
-				if i >= len(batch.Presents) {
-					return errors.Errorf("no more present data")
-				}
-
-				if batch.Presents[i] {
-					v, err := c.data.nextInt64()
-					if err != nil {
-						return err
-					}
-					vector = append(vector, v)
-				} else {
-					vector = append(vector, 0)
-				}
-			}
-		}
-
-	} else {
-
-		for ; !c.data.finished() && i < cap(vector); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.Errorf("no parent present %d", i)
-			}
-
-			if parentPresents[i] {
-				v, err := c.data.nextInt64()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, 0)
-			}
-		}
+	if err := c.nextPresents(batch); err != nil {
+		return err
 	}
 
-	c.cursor += uint64(i)
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.nextInt64()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, v)
+
+		} else {
+			vector = append(vector, 0)
+		}
+
+		c.cursor++
+	}
+
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -1222,61 +1050,38 @@ type decimal64DirectV2Reader struct {
 	secondary *longV2StreamReader
 }
 
-func (c *decimal64DirectV2Reader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]Decimal64)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents)==0 {
-		if err := c.nextPresents(batch); err != nil {
-			return err
+	if err := c.nextPresents(batch); err != nil {
+		return err
+	}
+
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			precision, err := c.data.next()
+			if err != nil {
+				return err
+			}
+			scala, err := c.secondary.nextInt64()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, Decimal64{precision, int(scala)})
+
+		} else {
+			vector = append(vector, Decimal64{})
 		}
 
-		for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				precision, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				scala, err := c.secondary.nextUInt()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, Decimal64{precision, uint16(scala)})
-			} else {
-				vector = append(vector, Decimal64{})
-			}
-		}
-
-	}else {
-
-		for ; i < cap(vector) && !c.data.finished() && !c.secondary.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent present")
-			}
-
-			if parentPresents[i] {
-				precision, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				scala, err := c.secondary.nextUInt()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, Decimal64{precision, uint16(scala)})
-			} else {
-				vector = append(vector, Decimal64{})
-			}
-		}
+		c.cursor++
 	}
 
 	if (c.data.finished() && !c.secondary.finished()) || (c.secondary.finished() && !c.data.finished()) {
 		return errors.New("read error")
 	}
 
-	c.cursor += uint64(i)
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -1287,49 +1092,30 @@ type floatReader struct {
 	data *floatStreamReader
 }
 
-func (c *floatReader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *floatReader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]float32)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents)==0 {
-		if err := c.nextPresents(batch); err != nil {
-			return err
-		}
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				v, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, 0)
-			}
-		}
-
-	}else {
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent present")
-			}
-
-			if parentPresents[i] {
-				v, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, 0)
-			}
-		}
+	if err := c.nextPresents(batch); err != nil {
+		return err
 	}
 
-	c.cursor += uint64(i)
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, v)
+
+		} else {
+			vector = append(vector, 0)
+		}
+
+		c.cursor++
+	}
+
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -1340,49 +1126,30 @@ type doubleReader struct {
 	data *doubleStreamReader
 }
 
-func (c *doubleReader) next(batch *ColumnVector, parentPresents []bool) error {
+func (c *doubleReader) next(batch *ColumnVector) error {
 	vector := batch.Vector.([]float64)
 	vector = vector[:0]
-	i := 0
 
-	if len(parentPresents)== 0 {
-		if err := c.nextPresents(batch); err != nil {
-			return err
-		}
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-			if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-				v, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, 0)
-			}
-		}
-
-	}else {
-
-		for ; i < cap(vector) && !c.data.finished(); i++ {
-
-			if i >= len(parentPresents) {
-				return errors.New("no parent present")
-			}
-
-			if parentPresents[i] {
-				v, err := c.data.next()
-				if err != nil {
-					return err
-				}
-				vector = append(vector, v)
-			} else {
-				vector = append(vector, 0)
-			}
-		}
+	if err := c.nextPresents(batch); err != nil {
+		return err
 	}
 
-	c.cursor += uint64(i)
+	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
+
+		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
+			v, err := c.data.next()
+			if err != nil {
+				return err
+			}
+			vector = append(vector, v)
+
+		} else {
+			vector = append(vector, 0)
+		}
+
+		c.cursor++
+	}
+
 	batch.Vector = vector
 	batch.ReadRows = len(vector)
 	return nil
@@ -1393,8 +1160,7 @@ type structReader struct {
 	children []columnReader
 }
 
-func (c *structReader) next(batch *ColumnVector, parentPresents []bool) error {
-	// rethink: cursor
+func (c *structReader) next(batch *ColumnVector) error {
 
 	if err := c.nextPresents(batch); err != nil {
 		return err
@@ -1403,7 +1169,15 @@ func (c *structReader) next(batch *ColumnVector, parentPresents []bool) error {
 	vector := batch.Vector.([]*ColumnVector)
 
 	for i, child := range c.children {
-		if err := child.next(vector[i], batch.Presents); err != nil {
+		if len(batch.Presents) != 0 {
+			// todo: it should check in prepare that
+			// there will be no presents is children while parent has presents
+
+			// reassure: if parent has presents, children use it
+			vector[i].Presents = batch.Presents
+		}
+
+		if err := child.next(vector[i]); err != nil {
 			return err
 		}
 	}
@@ -1411,11 +1185,11 @@ func (c *structReader) next(batch *ColumnVector, parentPresents []bool) error {
 	// reassure: no present, so readrows same as children readrows?
 	if len(batch.Presents) == 0 {
 		batch.ReadRows = vector[0].ReadRows
-		// no cursor ?
 	} else {
 		batch.ReadRows = len(batch.Presents)
-		c.cursor += uint64(len(batch.Presents))
 	}
+
+	c.cursor += uint64(batch.ReadRows)
 
 	return nil
 }
@@ -1778,7 +1552,7 @@ func (s streamReader) finished() bool {
 }
 
 func (r *reader) NumberOfRows() uint64 {
-	return r.tail.Footer.GetNumberOfRows()
+	return r.numberOfRows
 }
 
 func unmarshallSchema(types []*pb.Type) (schemas []*TypeDescription) {
