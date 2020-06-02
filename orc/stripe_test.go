@@ -17,10 +17,9 @@ func TestStripeStructBasic(t *testing.T) {
 	x := &TypeDescription{Kind: pb.Type_DECIMAL, Encoding: pb.ColumnEncoding_DIRECT_V2}
 	schema.ChildrenNames = []string{"x"}
 	schema.Children = []*TypeDescription{x}
-	schemas := schema.normalize()
 
 	wopts := DefaultWriterOptions()
-	writer, err := newStripe(0, schemas, wopts)
+	writer, err := newStripeWriter(0, schema, wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -38,24 +37,26 @@ func TestStripeStructBasic(t *testing.T) {
 	if err := writer.writeColumn(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
+
 	dummyOut.Reset()
 	if err := writer.writeout(dummyOut); err != nil {
 		t.Fatalf("%+v", err)
 	}
+
 	footer, err := writer.writeFooter(dummyOut)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	ropts := DefaultReaderOptions()
-	sr := &stripeReader{in: dummyOut, opts: ropts, footer: footer, schemas: schemas, info: writer.info, idx: 0}
-	if err := sr.prepare(); err != nil {
+	sr, err := newStripeReader(dummyOut, schema, ropts, 0, writer.info, footer)
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	if err := sr.Next(rbatch); err != nil {
+	if err := sr.next(rbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -71,16 +72,13 @@ func TestStripeStructBasic(t *testing.T) {
 
 func TestStripeBasic(t *testing.T) {
 	schema := &TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding: pb.ColumnEncoding_DIRECT_V2}
-	schemas := schema.normalize()
+	//schemas := schema.normalize()
 	wopts := DefaultWriterOptions()
-	writer, err := newStripe(0, schemas, wopts)
+	writer, err := newStripeWriter(0, schema, wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	batch := schema.CreateWriterBatch(wopts)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
 
 	var vector []Timestamp
 	layout := "2006-01-01 00:00:00.999999999"
@@ -125,15 +123,14 @@ func TestStripeBasic(t *testing.T) {
 	}
 
 	ropts := DefaultReaderOptions()
-
-	sr := &stripeReader{in: dummyOut, opts: ropts, footer: footer, schemas: schemas, info: writer.info, idx: 0}
-	if err := sr.prepare(); err != nil {
+	sr, err := newStripeReader(dummyOut, schema, ropts, 0, writer.info, footer)
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	rbatch := schema.CreateReaderBatch(ropts)
 
-	if err := sr.Next(rbatch); err != nil {
+	if err := sr.next(rbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 

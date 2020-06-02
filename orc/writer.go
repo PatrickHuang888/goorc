@@ -3,12 +3,11 @@ package orc
 import (
 	"bytes"
 	"compress/flate"
-	"io"
-	"os"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"io"
+	"os"
 
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
@@ -86,16 +85,15 @@ func (w *fileWriter) Close() error {
 }
 
 func newWriter(schema *TypeDescription, opts *WriterOptions, out io.WriteCloser) (*writer, error) {
-	schemas := schema.normalize()
 
-	w := &writer{opts: opts, schemas: schemas, out: out}
+	w := &writer{opts: opts, out: out}
 	n, err := w.writeHeader()
 	if err != nil {
 		return nil, err
 	}
 
 	w.offset = n
-	w.stripe, err = newStripe(w.offset, w.schemas, w.opts)
+	w.stripe, err = newStripeWriter(w.offset, schema, w.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +104,7 @@ func newWriter(schema *TypeDescription, opts *WriterOptions, out io.WriteCloser)
 // strip buffered in memory until the strip size
 // Encode out by columns
 type writer struct {
-	schemas []*TypeDescription
+	//schemas []*TypeDescription
 	opts    *WriterOptions
 
 	offset uint64
@@ -155,25 +153,30 @@ func (w *writer) flushStripe() error {
 	return nil
 }
 
-func newStripe(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (stripe *stripeWriter, err error) {
+func newStripeWriter(offset uint64, schema *TypeDescription, opts *WriterOptions) (stripe *stripeWriter, err error) {
+	// normalize schema id from 0
+	schemas := schema.normalize()
+
 	idxBuf := bytes.NewBuffer(make([]byte, DEFAULT_INDEX_SIZE))
 	idxBuf.Reset()
 
 	// prepare streams
-	var columns []columnWriter
-	for _, schema := range schemas {
-		var column columnWriter
-		if column, err = createColumnWriter(schema, opts); err != nil {
-			return nil, err
-		}
-		columns = append(columns, column)
+	var writer columnWriter
+	if writer, err = createColumnWriter(schema, opts); err != nil {
+		return nil, err
 	}
 
-	o := offset
-	info := &pb.StripeInformation{Offset: &o, IndexLength: new(uint64), DataLength: new(uint64), FooterLength: new(uint64),
+	var writers []columnWriter
+	writers= append(writers, writer)
+	for _, child := range writer.getChildren() {
+		writers= append(writers, child)
+	}
+	// todo: check writer index == schema id
+
+	info := &pb.StripeInformation{Offset: &offset, IndexLength: new(uint64), DataLength: new(uint64), FooterLength: new(uint64),
 		NumberOfRows: new(uint64)}
-	s := &stripeWriter{opts: opts, idxBuf: idxBuf, columnWriters: columns, info: info, schemas: schemas}
-	return s, nil
+	stripe = &stripeWriter{opts: opts, idxBuf: idxBuf, columnWriters: writers, info: info, schemas: schemas}
+	return
 }
 
 func createColumnWriter(schema *TypeDescription, opts *WriterOptions) (writer columnWriter, err error) {
@@ -295,31 +298,28 @@ type stripeWriter struct {
 
 	idxBuf *bytes.Buffer // index area buffer
 
-	info *pb.StripeInformation  // data in info not update every write,
+	info *pb.StripeInformation // data in info not update every write,
 }
 
 // write to memory
 func (s *stripeWriter) writeColumn(batch *ColumnVector) error {
 
 	writer := s.columnWriters[batch.Id]
-	rows, err := writer.write(batch)
+	rows, err := writer.write(&batchInternal{ColumnVector: batch})
 	if err != nil {
 		return err
 	}
 
-	if !s.schemas[batch.Id].HasFather {
-		*s.info.NumberOfRows += rows
-	}
+	*s.info.NumberOfRows += uint64(rows)
 
 	// todo: update index length
-	*s.info.DataLength= 0
+
+	*s.info.DataLength = 0
 	for _, c := range s.columnWriters {
 		for _, stream := range c.getStreams() {
-			*s.info.DataLength+= stream.info.GetLength()
+			*s.info.DataLength += stream.info.GetLength()
 		}
 	}
-
-	// todo: update column stats
 
 	return nil
 }
@@ -340,7 +340,7 @@ func (s stripeWriter) shouldFlushMemory() bool {
 
 // no footer length
 func (s stripeWriter) size() uint64 {
-	return s.info.GetIndexLength() + s.info.GetDataLength()+s.info.GetFooterLength()
+	return s.info.GetIndexLength() + s.info.GetDataLength() + s.info.GetFooterLength()
 }
 
 // stripe should be self-contained
@@ -416,28 +416,34 @@ func (s *stripeWriter) reset() {
 	}
 }
 
-// enhance: if presents all false, no write
-
 type columnWriter interface {
-	write(batch *ColumnVector) (rows uint64, err error)
+	write(batch *batchInternal) (rows int, err error)
 	getStreams() []*streamWriter
+
+	getChildren() []columnWriter
 }
 
-type cwBase struct {
-	schema  *TypeDescription
+type treeWriter struct {
+	schema *TypeDescription
+	stats  *pb.ColumnStatistics
+
 	present *streamWriter
+
+	children []columnWriter
+}
+
+func (writer treeWriter) getChildren()[]columnWriter  {
+	return writer.children
 }
 
 type structWriter struct {
-	*cwBase
-	childrenWriters []columnWriter
+	*treeWriter
 }
 
 func newStructWriter(schema *TypeDescription, opts *WriterOptions) (writer *structWriter, err error) {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	if schema.Kind != pb.Type_STRUCT {
-		panic("schema not struct")
-	}
+	//fixme: if only exist when there is presents?
+	stats := &pb.ColumnStatistics{BytesOnDisk: new(uint64), HasNull: new(bool), NumberOfValues: new(uint64)}
+
 	var childrenWriters []columnWriter
 	for _, childSchema := range schema.Children {
 		var childWriter columnWriter
@@ -447,30 +453,60 @@ func newStructWriter(schema *TypeDescription, opts *WriterOptions) (writer *stru
 		}
 		childrenWriters = append(childrenWriters, childWriter)
 	}
-	writer = &structWriter{cw_, childrenWriters}
+
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts),
+		stats: stats, children: childrenWriters}
+
+	writer = &structWriter{base}
 	return
 }
 
-func (c *structWriter) write(batch *ColumnVector) (rows uint64, err error) {
-	if err = batch.check(); err != nil {
-		return 0, err
+func (c *structWriter) write(batch *batchInternal) (rows int, err error) {
+	// todo: check batch, if has parent presents should no presents here
+
+	var pn int
+
+	if len(batch.Presents) != 0 && !batch.presentsFromParent {
+
+		*c.stats.HasNull = true
+		rows = len(batch.Presents)
+
+		if pn, err = c.present.writeValues(batch.Presents); err != nil {
+			return 0, err
+		}
 	}
 
-	if c.schema.HasNulls && batch.Presents != nil {
-		if err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
-		}
-	}
 	childrenVector := batch.Vector.([]*ColumnVector)
-	if len(c.childrenWriters) != len(childrenVector) {
+
+	if len(c.children) != len(childrenVector) {
 		return 0, errors.New("children vector not match children writer")
 	}
+
+	var r int
+	var bc *batchInternal
+
 	for i, child := range childrenVector {
-		// rethink: rows
-		if rows, err = c.childrenWriters[i].write(child); err != nil {
-			return 0, err
+
+		if len(batch.Presents) != 0 && !batch.presentsFromParent {
+			child.Presents = batch.Presents
+			bc = &batchInternal{child, true}
+
+		} else {
+			bc = &batchInternal{child, false}
+		}
+
+		if r, err = c.children[i].write(bc); err != nil {
+			return
 		}
 	}
+
+	*c.stats.NumberOfValues += uint64(rows)
+	*c.stats.BytesOnDisk += uint64(pn)
+
+	if len(batch.Presents) == 0 {
+		rows = r
+	}
+
 	return
 }
 
@@ -481,52 +517,84 @@ func (c *structWriter) getStreams() []*streamWriter {
 }
 
 type timestampDirectV2Writer struct {
-	*cwBase
+	*treeWriter
 	data      *streamWriter
 	secondary *streamWriter
 }
 
 func newTimestampDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *timestampDirectV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
-	secondary_ := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, false, opts)
-	return &timestampDirectV2Writer{cw_, data_, secondary_}
+	ts := &pb.TimestampStatistics{Maximum: new(int64), Minimum: new(int64), MinimumUtc: new(int64), MaximumUtc: new(int64)}
+	stats := &pb.ColumnStatistics{BytesOnDisk: new(uint64), HasNull: new(bool), NumberOfValues: new(uint64), TimestampStatistics: ts}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
+	secondary := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, false, opts)
+	return &timestampDirectV2Writer{base, data, secondary}
 }
 
-func (c *timestampDirectV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
+func (c *timestampDirectV2Writer) write(batch *batchInternal) (rows int, err error) {
 	var seconds []uint64
 	var nanos []uint64
-	values := batch.Vector.([]Timestamp)
-	rows = uint64(len(values))
+	var values []Timestamp
+	vector := batch.Vector.([]Timestamp)
 
-	if c.schema.HasNulls {
-		if len(batch.Presents) != len(values) {
+	rows = len(vector)
+
+	var pn, sn, nn int
+
+	if len(batch.Presents) != 0{
+
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if  !batch.presentsFromParent {
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return 0, err
+			}
+			*c.stats.HasNull = true
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				seconds = append(seconds, encoding.Zigzag(values[i].Seconds))
-				nanos = append(nanos, encoding.EncodingNano(uint64(values[i].Nanos)))
+				values = append(values, vector[i])
 			}
 		}
+
 	} else {
-		for _, v := range values {
-			seconds = append(seconds, encoding.Zigzag(v.Seconds))
-			nanos = append(nanos, encoding.EncodingNano(uint64(v.Nanos)))
+		values = vector
+	}
+
+	for _, v := range values {
+		seconds = append(seconds, encoding.Zigzag(v.Seconds))
+		nanos = append(nanos, encoding.EncodingNano(uint64(v.Nanos)))
+
+		m := v.GetMilliSeconds()
+		if *c.stats.TimestampStatistics.Minimum > m {
+			*c.stats.TimestampStatistics.Minimum = m
+		}
+		if m > *c.stats.TimestampStatistics.Maximum {
+			*c.stats.TimestampStatistics.Maximum = m
+		}
+
+		mu := v.GetMilliSecondsUtc()
+		if *c.stats.TimestampStatistics.MinimumUtc > mu {
+			*c.stats.TimestampStatistics.MinimumUtc = mu
+		}
+		if m > *c.stats.TimestampStatistics.MaximumUtc {
+			*c.stats.TimestampStatistics.MaximumUtc = mu
 		}
 	}
 
-	if err := c.data.writeValues(seconds); err != nil {
+	if sn, err = c.data.writeValues(seconds); err != nil {
 		return 0, err
 	}
-	if err = c.secondary.writeValues(nanos); err != nil {
+	if nn, err = c.secondary.writeValues(nanos); err != nil {
 		return 0, err
 	}
+
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + sn + nn)
+
 	return
 }
 
@@ -539,44 +607,57 @@ func (c *timestampDirectV2Writer) getStreams() []*streamWriter {
 }
 
 type dateV2Writer struct {
-	*cwBase
+	*treeWriter
 	data *streamWriter
 }
 
 func newDateDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *dateV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
-	return &dateV2Writer{cw_, data_}
+	ds := &pb.DateStatistics{Minimum: new(int32), Maximum: new(int32)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), DateStatistics: ds}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
+	return &dateV2Writer{base, data}
 }
 
-func (c *dateV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	var vector []uint64
-	values := batch.Vector.([]Date)
-	rows = uint64(len(values))
+func (c *dateV2Writer) write(batch *batchInternal) (rows int, err error) {
+	var values []uint64
+	vector := batch.Vector.([]Date)
+	rows = len(vector)
 
-	if c.schema.HasNulls {
-		if len(batch.Presents) != len(values) {
+	var pn, dn int
+
+	if len(batch.Presents) != 0 {
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return 0, err
+			}
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				vector = append(vector, encoding.Zigzag(toDays(values[i])))
+				values = append(values, encoding.Zigzag(toDays(vector[i])))
 			}
 		}
+
 	} else {
-		for _, v := range values {
-			vector = append(vector, encoding.Zigzag(toDays(v)))
+
+		for _, v := range vector {
+			values = append(values, encoding.Zigzag(toDays(v)))
 		}
 	}
 
-	if err := c.data.writeValues(vector); err != nil {
+	if dn, err = c.data.writeValues(values); err != nil {
 		return 0, err
 	}
+
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + dn)
+
 	return
 }
 
@@ -588,53 +669,68 @@ func (c *dateV2Writer) getStreams() []*streamWriter {
 }
 
 type decimal64DirectV2Writer struct {
-	*cwBase
+	*treeWriter
 	data      *streamWriter
 	secondary *streamWriter
 }
 
 func newDecimal64DirectV2Writer(schema *TypeDescription, opts *WriterOptions) *decimal64DirectV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newBase128VarIntStreamWriter(schema.Id, pb.Stream_DATA, opts)
-	secondary_ := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, false, opts)
-	return &decimal64DirectV2Writer{cw_, data_, secondary_}
+	ds := &pb.DecimalStatistics{Maximum: new(string), Minimum: new(string), Sum: new(string)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), DecimalStatistics: ds}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newBase128VarIntStreamWriter(schema.Id, pb.Stream_DATA, opts)
+	secondary := newIntV2Stream(schema.Id, pb.Stream_SECONDARY, true, opts)
+	return &decimal64DirectV2Writer{base, data, secondary}
 }
 
-func (c *decimal64DirectV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
+func (c *decimal64DirectV2Writer) write(batch *batchInternal) (rows int, err error) {
 	var precisions []int64
 	var scales []uint64
-	values := batch.Vector.([]Decimal64)
-	rows = uint64(len(values))
+	var values []Decimal64
+	vector := batch.Vector.([]Decimal64)
+	rows = len(vector)
 
-	if c.schema.HasNulls {
-		if len(batch.Presents) != len(values) {
+	var pn, dn, sn int
+
+	// todo: decimal
+	//var min, max, sum Decimal64
+
+	if len(batch.Presents) != 0 {
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if  !batch.presentsFromParent {
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return 0, err
+			}
+			*c.stats.HasNull = true
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				precisions = append(precisions, values[i].Precision)
-				scales = append(scales, uint64(values[i].Scale))
+				values = append(values, vector[i])
 			}
 		}
+
 	} else {
-		for _, v := range values {
-			precisions = append(precisions, v.Precision)
-			scales = append(scales, uint64(v.Scale))
-		}
+		values = vector
 	}
 
-	if err := c.data.writeValues(precisions); err != nil {
+	for _, v := range values {
+		precisions = append(precisions, v.Precision)
+		scales = append(scales, encoding.Zigzag(int64(v.Scale)))
+	}
+
+	if dn, err = c.data.writeValues(precisions); err != nil {
+		return 0, err
+	}
+	if sn, err = c.secondary.writeValues(scales); err != nil {
 		return 0, err
 	}
 
-	if err = c.secondary.writeValues(scales); err != nil {
-		return 0, err
-	}
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + dn + sn)
 
 	return
 }
@@ -648,43 +744,63 @@ func (c *decimal64DirectV2Writer) getStreams() []*streamWriter {
 }
 
 type doubleWriter struct {
-	*cwBase
+	*treeWriter
 	data *streamWriter
 }
 
 func newDoubleWriter(schema *TypeDescription, opts *WriterOptions) *doubleWriter {
-	c := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
+	ds := &pb.DoubleStatistics{Minimum: new(float64), Maximum: new(float64), Sum: new(float64)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), DoubleStatistics: ds}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
 	data := newDoubleStream(schema.Id, pb.Stream_DATA, opts)
-	return &doubleWriter{cwBase: c, data: data}
+	return &doubleWriter{base, data}
 }
 
-func (c *doubleWriter) write(batch *ColumnVector) (rows uint64, err error) {
-	var vector []float64
-	values := batch.Vector.([]float64)
-	rows = uint64(len(values))
+func (c *doubleWriter) write(batch *batchInternal) (rows int, err error) {
+	var values []float64
+	vector := batch.Vector.([]float64)
+	rows = len(vector)
 
-	if c.schema.HasNulls {
-		if len(batch.Presents) != len(values) {
+	var pn, dn int
+
+	if len(batch.Presents)!=0 {
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if err := c.present.writeValues(batch.Presents); err != nil {
-			return 0, err
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return 0, err
+			}
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				vector = append(vector, values[i])
+				values = append(values, vector[i])
 			}
 		}
-	} else {
 
-		vector = values
+	} else {
+		values = vector
 	}
 
-	if err := c.data.writeValues(vector); err != nil {
+	for _, v := range values {
+		if v < *c.stats.DoubleStatistics.Minimum {
+			*c.stats.DoubleStatistics.Minimum = v
+		}
+		if v > *c.stats.DoubleStatistics.Maximum {
+			*c.stats.DoubleStatistics.Maximum = v
+		}
+		*c.stats.DoubleStatistics.Sum += v
+	}
+
+	if dn, err = c.data.writeValues(values); err != nil {
 		return 0, err
 	}
+
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + dn)
 
 	return
 }
@@ -697,56 +813,69 @@ func (c *doubleWriter) getStreams() []*streamWriter {
 }
 
 type binaryDirectV2Writer struct {
-	*cwBase
+	*treeWriter
 	data   *streamWriter
 	length *streamWriter
 }
 
 func newBinaryDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *binaryDirectV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newStringContentsStream(schema.Id, pb.Stream_DATA, opts)
-	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
-	return &binaryDirectV2Writer{cw_, data_, length_}
+	bs := &pb.BinaryStatistics{Sum: new(int64)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: bs}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newStringContentsStream(schema.Id, pb.Stream_DATA, opts)
+	length := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
+	return &binaryDirectV2Writer{base, data, length}
 }
 
-func (c *binaryDirectV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	var vector [][]byte
-	var lengthVector []uint64
-	values := batch.Vector.([][]byte)
-	rows = uint64(len(values))
+func (c *binaryDirectV2Writer) write(batch *batchInternal) (rows int, err error) {
+	var values [][]byte
+	var lengthValues []uint64
+	vector := batch.Vector.([][]byte)
+	rows = len(vector)
 
-	if c.schema.HasNulls {
-		if len(batch.Presents) != len(values) {
+	var pn, dn, ln int
+
+	if len(batch.Presents) != 0 {
+
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if err = c.present.writeValues(batch.Presents); err != nil {
-			return
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return
+			}
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				vector = append(vector, values[i])
-				lengthVector = append(lengthVector, uint64(len(values[i])))
+				values = append(values, vector[i])
 			}
 		}
+
 	} else {
 
-		for _, v := range values {
-			lengthVector = append(lengthVector, uint64(len(v)))
-		}
+		values = vector
 	}
 
-	if err = c.data.writeValues(vector); err != nil {
+	for _, v := range values {
+		l := len(v)
+		lengthValues = append(lengthValues, uint64(l))
+		*c.stats.BinaryStatistics.Sum += int64(l)
+	}
+
+	if dn, err = c.data.writeValues(values); err != nil {
 		return
 	}
 
-	if err = c.length.writeValues(lengthVector); err != nil {
+	if ln, err = c.length.writeValues(lengthValues); err != nil {
 		return
 	}
 
-	// rethink: presents, data, length writing transaction
-	// it should be flush to file?
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + dn + ln)
+
 	return
 }
 
@@ -769,7 +898,7 @@ func newStringV2Writer(schema *TypeDescription, opts *WriterOptions) *stringV2Wr
 	return &stringV2Writer{schema: schema, opts: opts}
 }
 
-func (c *stringV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
+func (c *stringV2Writer) write(batch *batchInternal) (rows int, err error) {
 	if c.schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 		c.directW = newStringDirectV2Writer(c.schema, c.opts)
 		return c.directW.write(batch)
@@ -816,33 +945,39 @@ func determineStringEncoding(batch *ColumnVector) pb.ColumnEncoding_Kind {
 }
 
 type stringDictV2Writer struct {
-	*cwBase
+	*treeWriter
 	data     *streamWriter
 	dictData *streamWriter
 	length   *streamWriter
 }
 
 func newStringDictV2Writer(schema *TypeDescription, opts *WriterOptions) *stringDictV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newIntV2Stream(schema.Id, pb.Stream_DATA, false, opts)
-	dictData_ := newStringContentsStream(schema.Id, pb.Stream_DICTIONARY_DATA, opts)
-	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
-	return &stringDictV2Writer{cwBase: cw_, data: data_, dictData: dictData_, length: length_}
+	ss := &pb.StringStatistics{Sum: new(int64), Minimum: new(string), Maximum: new(string), LowerBound: new(string), UpperBound: new(string)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), StringStatistics: ss}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newIntV2Stream(schema.Id, pb.Stream_DATA, false, opts)
+	dictData := newStringContentsStream(schema.Id, pb.Stream_DICTIONARY_DATA, opts)
+	length := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
+	return &stringDictV2Writer{base, data, dictData, length}
 }
 
-func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	presents := batch.Presents
-	vector := batch.Vector.([]string)
-	rows = uint64(len(vector)) // is there rows +=1 if !present?
+func (c *stringDictV2Writer) write(batch *batchInternal) (rows int, err error) {
 	var values []string
+	vector := batch.Vector.([]string)
+	rows = len(vector)
 
-	if c.schema.HasNulls {
-		if len(presents) != len(vector) {
+	var pn, dn, ddn, ln int
+
+	if len(batch.Presents) != 0 {
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if err = c.present.writeValues(presents); err != nil {
-			return
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return
+			}
 		}
 
 		for i, p := range batch.Presents {
@@ -850,6 +985,7 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 				values = append(values, vector[i])
 			}
 		}
+
 	} else {
 		values = vector
 	}
@@ -857,18 +993,22 @@ func (c *stringDictV2Writer) write(batch *ColumnVector) (rows uint64, err error)
 	d := &dict{}
 	for _, v := range values {
 		d.put(v)
+
+		// todo: stringStatistics
 	}
 
-	// rethink: if data write sucsessful and length write fail, because right now data is in memory
-	if err = c.data.writeValues(d.indexes); err != nil {
+	if dn, err = c.data.writeValues(d.indexes); err != nil {
 		return
 	}
-	if err = c.dictData.writeValues(d.contents); err != nil {
+	if ddn, err = c.dictData.writeValues(d.contents); err != nil {
 		return
 	}
-	if err = c.length.writeValues(d.lengths); err != nil {
+	if ln, err = c.length.writeValues(d.lengths); err != nil {
 		return
 	}
+
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + dn + ddn + ln)
 
 	return
 }
@@ -910,55 +1050,69 @@ func (c *stringDictV2Writer) getStreams() []*streamWriter {
 }
 
 type stringDirectV2Writer struct {
-	*cwBase
+	*treeWriter
 	data   *streamWriter
 	length *streamWriter
 }
 
 func newStringDirectV2Writer(schema *TypeDescription, opts *WriterOptions) *stringDirectV2Writer {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newStringContentsStream(schema.Id, pb.Stream_DATA, opts)
-	length_ := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
-	return &stringDirectV2Writer{cw_, data_, length_}
+	ss := &pb.StringStatistics{Sum: new(int64), Minimum: new(string), Maximum: new(string), LowerBound: new(string), UpperBound: new(string)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), StringStatistics: ss}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newStringContentsStream(schema.Id, pb.Stream_DATA, opts)
+	length := newIntV2Stream(schema.Id, pb.Stream_LENGTH, false, opts)
+	return &stringDirectV2Writer{base, data, length}
 }
 
-func (c *stringDirectV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
+func (c *stringDirectV2Writer) write(batch *batchInternal) (rows int, err error) {
 	var lengthVector []uint64
 	var contents [][]byte
-	values := batch.Vector.([]string)
-	rows = uint64(len(values))
+	vector := batch.Vector.([]string)
+	var values []string
+	rows = len(vector)
 
-	if c.schema.HasNulls {
-		if len(batch.Presents) != len(values) {
+	var pn, cn, ln int
+
+	if len(batch.Presents) != 0 {
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if err = c.present.writeValues(batch.Presents); err != nil {
-			return
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return
+			}
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				contents = append(contents, []byte(values[i])) // rethink: string encoding
-				lengthVector = append(lengthVector, uint64(len(values[i])))
+				values = append(values, vector[i])
 			}
 		}
+
 	} else {
 
-		for _, s := range values {
-			contents = append(contents, []byte(s))
-			lengthVector = append(lengthVector, uint64(len(s)))
-		}
+		values = vector
 	}
 
-	if err = c.data.writeValues(contents); err != nil {
+	for _, s := range values {
+		// reassure: string encoding
+		contents = append(contents, []byte(s))
+		lengthVector = append(lengthVector, uint64(len(s)))
+
+		// todo: string statistics
+	}
+
+	if cn, err = c.data.writeValues(contents); err != nil {
+		return
+	}
+	if ln, err = c.length.writeValues(lengthVector); err != nil {
 		return
 	}
 
-	// rethink: if data write sucsessful and length write fail, because right now data is in memory
-	if err = c.length.writeValues(lengthVector); err != nil {
-		return
-	}
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + cn + ln)
 
 	return
 }
@@ -972,46 +1126,53 @@ func (c *stringDirectV2Writer) getStreams() []*streamWriter {
 }
 
 type boolWriter struct {
-	*cwBase
+	*treeWriter
 	data *streamWriter
 }
 
 func newBoolWriter(schema *TypeDescription, opts *WriterOptions) *boolWriter {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newBoolStreamWriter(schema.Id, pb.Stream_DATA, opts)
-	return &boolWriter{cw_, data_}
+	// fixme: BinaryStatistics?
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newBoolStreamWriter(schema.Id, pb.Stream_DATA, opts)
+	return &boolWriter{base, data}
 }
 
-func (c *boolWriter) write(batch *ColumnVector) (rows uint64, err error) {
-	var vector []bool
-	values := batch.Vector.([]bool)
-	rows = uint64(len(values))
+func (c *boolWriter) write(batch *batchInternal) (rows int, err error) {
+	var values []bool
+	vector := batch.Vector.([]bool)
+	rows = len(vector)
 
-	if c.schema.HasNulls {
-		if batch.Presents == nil || len(batch.Presents) == 0 {
-			log.Warn("no presents")
-		}
+	var pn, dn int
+
+	if len(batch.Presents) != 0 {
 		if len(batch.Presents) != len(values) {
 			return 0, errors.New("present error")
 		}
 
-		if err = c.present.writeValues(batch.Presents); err != nil {
-			return
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return
+			}
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				vector = append(vector, values[i])
+				values = append(values, values[i])
 			}
 		}
 
 	} else {
-		vector = values
+		values = vector
 	}
 
-	if err = c.data.writeValues(vector); err != nil {
+	if dn, err = c.data.writeValues(vector); err != nil {
 		return
 	}
+
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + dn)
 
 	return
 }
@@ -1024,48 +1185,57 @@ func (c *boolWriter) getStreams() []*streamWriter {
 }
 
 type byteWriter struct {
-	*cwBase
+	*treeWriter
 	data *streamWriter
 }
 
 func newByteWriter(schema *TypeDescription, opts *WriterOptions) *byteWriter {
-	cw_ := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data_ := newByteStreamWriter(schema.Id, pb.Stream_DATA, opts)
-	return &byteWriter{cw_, data_}
+	bs := &pb.BinaryStatistics{Sum: new(int64)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: bs}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newByteStreamWriter(schema.Id, pb.Stream_DATA, opts)
+	return &byteWriter{base, data}
 }
 
-func (c *byteWriter) write(batch *ColumnVector) (rows uint64, err error) {
-	var vector []byte
+func (c *byteWriter) write(batch *batchInternal) (rows int, err error) {
+	var values []byte
 
-	values := batch.Vector.([]byte)
-	rows = uint64(len(values))
+	vector := batch.Vector.([]byte)
+	rows = len(vector)
 
-	if c.schema.HasNulls {
-		if batch.Presents == nil || len(batch.Presents) == 0 {
-			return 0, errors.New("no presents data")
-		}
-		if len(batch.Presents) != len(values) {
+	var pn, dn int
+
+	if len(batch.Presents) != 0 {
+
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("presents error")
 		}
 
-		if err = c.present.writeValues(batch.Presents); err != nil {
-			return
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return
+			}
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				vector = append(vector, values[i])
+				values = append(values, vector[i])
 			}
 		}
 
 	} else {
-		vector = values
+
+		values = vector
 	}
 
-	if err = c.data.writeValues(vector); err != nil {
+	if dn, err = c.data.writeValues(values); err != nil {
 		return
 	}
 
+	*c.stats.BinaryStatistics.Sum += int64(len(values))
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + dn)
 	return
 }
 
@@ -1077,49 +1247,72 @@ func (c *byteWriter) getStreams() []*streamWriter {
 }
 
 type longV2Writer struct {
-	*cwBase
+	*treeWriter
 	data *streamWriter
 }
 
 func newLongV2Writer(schema *TypeDescription, opts *WriterOptions) *longV2Writer {
-	c := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
+	is := &pb.IntegerStatistics{Minimum: new(int64), Maximum: new(int64), Sum: new(int64)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), IntStatistics: is}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
 	data := newIntV2Stream(schema.Id, pb.Stream_DATA, true, opts)
-	return &longV2Writer{cwBase: c, data: data}
+	return &longV2Writer{base, data}
 }
 
-func (c *longV2Writer) write(batch *ColumnVector) (rows uint64, err error) {
-	var vector []uint64
-	values := batch.Vector.([]int64)
-	rows = uint64(len(values))
+func (c *longV2Writer) write(batch *batchInternal) (rows int, err error) {
+	var uvalues []uint64
+	var values []int64
 
-	if c.schema.HasNulls {
-		if batch.Presents == nil || len(batch.Presents) == 0 {
-			return 0, errors.New("no presents data")
-		}
-		if len(batch.Presents) != len(values) {
+	vector := batch.Vector.([]int64)
+	rows = len(vector)
+
+	var pn, dn int
+
+	if len(batch.Presents) != 0 {
+
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of presents != vector")
 		}
 
-		log.Tracef("writing: long column write %d presents", len(batch.Presents))
-		if err = c.present.writeValues(batch.Presents); err != nil {
-			return
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+
+			log.Tracef("writing: long column write %d presents", len(batch.Presents))
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return
+			}
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				vector = append(vector, encoding.Zigzag(values[i]))
+				values = append(values, vector[i])
 			}
 		}
 
 	} else {
-		for _, v := range values {
-			vector = append(vector, encoding.Zigzag(v))
-		}
+
+		values = vector
 	}
 
-	if err = c.data.writeValues(vector); err != nil {
+	for _, v := range values {
+		uvalues = append(uvalues, encoding.Zigzag(v))
+
+		if v < *c.stats.IntStatistics.Minimum {
+			*c.stats.IntStatistics.Minimum = v
+		}
+		if v > *c.stats.IntStatistics.Maximum {
+			*c.stats.IntStatistics.Maximum = v
+		}
+		*c.stats.IntStatistics.Sum += v
+	}
+
+	if dn, err = c.data.writeValues(uvalues); err != nil {
 		return
 	}
+
+	*c.stats.NumberOfValues += uint64(len(values))
+	// reassure: bytes on disk includes presents
+	*c.stats.BytesOnDisk += uint64(pn + dn)
 
 	return
 }
@@ -1132,41 +1325,65 @@ func (c longV2Writer) getStreams() []*streamWriter {
 }
 
 type floatWriter struct {
-	*cwBase
+	*treeWriter
 	data *streamWriter
 }
 
-func (c *floatWriter) write(batch *ColumnVector) (rows uint64, err error) {
-	var vector []float32
-	values := batch.Vector.([]float32)
-	rows = uint64(len(values))
+func newFloatWriter(schema *TypeDescription, opts *WriterOptions) *floatWriter {
+	ds := &pb.DoubleStatistics{Sum: new(float64), Minimum: new(float64), Maximum: new(float64)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), DoubleStatistics: ds}
+	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := newFloatStream(schema.Id, pb.Stream_DATA, opts)
+	return &floatWriter{base, data}
+}
 
-	if c.schema.HasNulls {
-		if batch.Presents == nil || len(batch.Presents) == 0 {
-			return 0, errors.New("no presents data")
-		}
-		if len(batch.Presents) != len(values) {
+func (c *floatWriter) write(batch *batchInternal) (rows int, err error) {
+	var values []float32
+	vector := batch.Vector.([]float32)
+	rows = len(vector)
+
+	var pn, dn int
+
+	if len(batch.Presents) != 0{
+		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of presents != vector")
 		}
 
-		log.Tracef("writing: float column write %d presents", len(batch.Presents))
-		if err = c.present.writeValues(batch.Presents); err != nil {
-			return
+		if !batch.presentsFromParent {
+			*c.stats.HasNull = true
+
+			log.Tracef("writing: float column write %d presents", len(batch.Presents))
+			if pn, err = c.present.writeValues(batch.Presents); err != nil {
+				return
+			}
 		}
 
 		for i, p := range batch.Presents {
 			if p {
-				vector = append(vector, values[i])
+				values = append(values, vector[i])
 			}
 		}
 
 	} else {
-		vector = values
+		values = vector
 	}
 
-	if err = c.data.writeValues(vector); err != nil {
+	for _, v := range values {
+		if float64(v) < *c.stats.DoubleStatistics.Minimum {
+			*c.stats.DoubleStatistics.Minimum = float64(v)
+		}
+		if float64(v) > *c.stats.DoubleStatistics.Maximum {
+			*c.stats.DoubleStatistics.Maximum = float64(v)
+		}
+		*c.stats.DoubleStatistics.Sum += float64(v)
+	}
+
+	if dn, err = c.data.writeValues(values); err != nil {
 		return
 	}
+
+	*c.stats.NumberOfValues += uint64(len(values))
+	*c.stats.BytesOnDisk += uint64(pn + dn)
 
 	return
 }
@@ -1176,12 +1393,6 @@ func (c floatWriter) getStreams() []*streamWriter {
 	ss[0] = c.present
 	ss[1] = c.data
 	return ss
-}
-
-func newFloatWriter(schema *TypeDescription, opts *WriterOptions) *floatWriter {
-	c := &cwBase{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts)}
-	data := newFloatStream(schema.Id, pb.Stream_DATA, opts)
-	return &floatWriter{cwBase: c, data: data}
 }
 
 type streamWriter struct {
@@ -1215,7 +1426,10 @@ func compress(kind pb.CompressionKind, chunkSize int, dst *bytes.Buffer, src *by
 	return nil
 }
 
-func (s *streamWriter) writeValues(values interface{}) (err error) {
+// todo: refactoring write []int64
+func (s *streamWriter) writeValues(values interface{}) (n int, err error) {
+	mark := s.buf.Len()
+
 	s.encodingBuf.Reset()
 	if err = s.encoder.Encode(s.encodingBuf, values); err != nil {
 		return
@@ -1227,8 +1441,10 @@ func (s *streamWriter) writeValues(values interface{}) (err error) {
 
 	*s.info.Length = uint64(s.buf.Len())
 
+	n = s.buf.Len() - mark
+
 	// s.info.Get.. and s.info.Kind.St... invoked even with trace level
-	log.Debugf("stream id %d - %s wrote", s.info.GetColumn(), s.info.Kind.String())
+	log.Debugf("stream id %d - %s wrote length %d", s.info.GetColumn(), s.info.Kind.String(), n)
 	return
 }
 
@@ -1244,7 +1460,7 @@ func (s *streamWriter) reset() {
 }
 
 func (w *writer) GetSchema() *TypeDescription {
-	return w.schemas[0]
+	return w.stripe.schemas[0]
 }
 
 func (w *writer) writeHeader() (uint64, error) {
@@ -1268,7 +1484,7 @@ func (w *writer) writeFileTail() error {
 		*ft.NumberOfRows += si.GetNumberOfRows()
 	}
 	ft.Stripes = w.stripeInfos
-	ft.Types = schemasToTypes(w.schemas)
+	ft.Types = schemasToTypes(w.stripe.schemas)
 
 	// metadata
 
@@ -1473,10 +1689,7 @@ func newByteStreamWriter(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *s
 }
 
 func newIntV2Stream(id uint32, kind pb.Stream_Kind, signed bool, opts *WriterOptions) *streamWriter {
-	id_ := id
-	kind_ := kind
-	length_ := uint64(0)
-	info := &pb.Stream{Kind: &kind_, Column: &id_, Length: &length_}
+	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 	encoder := &encoding.IntRleV2{Signed: signed}
 	return &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: encoder, encodingBuf: &bytes.Buffer{}}
 }
@@ -1500,11 +1713,8 @@ func newBinaryV2Stream(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *str
 }
 
 func newBase128VarIntStreamWriter(id uint32, kind pb.Stream_Kind, opts *WriterOptions) *streamWriter {
-	id_ := id
-	kind_ := pb.Stream_DATA
-	length_ := uint64(0)
 	encoder := &encoding.Base128VarInt{}
-	info_ := &pb.Stream{Kind: &kind_, Column: &id_, Length: &length_}
+	info_ := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 	return &streamWriter{info: info_, buf: &bytes.Buffer{}, opts: opts, encoder: encoder, encodingBuf: &bytes.Buffer{}}
 }
 

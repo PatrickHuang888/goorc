@@ -108,14 +108,10 @@ func TestPatchBaseNegativeMinNoCmpression(t *testing.T) {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
-	stripes, err := reader.Stripes()
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
+
 	batch := schema.CreateReaderBatch(opts)
 
-	err = stripes[0].Next(batch)
-	if err != nil {
+	if err := reader.Next(batch);err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -145,20 +141,13 @@ func TestPatchBaseNegativeMin2NoCmppression(t *testing.T) {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
-	stripes, err := reader.Stripes()
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
 
 	batch := schema.CreateReaderBatch(opts)
-	if err != nil {
-		t.Errorf("create row column error %+v", err)
-	}
 
-	err = stripes[0].Next(batch)
-	if err != nil {
+	if err = reader.Next(batch);err != nil {
 		t.Fatalf("%+v", err)
 	}
+
 	reader.Close()
 
 	assert.Equal(t, values, batch.Vector)
@@ -185,15 +174,9 @@ func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
-	stripes, err := reader.Stripes()
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-
 	batch := schema.CreateReaderBatch(opts)
 
-	err = stripes[0].Next(batch)
-	if err != nil {
+	if err = reader.Next(batch);err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -304,6 +287,35 @@ func TestTimestamp(t *testing.T) {
 	assert.Equal(t, t12, batch.Vector.([]orc.Timestamp)[11].Time(loc).Format(layout))
 
 	if err := reader.Close(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+}
+
+func TestStringAndBinaryStatistics(t *testing.T) {
+	opts := orc.DefaultReaderOptions()
+
+	reader, err := orc.NewFileReader("testStringAndBinaryStatistics.0.12.orc", opts)
+	if err != nil {
+		t.Errorf("create reader error: %+v", err)
+	}
+
+	schema := reader.GetSchema()
+	log.Debugf("schema: %s", schema.String())
+
+	// check the stats
+	stats:= reader.GetStatistics()
+	assert.Equal(t, 4, int(stats[0].GetNumberOfValues()))
+	assert.Equal(t, 15, int(stats[1].GetBinaryStatistics().GetSum()))
+
+	batch := schema.CreateReaderBatch(opts)
+
+	if err := reader.Next(batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	assert.Equal(t, 4, batch.ReadRows)
+
+	if err=reader.Close();err!=nil {
 		t.Fatalf("%+v", err)
 	}
 }
