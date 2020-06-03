@@ -138,10 +138,10 @@ func TestLongColumnRWwithNoPresents(t *testing.T) {
 	length_ := uint64(writer.data.buf.Len())
 	info := &pb.Stream{Column: &schema.Id, Kind: &kind_, Length: &length_}
 
-	cr := &crBase{schema: schema, numberOfRows: uint64(rows)}
+	cr := &treeReader{schema: schema, numberOfRows: uint64(rows)}
 	dataStream := &streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
 	data := &longV2StreamReader{decoder: &encoding.IntRleV2{Signed: true}, stream: dataStream}
-	reader := &longV2Reader{crBase: cr, data: data}
+	reader := &longV2Reader{treeReader: cr, data: data}
 	err = reader.next(rbatch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -202,8 +202,8 @@ func TestLongColumnRWwithPresents(t *testing.T) {
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
 	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &longV2Reader{crBase: cr, data: data}
+	base := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &longV2Reader{treeReader: base, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -242,10 +242,10 @@ func TestBoolColumnRWwithoutPresents(t *testing.T) {
 	length_ := uint64(writer.data.buf.Len())
 	info := &pb.Stream{Column: &schema.Id, Kind: &kind_, Length: &length_}
 
-	cr := &crBase{schema: schema, numberOfRows: uint64(rows)}
+	cr := &treeReader{schema: schema, numberOfRows: uint64(rows)}
 	dataStream := &streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
 	data := &boolStreamReader{decoder: &encoding.BoolRunLength{&encoding.ByteRunLength{}}, stream: dataStream}
-	reader := &boolReader{crBase: cr, data: data}
+	reader := &boolReader{treeReader: cr, data: data}
 	err = reader.next(rbatch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -298,8 +298,8 @@ func TestFloatColumnWithPresents(t *testing.T) {
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
 	data := newFloatStreamReader(ropts, dInfo, 0, dataBs)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &floatReader{crBase: cr, data: data}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &floatReader{treeReader: cr, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -353,8 +353,8 @@ func TestDoubleColumnWithPresents(t *testing.T) {
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
 	data := newDoubleStreamReader(ropts, dInfo, 0, dataBs)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &doubleReader{crBase: cr, data: data}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &doubleReader{treeReader: cr, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -414,8 +414,8 @@ func TestColumnStringDirectV2WithPresents(t *testing.T) {
 	lInfo := &pb.Stream{Column: &schema.Id, Kind: &lKind, Length: &lLength}
 	length := newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &stringDirectV2Reader{crBase: cr, data: data, length: length}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &stringDirectV2Reader{treeReader: cr, data: data, length: length}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -469,8 +469,8 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
 	data := newByteStreamReader(ropts, dInfo, 0, dataBs)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &byteReader{crBase: cr, data: data}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &byteReader{treeReader: cr, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -530,8 +530,8 @@ func TestColumnBinaryV2WithPresents(t *testing.T) {
 	lInfo := &pb.Stream{Column: &schema.Id, Kind: &lKind, Length: &lLength}
 	length := newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &binaryV2Reader{crBase: cr, data: data, length: length}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &binaryV2Reader{treeReader: cr, data: data, length: length}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -591,8 +591,8 @@ func TestColumnDecimal64WithPresents(t *testing.T) {
 	sInfo := &pb.Stream{Column: &schema.Id, Kind: &sKind, Length: &sLength}
 	secondary := newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, true)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &decimal64DirectV2Reader{crBase: cr, data: data, secondary: secondary}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &decimal64DirectV2Reader{treeReader: cr, data: data, secondary: secondary}
 
 	err = reader.next(batch)
 	if err != nil {
@@ -648,8 +648,8 @@ func TestColumnDateWithPresents(t *testing.T) {
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
 	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &dateV2Reader{crBase: cr, data: data}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &dateV2Reader{treeReader: cr, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -713,8 +713,8 @@ func TestColumnTimestampWithPresents(t *testing.T) {
 	sInfo := &pb.Stream{Column: &schema.Id, Kind: &sKind, Length: &sLength}
 	secondary := newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, false)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &timestampV2Reader{crBase: cr, data: data, secondary: secondary}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &timestampV2Reader{treeReader: cr, data: data, secondary: secondary}
 
 	err = reader.next(batch)
 	if err != nil {
@@ -732,9 +732,7 @@ func TestColumnStructWithPresents(t *testing.T) {
 	child1.Encoding = pb.ColumnEncoding_DIRECT_V2
 	schema.ChildrenNames = []string{"child1"}
 	schema.Children = []*TypeDescription{child1}
-	if err := normalizeSchema(schema); err != nil {
-		t.Fatalf("%+v", err)
-	}
+	schema.normalize()
 
 	wopts := DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
@@ -789,11 +787,11 @@ func TestColumnStructWithPresents(t *testing.T) {
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
 	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
 
-	intCr := &crBase{schema: schema, numberOfRows: uint64(rows)}
-	intReader := &longV2Reader{crBase: intCr, data: data}
+	intCr := &treeReader{schema: schema, numberOfRows: uint64(rows)}
+	intReader := &longV2Reader{treeReader: intCr, data: data}
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &structReader{crBase: cr, children: []columnReader{intReader}}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &structReader{treeReader: cr, children: []columnReader{intReader}}
 
 	err = reader.next(rbatch)
 	if err != nil {
@@ -862,8 +860,8 @@ func TestColumnStringUsingDictWithPresents(t *testing.T) {
 	dlInfo := &pb.Stream{Column: &schema.Id, Kind: &dlKind, Length: &dlLength}
 	dictLength := newLongV2StreamReader(ropts, dlInfo, 0, dictLengthBs, false)
 
-	cr := &crBase{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &stringDictV2Reader{crBase: cr, data: data, dictData: dictData, dictLength: dictLength}
+	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &stringDictV2Reader{treeReader: cr, data: data, dictData: dictData, dictLength: dictLength}
 
 	err = reader.next(batch)
 	if err != nil {

@@ -128,6 +128,10 @@ func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
 
 	schemas := unmarshallSchema(tail.Footer.Types)
 
+	for i, stat := range tail.Footer.Statistics {
+		schemas[i].HasNulls = stat.GetHasNull()
+	}
+
 	opts.CompressionKind = tail.Postscript.GetCompression()
 	if opts.CompressionKind != pb.CompressionKind_NONE { // compression_none no block size
 		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
@@ -137,10 +141,6 @@ func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
 		stats: tail.Footer.GetStatistics()}
 
 	r.initStripes(tail.Footer.GetStripes())
-
-	if err = normalizeSchema(r.GetSchema()); err != nil {
-		return
-	}
 
 	return
 }
@@ -208,9 +208,8 @@ func (r *reader) initStripes(infos []*pb.StripeInformation) error {
 		}
 		log.Debugf("extracted stripe footer %d: %s", i, footer.String())
 
-
 		var sr *stripeReader
-		if sr, err = newStripeReader(r.f, r.schemas[0], r.opts, i, stripeInfo, footer); err != nil {
+		if sr, err = newStripeReader(r.f, r.schemas, r.opts, i, stripeInfo, footer); err != nil {
 			return err
 		}
 
@@ -255,13 +254,12 @@ type stripeReader struct {
 	idx int
 }
 
-func newStripeReader(in io.ReadSeeker, schema *TypeDescription, opts *ReaderOptions, idx int, info *pb.StripeInformation,
-	footer *pb.StripeFooter) (reader *stripeReader, err error){
+func newStripeReader(in io.ReadSeeker, schemas []*TypeDescription, opts *ReaderOptions, idx int, info *pb.StripeInformation,
+	footer *pb.StripeFooter) (reader *stripeReader, err error) {
 
-	schemas:= schema.normalize()
-	reader= &stripeReader{in:in, schemas: schemas, opts:opts, idx:idx}
+	reader = &stripeReader{in: in, schemas: schemas, opts: opts, idx: idx}
 
-	err= reader.prepare(info, footer)
+	err = reader.prepare(info, footer)
 
 	return
 }
@@ -271,12 +269,12 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 
 	//prepare column reader
 	s.columnReaders = make([]columnReader, len(s.schemas))
-	columns := make([]*crBase, len(s.schemas))
+	columns := make([]*treeReader, len(s.schemas))
 	// id==i
 	for _, schema := range s.schemas {
 		encoding := footer.GetColumns()[schema.Id].GetKind()
 
-		c := &crBase{schema: schema, numberOfRows: info.GetNumberOfRows()}
+		c := &treeReader{schema: schema, numberOfRows: info.GetNumberOfRows()}
 		columns[schema.Id] = c
 
 		switch schema.Kind {
@@ -286,7 +284,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 			fallthrough
 		case pb.Type_LONG:
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &longV2Reader{crBase: c}
+				s.columnReaders[schema.Id] = &longV2Reader{treeReader: c}
 				break
 			}
 			return errors.New("not impl")
@@ -298,15 +296,15 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 			if encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("column encoding error")
 			}
-			s.columnReaders[schema.Id] = &doubleReader{crBase: c}
+			s.columnReaders[schema.Id] = &doubleReader{treeReader: c}
 
 		case pb.Type_STRING:
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &stringDirectV2Reader{crBase: c}
+				s.columnReaders[schema.Id] = &stringDirectV2Reader{treeReader: c}
 				break
 			}
 			if encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-				s.columnReaders[schema.Id] = &stringDictV2Reader{crBase: c}
+				s.columnReaders[schema.Id] = &stringDictV2Reader{treeReader: c}
 				break
 			}
 			return errors.New("column encoding error")
@@ -315,13 +313,13 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 			if encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("bool column encoding error")
 			}
-			s.columnReaders[schema.Id] = &boolReader{crBase: c}
+			s.columnReaders[schema.Id] = &boolReader{treeReader: c}
 
 		case pb.Type_BYTE: // tinyint
 			if encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("tinyint column encoding error")
 			}
-			s.columnReaders[schema.Id] = &byteReader{crBase: c}
+			s.columnReaders[schema.Id] = &byteReader{treeReader: c}
 
 		case pb.Type_BINARY:
 			if encoding == pb.ColumnEncoding_DIRECT {
@@ -330,7 +328,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 				break
 			}
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &binaryV2Reader{crBase: c}
+				s.columnReaders[schema.Id] = &binaryV2Reader{treeReader: c}
 				break
 			}
 			return errors.New("binary column encoding error")
@@ -342,7 +340,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 				break
 			}
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &decimal64DirectV2Reader{crBase: c}
+				s.columnReaders[schema.Id] = &decimal64DirectV2Reader{treeReader: c}
 				break
 			}
 			return errors.New("column encoding error")
@@ -354,7 +352,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 				break
 			}
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &dateV2Reader{crBase: c}
+				s.columnReaders[schema.Id] = &dateV2Reader{treeReader: c}
 				break
 			}
 			return errors.New("column encoding error")
@@ -367,7 +365,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 			}
 
 			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &timestampV2Reader{crBase: c}
+				s.columnReaders[schema.Id] = &timestampV2Reader{treeReader: c}
 				break
 			}
 			return errors.New("column encoding error")
@@ -376,7 +374,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 			if encoding != pb.ColumnEncoding_DIRECT {
 				return errors.New("encoding error")
 			}
-			s.columnReaders[schema.Id] = &structReader{crBase: c}
+			s.columnReaders[schema.Id] = &structReader{treeReader: c}
 
 		case pb.Type_LIST:
 			if encoding == pb.ColumnEncoding_DIRECT {
@@ -414,7 +412,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 		}
 	}
 
-	// finish struct
+	// build tree
 	for _, schema := range s.schemas {
 		if schema.Kind == pb.Type_STRUCT {
 			var crs []columnReader
@@ -433,6 +431,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 	for _, streamInfo := range footer.GetStreams() {
 
 		id := streamInfo.GetColumn()
+		schema := s.schemas[id]
 		streamKind := streamInfo.GetKind()
 		length := streamInfo.GetLength()
 
@@ -442,17 +441,15 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 			continue
 		}
 
-		// all stream reader use one file?
-		//sr := &streamReader{start: dataStart, info: streamInfo, buf: &bytes.Buffer{}, in: s.f, opts: s.opts}
-
 		if streamKind == pb.Stream_PRESENT {
+			if !schema.HasNulls {
+				return errors.Errorf("reader column %d has !HasNulls, why has present stream?")
+			}
 			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
-			s.schemas[id].HasNulls = true
 			dataStart += length
 			continue
 		}
 
-		schema := s.schemas[id]
 		encoding := footer.GetColumns()[id].GetKind()
 		switch schema.Kind {
 		case pb.Type_SHORT:
@@ -610,7 +607,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 			}
 
 		case pb.Type_STRUCT:
-			//
+			// no data
 
 		case pb.Type_LIST:
 			if encoding == pb.ColumnEncoding_DIRECT {
@@ -681,7 +678,7 @@ type columnReader interface {
 	next(batch *ColumnVector) error
 }
 
-type crBase struct {
+type treeReader struct {
 	schema *TypeDescription
 
 	present *boolStreamReader
@@ -690,37 +687,41 @@ type crBase struct {
 	cursor       uint64
 }
 
-func (c *crBase) String() string {
+func (r *treeReader) String() string {
 	sb := strings.Builder{}
-	fmt.Fprintf(&sb, "id %d, ", c.schema.Id)
-	fmt.Fprintf(&sb, "kind %stream, ", c.schema.Kind.String())
-	fmt.Fprintf(&sb, "encoding %s, ", c.schema.Encoding.String())
-	fmt.Fprintf(&sb, "number of rows %d, ", c.numberOfRows)
-	fmt.Fprintf(&sb, "read cursor %d", c.cursor)
+	fmt.Fprintf(&sb, "id %d, ", r.schema.Id)
+	fmt.Fprintf(&sb, "kind %stream, ", r.schema.Kind.String())
+	fmt.Fprintf(&sb, "encoding %s, ", r.schema.Encoding.String())
+	fmt.Fprintf(&sb, "number of rows %d, ", r.numberOfRows)
+	fmt.Fprintf(&sb, "read cursor %d", r.cursor)
 	return sb.String()
 }
 
-func (c *crBase) nextPresents(batch *ColumnVector) error {
+func (r *treeReader) nextPresents(batch *ColumnVector) error {
 	// rethink: writer always init present stream writer first,
 	// while reader's present stream init at prepare()
-	if c.present != nil {
+	if r.present != nil {
+		if batch.Presents == nil {
+			return errors.Errorf("reader has present stream, batch should have presents slice")
+		}
 		batch.Presents = batch.Presents[:0]
-		count := c.cursor
-		for i := 0; count < c.numberOfRows && i < cap(batch.Presents); i++ {
-			v, err := c.present.next()
+
+		count := r.cursor
+		for i := 0; count < r.numberOfRows && i < cap(batch.Presents); i++ {
+			v, err := r.present.next()
 			if err != nil {
 				return err
 			}
 			batch.Presents = append(batch.Presents, v)
 			count++
 		}
-		log.Debugf("column %d has read %d presents values", c.schema.Id, len(batch.Presents))
+		log.Debugf("column %d has read %d presents values", r.schema.Id, len(batch.Presents))
 	}
 	return nil
 }
 
 type byteReader struct {
-	*crBase
+	*treeReader
 	data *byteStreamReader
 }
 
@@ -754,7 +755,7 @@ func (c *byteReader) next(batch *ColumnVector) error {
 }
 
 type dateV2Reader struct {
-	*crBase
+	*treeReader
 	data *longV2StreamReader
 }
 
@@ -788,7 +789,7 @@ func (c *dateV2Reader) next(batch *ColumnVector) error {
 }
 
 type timestampV2Reader struct {
-	*crBase
+	*treeReader
 
 	data      *longV2StreamReader
 	secondary *longV2StreamReader
@@ -832,7 +833,7 @@ func (c *timestampV2Reader) next(batch *ColumnVector) error {
 }
 
 type boolReader struct {
-	*crBase
+	*treeReader
 	data *boolStreamReader
 }
 
@@ -865,7 +866,7 @@ func (c *boolReader) next(batch *ColumnVector) error {
 }
 
 type binaryV2Reader struct {
-	*crBase
+	*treeReader
 	length *longV2StreamReader
 	data   *stringContentsStreamReader
 }
@@ -908,7 +909,7 @@ func (c *binaryV2Reader) next(batch *ColumnVector) error {
 }
 
 type stringDirectV2Reader struct {
-	*crBase
+	*treeReader
 	data   *stringContentsStreamReader
 	length *longV2StreamReader
 }
@@ -951,7 +952,7 @@ func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
 }
 
 type stringDictV2Reader struct {
-	*crBase
+	*treeReader
 
 	data       *longV2StreamReader
 	dictData   *stringContentsStreamReader
@@ -1011,7 +1012,7 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 }
 
 type longV2Reader struct {
-	*crBase
+	*treeReader
 	data *longV2StreamReader
 }
 
@@ -1045,7 +1046,7 @@ func (c *longV2Reader) next(batch *ColumnVector) error {
 }
 
 type decimal64DirectV2Reader struct {
-	*crBase
+	*treeReader
 	data      *varIntStreamReader
 	secondary *longV2StreamReader
 }
@@ -1088,7 +1089,7 @@ func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
 }
 
 type floatReader struct {
-	*crBase
+	*treeReader
 	data *floatStreamReader
 }
 
@@ -1122,7 +1123,7 @@ func (c *floatReader) next(batch *ColumnVector) error {
 }
 
 type doubleReader struct {
-	*crBase
+	*treeReader
 	data *doubleStreamReader
 }
 
@@ -1156,7 +1157,7 @@ func (c *doubleReader) next(batch *ColumnVector) error {
 }
 
 type structReader struct {
-	*crBase
+	*treeReader
 	children []columnReader
 }
 

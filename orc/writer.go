@@ -33,9 +33,6 @@ type WriterOptions struct {
 	CompressionKind pb.CompressionKind
 	StripeSize      uint64 // ~200MB
 	BufferSize      uint   // written data in memory
-	//FlushLater      bool //if true means every write, will write in memory,
-	// then flush out at some threshold,
-	//but if flush fail, previous write into memory would be lost
 }
 
 func DefaultWriterOptions() *WriterOptions {
@@ -105,7 +102,7 @@ func newWriter(schema *TypeDescription, opts *WriterOptions, out io.WriteCloser)
 // Encode out by columns
 type writer struct {
 	//schemas []*TypeDescription
-	opts    *WriterOptions
+	opts *WriterOptions
 
 	offset uint64
 
@@ -167,9 +164,9 @@ func newStripeWriter(offset uint64, schema *TypeDescription, opts *WriterOptions
 	}
 
 	var writers []columnWriter
-	writers= append(writers, writer)
+	writers = append(writers, writer)
 	for _, child := range writer.getChildren() {
-		writers= append(writers, child)
+		writers = append(writers, child)
 	}
 	// todo: check writer index == schema id
 
@@ -432,7 +429,7 @@ type treeWriter struct {
 	children []columnWriter
 }
 
-func (writer treeWriter) getChildren()[]columnWriter  {
+func (writer treeWriter) getChildren() []columnWriter {
 	return writer.children
 }
 
@@ -541,18 +538,21 @@ func (c *timestampDirectV2Writer) write(batch *batchInternal) (rows int, err err
 
 	var pn, sn, nn int
 
-	if len(batch.Presents) != 0{
+	if len(batch.Presents) != 0 {
 
 		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if  !batch.presentsFromParent {
+		if !batch.presentsFromParent {
 			if pn, err = c.present.writeValues(batch.Presents); err != nil {
 				return 0, err
 			}
 			*c.stats.HasNull = true
 		}
+
+		// todo: check presents should write in stripe or whole file
+		// check opts HasNull==true than should always has Presents?
 
 		for i, p := range batch.Presents {
 			if p {
@@ -700,7 +700,7 @@ func (c *decimal64DirectV2Writer) write(batch *batchInternal) (rows int, err err
 			return 0, errors.New("rows of present != vector")
 		}
 
-		if  !batch.presentsFromParent {
+		if !batch.presentsFromParent {
 			if pn, err = c.present.writeValues(batch.Presents); err != nil {
 				return 0, err
 			}
@@ -763,7 +763,7 @@ func (c *doubleWriter) write(batch *batchInternal) (rows int, err error) {
 
 	var pn, dn int
 
-	if len(batch.Presents)!=0 {
+	if len(batch.Presents) != 0 {
 		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of present != vector")
 		}
@@ -1344,7 +1344,7 @@ func (c *floatWriter) write(batch *batchInternal) (rows int, err error) {
 
 	var pn, dn int
 
-	if len(batch.Presents) != 0{
+	if len(batch.Presents) != 0 {
 		if len(batch.Presents) != len(vector) {
 			return 0, errors.New("rows of presents != vector")
 		}
