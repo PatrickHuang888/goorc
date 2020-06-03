@@ -20,7 +20,6 @@ type TypeDescription struct {
 	Encoding pb.ColumnEncoding_Kind
 
 	HasNulls  bool
-	HasFather bool
 }
 
 func (td TypeDescription) String() string{
@@ -46,21 +45,10 @@ func (td TypeDescription) String() string{
 	return sb.String()
 }
 
+var nodeId uint32
 func doId(node *TypeDescription) error {
 	nodeId++
 	node.Id = nodeId
-	return nil
-}
-
-func doFatherFlag(node *TypeDescription) error {
-	node.HasFather = true
-	return nil
-}
-
-func leafNoNulls(node *TypeDescription) error {
-	if node.Children==nil && node.HasNulls{
-		return errors.Errorf("leaf node %d cannot has nulls", node.Id)
-	}
 	return nil
 }
 
@@ -83,29 +71,8 @@ func traverse(node *TypeDescription, do action) error {
 	return nil
 }
 
-var nodeId uint32
 
-func normalizeSchema(root *TypeDescription) error {
-	// set id for write
-	if len(root.Children)!=0 && root.Children[0].Id==0 {
-		nodeId = 0
-		if err := traverse(root, doId); err != nil {
-			return err
-		}
-	}
-
-	if err := traverse(root, doFatherFlag); err != nil {
-		return err
-	}
-
-	if err:=traverse(root, leafNoNulls); err!=nil {
-		return err
-	}
-
-	return nil
-}
-
-// set ids of schema, flat the schema tree to slice
+// set ids, flat the schema tree to slice
 func (td *TypeDescription) normalize() (schemas []*TypeDescription) {
 	var id uint32
 	if err := walkSchema(&schemas, td, id); err != nil {
@@ -147,9 +114,7 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 	return t
 }
 
-func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *ColumnVector) {
-	// refactor: how and when normalized
-	//td.normalize()
+func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) *ColumnVector {
 
 	var vector interface{}
 	switch td.Kind {
@@ -212,16 +177,16 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) (batch *Column
 		panic("unknown type")
 	}
 
-	batch = &ColumnVector{Id: td.Id, Vector: vector}
+	batch := &ColumnVector{Id: td.Id, Vector: vector}
 	if td.HasNulls {
 		batch.Presents = make([]bool, 0, opts.RowSize)
 	}
-	return
+	return batch
 }
 
 // should normalize first
-func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) (batch *ColumnVector) {
-	// refactor: how and when normalized
+func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) *ColumnVector {
+	// set id
 	td.normalize()
 
 	if td.Kind == pb.Type_STRUCT {

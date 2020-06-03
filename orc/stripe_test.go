@@ -49,7 +49,7 @@ func TestStripeStructBasic(t *testing.T) {
 	}
 
 	ropts := DefaultReaderOptions()
-	sr, err := newStripeReader(dummyOut, schema, ropts, 0, writer.info, footer)
+	sr, err := newStripeReader(dummyOut, schema.normalize(), ropts, 0, writer.info, footer)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -123,7 +123,7 @@ func TestStripeBasic(t *testing.T) {
 	}
 
 	ropts := DefaultReaderOptions()
-	sr, err := newStripeReader(dummyOut, schema, ropts, 0, writer.info, footer)
+	sr, err := newStripeReader(dummyOut, schema.normalize(), ropts, 0, writer.info, footer)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
