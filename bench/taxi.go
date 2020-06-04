@@ -17,7 +17,7 @@ func main() {
 	path := "/u01/apache/orc/java/bench/data/generated/taxi/orc.gz"
 
 	opts := orc.DefaultReaderOptions()
-	opts.RowSize= 100_000
+	opts.RowSize = 100_000
 
 	reader, err := orc.NewFileReader(path, opts)
 	if err != nil {
@@ -28,7 +28,7 @@ func main() {
 	schema := reader.GetSchema()
 	log.Infof("schema: %s", schema.String())
 
-	for i, stat:= range reader.GetStatistics(){
+	for i, stat := range reader.GetStatistics() {
 		log.Infof("id %d, stat: %s", i, stat.String())
 	}
 
@@ -52,122 +52,62 @@ func main() {
 		vendorId := columnes[0].Vector.([]int64)
 		fmt.Printf("vendor id %d, ", vendorId[0])
 
-		pickupTime:= columnes[1].Vector.([]orc.Timestamp)
+		pickupTime := columnes[1].Vector.([]orc.Timestamp)
 		fmt.Printf("pick-up time %s,", pickupTime[0].Time(nil).String())
 
-		dropTime:= columnes[2].Vector.([]orc.Timestamp)
-			fmt.Printf("drop-off time: %s, ", dropTime[0].Time(nil).String())
+		dropTime := columnes[2].Vector.([]orc.Timestamp)
+		fmt.Printf("drop-off time: %s, ", dropTime[0].Time(nil).String())
 
+		passengerCount := columnes[3].Vector.([]int64)
+		fmt.Printf("passenger_count: %d, ", passengerCount[0])
 
-		passengerCount:= columnes[3].Vector.([]int64)
-			fmt.Printf("passenger_count: %d, ", passengerCount[0])
+		tripDistance := columnes[4].Vector.([]float64)
+		fmt.Printf("trip_distance: %f, ", tripDistance[0])
 
+		pickupLongitude := columnes[5].Vector.([]float64)
+		fmt.Printf("pickup_longitude: %f, ", pickupLongitude[0])
 
-		tripDistance:= columnes[4].Vector.([]float64)
-			fmt.Printf("trip_distance: %f, ", tripDistance[0])
+		pickLatitude := columnes[6].Vector.([]float64)
+		fmt.Printf("pickup_latitude: %f, ", pickLatitude[0])
 
-		/*if f.ColumnId()==6 {
-			fmt.Printf("pickup_longitude: %d\n", f.Rows())
-			for j, v := range f.(*orc.DoubleColumn).Vector {
-				fmt.Printf("%f \n", v)
-				if j > 10 {
-					break
-				}
-			}
-		}
+		rateCodeId := columnes[7].Vector.([]int64)
+		fmt.Printf("ratecode_id: %d, ", rateCodeId[0])
 
-		if f.ColumnId()==7 {
-			fmt.Printf("pickup_latitude: %d\n", f.Rows())
-			for j, v := range f.(*orc.DoubleColumn).Vector {
-				fmt.Printf("%f \n", v)
-				if j > 10 {
-					break
-				}
-			}
-		}
+		storeAndFwdFlag := columnes[8].Vector.([]string)
+		fmt.Printf("store_and_fwd_flag %s, ", storeAndFwdFlag[0])
 
-		if f.ColumnId()==8 {
-			fmt.Printf("ratecode_id: %d\n", f.Rows())
-			for j, v := range f.(*orc.LongColumn).Vector {
-				fmt.Printf("%d \n", v)
-				if j > 10 {
-					break
-				}
-			}
-		}
+		dropoffLongitude := columnes[9].Vector.([]float64)
+		fmt.Printf(" dropoff_longitude %f, ", dropoffLongitude[0])
 
-		if f.ColumnId()==9 {
-			fmt.Printf("store_and_fwd_flag rows: %d\n", f.Rows())
-			for j, v := range f.(*orc.StringColumn).Vector {
-				fmt.Printf("%s \n", v)
-				if j > 10 {
-					break
-				}
-			}
-		}
+		dropoffLatitude := columnes[10].Vector.([]float64)
+		fmt.Printf("dropoff_latitude %f, ", dropoffLatitude[0])
 
-		if f.ColumnId()==10 {
-			fmt.Printf(" dropoff_longitude: %d\n", f.Rows())
-			for j, v := range f.(*orc.DoubleColumn).Vector {
-				fmt.Printf("%f \n", v)
-				if j > 10 {
-					break
-				}
-			}
-		}
+		paymentType := columnes[11].Vector.([]int64)
+		fmt.Printf("payment_type %d, ", paymentType[0])
 
-		if f.ColumnId()==11 {
-			fmt.Printf("dropoff_latitude: %d\n", f.Rows())
-			for j, v := range f.(*orc.DoubleColumn).Vector {
-				fmt.Printf("%f \n", v)
-				if j > 10 {
-					break
-				}
-			}
-		}
+		fareAmount := columnes[12].Vector.([]orc.Decimal64)
+		fmt.Printf("fare_amount %f, ", fareAmount[0].Float64())
 
-		if f.ColumnId()==12 {
-			fmt.Printf("payment_type: %d\n", f.Rows())
-			for j, v := range f.(*orc.LongColumn).Vector {
-				fmt.Printf("%d \n", v)
-				if j > 10 {
-					break
-				}
-			}
-		}
+		extra := columnes[13].Vector.([]orc.Decimal64)
+		fmt.Printf("extra %f, ", extra[0].Float64())
 
-		if f.ColumnId()==13 {
-			fmt.Printf("fare_amount: %d\n", f.Rows())
-			for j, v := range f.(*orc.Decimal64Column).Vector {
-				fmt.Printf("%s \n", v.String())
-				if j > 10 {
-					break
-				}
-			}
-		}
+		mtaTax := columnes[14].Vector.([]orc.Decimal64)
+		fmt.Printf("mta_tax %f, ", mtaTax[0].Float64())
 
-		if f.ColumnId()==14 {
-			fmt.Printf("extra: %d\n", f.Rows())
-			for j, v := range f.(*orc.Decimal64Column).Vector {
-				fmt.Printf("%s \n", v.String())
-				if j > 10 {
-					break
-				}
-			}
-		}
+		tipAmount := columnes[15].Vector.([]orc.Decimal64)
+		fmt.Printf("tip_amount %f, ", tipAmount[0].Float64())
 
-		if f.ColumnId()==15 {
-			fmt.Printf("mta_tax: %d\n", f.Rows())
-			for j, v := range f.(*orc.Decimal64Column).Vector {
-				fmt.Printf("%s \n", v.String())
-				if j > 10 {
-					break
-				}
-			}
-		}*/
+		trollsAmount := columnes[16].Vector.([]orc.Decimal64)
+		fmt.Printf("trolls_amount %f, ", trollsAmount[0].Float64())
+
+		improvSurchage := columnes[17].Vector.([]orc.Decimal64)
+		fmt.Printf("improvement_surcharge %f, ", improvSurchage[0].Float64())
+
+		totalAmount := columnes[18].Vector.([]orc.Decimal64)
+		fmt.Printf("total_amount %f, ", totalAmount[0].Float64())
 
 		rows += batch.ReadRows
-		fmt.Println("rows now: ", rows)
+		fmt.Println(" rows now: ", rows)
 	}
 	fmt.Printf("total rows %d", rows)
 }
