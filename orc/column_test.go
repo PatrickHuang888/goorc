@@ -316,7 +316,7 @@ func TestDoubleColumnWithPresents(t *testing.T) {
 	rows := 100
 	values := make([]float64, rows)
 	for i := 0; i < rows; i++ {
-		values[i] = float64(i)
+		values[i] = float64(i)+0.11
 	}
 	presents := make([]bool, rows)
 	for i := 0; i < rows; i++ {
@@ -359,7 +359,7 @@ func TestDoubleColumnWithPresents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, presents, batch.Presents[:100])
+	assert.Equal(t, presents, batch.Presents)
 	assert.Equal(t, values, batch.Vector)
 }
 

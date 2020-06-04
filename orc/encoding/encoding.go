@@ -1408,9 +1408,9 @@ func (d *Ieee754Double) Decode(in BufferedReader) (float64, error) {
 	if _, err := io.ReadFull(in, bb); err != nil {
 		return 0, errors.WithStack(err)
 	}
-	v := math.Float64frombits(binary.BigEndian.Uint64(bb))
-	// !!!
-	//v := math.Float64frombits(binary.LittleEndian.Uint64(bb))
+	// !!
+	//v := math.Float64frombits(binary.BigEndian.Uint64(bb))
+	v := math.Float64frombits(binary.LittleEndian.Uint64(bb))
 	return v, nil
 }
 
@@ -1418,7 +1418,9 @@ func (e *Ieee754Double) Encode(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]float64)
 	bb := make([]byte, 8)
 	for _, v := range values {
-		binary.BigEndian.PutUint64(bb, math.Float64bits(v))
+		binary.LittleEndian.PutUint64(bb, math.Float64bits(v))
+		// !!
+		//binary.BigEndian.PutUint64(bb, math.Float64bits(v))
 		if _, err := out.Write(bb); err != nil {
 			return errors.WithStack(err)
 		}

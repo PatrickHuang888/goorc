@@ -443,7 +443,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 
 		if streamKind == pb.Stream_PRESENT {
 			if !schema.HasNulls {
-				return errors.Errorf("reader column %d has !HasNulls, why has present stream?")
+				return errors.New("reader column %d has !HasNulls, why has present stream?")
 			}
 			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
 			dataStart += length
