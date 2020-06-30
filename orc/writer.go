@@ -430,7 +430,7 @@ func (s *stripeWriter) reset() {
 }
 
 type columnWriter interface {
-	write(batch *batchInternal) (rows int, err error)
+	write(writePresents bool, presents []bool, v interface{}) (rows int, err error)
 
 	getStreams() []*streamWriter
 
@@ -455,174 +455,19 @@ type treeWriter struct {
 
 	children []columnWriter
 
-	rowsInIndex int
-	rowIndex    *pb.RowIndex
+	rowsInIndex  int
+	indexEntries []*pb.RowIndexEntry
 
 	writeIndex  bool
 	indexStride int
-
-	iFloatWriter
-	iDoubleWriter
 }
 
-func (c *treeWriter) write(batch *batchInternal) (rows int, err error) {
-
-	var presents []bool
-	if len(batch.Presents) != 0 && !batch.presentsFromParent {
-		presents = batch.Presents
+func (c *treeWriter) writePresents(pp []bool) (err error) {
+	var n int
+	if n, err = c.present.writeValues(pp); err != nil {
+		return
 	}
-
-	var entry *pb.RowIndexEntry
-
-	if c.writeIndex {
-
-		// is this all because no generic ?? :(
-		switch c.schema.Kind {
-		case pb.Type_BINARY:
-		case pb.Type_BOOLEAN:
-		case pb.Type_BYTE:
-		case pb.Type_CHAR:
-		case pb.Type_DATE:
-		case pb.Type_DECIMAL:
-		case pb.Type_INT:
-		case pb.Type_LONG:
-		case pb.Type_TIMESTAMP:
-
-		case pb.Type_SHORT:
-			rows = len(batch.Vector.([]byte))
-
-		case pb.Type_VARCHAR:
-			fallthrough
-		case pb.Type_STRING:
-			rows = len(batch.Vector.([]string))
-
-		case pb.Type_FLOAT:
-			rows = len(batch.Vector.([]float32))
-
-			// maybe checking should move to Write entry
-			// todo:
-			/*if len(batch.Presents) != 0 && len(batch.Presents) != len(vector) {
-				{
-					return 0, errors.New("rows of presents != vector")
-				}
-			}*/
-
-		case pb.Type_DOUBLE:
-			rows = len(batch.Vector.([]float64))
-
-		case pb.Type_STRUCT:
-		case pb.Type_MAP:
-		case pb.Type_UNION:
-		case pb.Type_LIST:
-
-		}
-
-		var i int
-		var pp []bool
-		for ; i < rows; {
-
-			if c.rowsInIndex+i > c.indexStride {
-				entry = &pb.RowIndexEntry{}
-				c.rowIndex.Entry = append(c.rowIndex.Entry, entry)
-				c.rowsInIndex = c.rowsInIndex + i - c.indexStride
-			} else {
-				entry = c.rowIndex.Entry[len(c.rowIndex.Entry)-1]
-				c.rowsInIndex += c.indexStride
-			}
-
-			if len(presents) != 0 {
-				pp = presents[i : i+c.indexStride]
-			}
-
-			switch c.schema.Kind {
-			case pb.Type_BINARY:
-			case pb.Type_BOOLEAN:
-			case pb.Type_BYTE:
-			case pb.Type_CHAR:
-			case pb.Type_DATE:
-			case pb.Type_DECIMAL:
-			case pb.Type_INT:
-			case pb.Type_LONG:
-			case pb.Type_TIMESTAMP:
-
-			case pb.Type_SHORT:
-
-			case pb.Type_VARCHAR:
-				fallthrough
-			case pb.Type_STRING:
-
-			case pb.Type_FLOAT:
-				vector := batch.Vector.([]float32)
-				if err = c.writeFloats(pp, vector[i:i+c.indexStride], entry); err != nil {
-					return
-				}
-			case pb.Type_DOUBLE:
-				vector := batch.Vector.([]float64)
-				if err = c.writeDoubles(pp, vector[i:i+c.indexStride], entry); err != nil {
-					return
-				}
-
-			case pb.Type_STRUCT:
-			case pb.Type_MAP:
-			case pb.Type_UNION:
-			case pb.Type_LIST:
-
-			}
-
-			i += c.indexStride
-		}
-
-		i -= c.indexStride
-		c.rowsInIndex += rows - i
-		if len(presents) != 0 {
-			pp = presents[i:]
-		}
-
-		switch c.schema.Kind {
-		case pb.Type_FLOAT:
-			vector := batch.Vector.([]float32)
-			if err = c.writeFloats(pp, vector[i:], entry); err != nil {
-				return
-			}
-		}
-
-
-
-	} else {  // no index
-
-		switch c.schema.Kind {
-		case pb.Type_BINARY:
-		case pb.Type_BOOLEAN:
-		case pb.Type_BYTE:
-		case pb.Type_CHAR:
-		case pb.Type_DATE:
-		case pb.Type_DECIMAL:
-		case pb.Type_INT:
-		case pb.Type_LONG:
-		case pb.Type_TIMESTAMP:
-
-		case pb.Type_SHORT:
-
-		case pb.Type_VARCHAR:
-			fallthrough
-		case pb.Type_STRING:
-			vector := batch.Vector.([]string)
-			if err = c.writeStrings(presents, vector, entry); err != nil {
-				return
-			}
-		case pb.Type_FLOAT:
-			vector := batch.Vector.([]float32)
-			if err = c.writeFloats(presents, vector, entry); err != nil {
-				return
-			}
-		case pb.Type_DOUBLE:
-			vector := batch.Vector.([]float64)
-			if err = c.writeDoubles(presents, vector, entry); err != nil {
-				return
-			}
-		}
-	}
-
+	*c.stats.BytesOnDisk += uint64(n)
 	return
 }
 
@@ -953,12 +798,13 @@ func newDoubleWriter(schema *TypeDescription, opts *WriterOptions) *doubleWriter
 	return &doubleWriter{base, data}
 }
 
-func (c *doubleWriter) writeDoubles(presents []bool, vector []float64, indexEntry *pb.RowIndexEntry) error {
-	var err error
+func (c *doubleWriter) write(batch *ColumnVector) (rows int, err error) {
+	vector := batch.Vector.([]float64)
 	var pn, dn int
 	var values []float64
+	rows = len(vector)
 
-	if len(presents) != 0 {
+	if len(batch.Presents) != 0 {
 		*c.stats.HasNull = true
 		if pn, err = c.present.writeValues(presents); err != nil {
 			return err
@@ -1002,7 +848,7 @@ func (c *doubleWriter) writeDoubles(presents []bool, vector []float64, indexEntr
 	*c.stats.NumberOfValues += uint64(len(values))
 	*c.stats.BytesOnDisk += uint64(pn + dn)
 
-	return err
+	return
 }
 
 func (c *doubleWriter) getStreams() []*streamWriter {
@@ -1331,50 +1177,101 @@ type boolWriter struct {
 }
 
 func newBoolWriter(schema *TypeDescription, opts *WriterOptions) *boolWriter {
-	// fixme: BinaryStatistics?
-	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BucketStatistics: &pb.BucketStatistics{}}
 	base := &treeWriter{schema: schema, present: newBoolStreamWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
 	data := newBoolStreamWriter(schema.Id, pb.Stream_DATA, opts)
 	return &boolWriter{base, data}
 }
 
-func (c *boolWriter) write(batch *batchInternal) (rows int, err error) {
-	var values []bool
-	vector := batch.Vector.([]bool)
+func (c *boolWriter) write(writePresents bool, presents []bool, v interface{}) (rows int, err error) {
+	vector := v.([]bool)
 	rows = len(vector)
 
-	var pn, dn int
-
-	if len(batch.Presents) != 0 {
-		if len(batch.Presents) != len(values) {
-			return 0, errors.New("present error")
-		}
-
-		if !batch.presentsFromParent {
-			*c.stats.HasNull = true
-			if pn, err = c.present.writeValues(batch.Presents); err != nil {
-				return
-			}
-		}
-
-		for i, p := range batch.Presents {
-			if p {
-				values = append(values, values[i])
-			}
-		}
-
-	} else {
-		values = vector
+	if len(presents) != 0 && len(presents) != len(vector) {
+		return 0, errors.New("present error")
 	}
 
-	if dn, err = c.data.writeValues(vector); err != nil {
+	if !c.writeIndex {
+		err = c.doWrite(writePresents, presents, vector, 0, rows)
+		return
+	}
+
+	//should writeIndex
+	start := c.indexStride - c.rowsInIndex
+
+	if start >= rows {
+		err = c.doWrite(writePresents, presents, vector, 0, rows)
+		return
+	}
+
+	i := start
+	if err = c.doWrite(writePresents, presents, vector, 0, i); err != nil {
+		return
+	}
+	for ; i+c.indexStride < rows; {
+		if err = c.doWrite(writePresents, presents, vector, i, i+c.indexStride); err != nil {
+			return
+		}
+		i += c.indexStride
+	}
+	if i != start {
+		i -= c.indexStride
+	}
+	if err = c.doWrite(writePresents, presents, vector, i, rows); err != nil {
+		return
+	}
+
+	return
+}
+
+func (c *boolWriter) doWrite(writePresent bool, presents []bool, vector []bool, start int, end int) (err error) {
+
+	if writePresent && len(presents) != 0 {
+		if err = c.writePresents(presents[start:end]); err != nil {
+			return
+		}
+	}
+
+	if len(presents) == 0 {
+		err = c.writeData(vector[start:end])
+	}else {
+		var values []bool
+		for i, p := range presents[start:end] {
+			if p {
+				values = append(values, vector[start+i])
+			}
+		}
+		err = c.writeData(values)
+	}
+
+	if c.writeIndex {
+		if c.rowsInIndex+end-start == c.indexStride {
+			entry := &pb.RowIndexEntry{}
+			c.indexEntries = append(c.indexEntries, entry)
+			c.position(entry)
+			c.rowsInIndex = 0
+		} else {
+			c.rowsInIndex += end - start
+		}
+	}
+
+	return
+}
+
+func (c *boolWriter) writeData(values []bool) (err error) {
+	var n int
+	if n, err = c.data.writeValues(values); err != nil {
 		return
 	}
 
 	*c.stats.NumberOfValues += uint64(len(values))
-	*c.stats.BytesOnDisk += uint64(pn + dn)
-
+	*c.stats.BytesOnDisk += uint64(n)
 	return
+}
+
+func (c *boolWriter) position(entry *pb.RowIndexEntry) {
+	c.present.position(entry)
+	c.data.position(entry)
 }
 
 func (c *boolWriter) getStreams() []*streamWriter {
@@ -1405,12 +1302,6 @@ func (c *byteWriter) write(batch *batchInternal) (rows int, err error) {
 
 	var pn, dn int
 
-	var entry *pb.RowIndexEntry
-	if c.opts.WriteIndex {
-		entry = newIndexEntry(c.schema)
-		c.index.Entry = append(c.index.Entry, entry)
-	}
-
 	if len(batch.Presents) != 0 {
 
 		if len(batch.Presents) != len(vector) {
@@ -1437,12 +1328,6 @@ func (c *byteWriter) write(batch *batchInternal) (rows int, err error) {
 
 	if dn, err = c.data.writeValues(values); err != nil {
 		return
-	}
-
-	if c.opts.WriteIndex {
-		c, uc := data.getPosition()
-		*entry.Positions = append(*entry.Positions, c)
-		*entry.Positions = append(*entry.Positions, uc)
 	}
 
 	*c.stats.BinaryStatistics.Sum += int64(len(values))
@@ -1617,7 +1502,10 @@ type streamWriter struct {
 	encodingBuf *bytes.Buffer
 	encoder     encoding.Encoder
 
-	rowsInIndex int
+	rowsInIndex  int
+	writeIndex   bool
+	indexStride  int
+	indexEntries []*pb.RowIndexEntry
 }
 
 // write and compress data to stream buffer in 1 or more chunk if compressed
@@ -1662,7 +1550,7 @@ func (s *streamWriter) writeValues(values interface{}) (n int, err error) {
 	return
 }
 
-func (s streamWriter) position(indexEntry *pb.RowIndexEntry) {
+func (s streamWriter) position(entry *pb.RowIndexEntry) {
 	// todo:
 }
 
