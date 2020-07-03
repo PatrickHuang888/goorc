@@ -1206,7 +1206,8 @@ type byteStreamReader struct {
 
 func newByteStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
 	in io.ReadSeeker) *byteStreamReader {
-	sr := &streamReader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}
+	sr := &streamReader{info: info, start: start, in: in, buf: &bytes.Buffer{}, compressionKind: opts.CompressionKind,
+		chunkSize: opts.ChunkSize}
 	return &byteStreamReader{stream: sr, decoder: &encoding.ByteRunLength{}}
 }
 
@@ -1235,7 +1236,8 @@ type stringContentsStreamReader struct {
 }
 
 func newStringContentsStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *stringContentsStreamReader {
-	sr := &streamReader{opts: opts, info: info, buf: &bytes.Buffer{}, in: in, start: start}
+	sr := &streamReader{info: info, buf: &bytes.Buffer{}, in: in, start: start, compressionKind: opts.CompressionKind,
+		chunkSize: opts.ChunkSize}
 	return &stringContentsStreamReader{stream: sr, decoder: &encoding.BytesContent{}}
 }
 
@@ -1280,7 +1282,8 @@ type doubleStreamReader struct {
 
 func newDoubleStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
 	in io.ReadSeeker) *doubleStreamReader {
-	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, opts: opts}
+	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, compressionKind: opts.CompressionKind,
+		chunkSize: opts.ChunkSize}
 	return &doubleStreamReader{stream: sr, decoder: &encoding.Ieee754Double{}}
 }
 
@@ -1298,7 +1301,8 @@ type floatStreamReader struct {
 }
 
 func newFloatStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *floatStreamReader {
-	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, opts: opts}
+	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, compressionKind: opts.CompressionKind,
+		chunkSize: opts.ChunkSize}
 	return &floatStreamReader{stream: sr, decoder: &encoding.Ieee754Float{}}
 }
 
@@ -1317,7 +1321,8 @@ type varIntStreamReader struct {
 }
 
 func newVarIntStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *varIntStreamReader {
-	sr := &streamReader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}
+	sr := &streamReader{info: info, start: start, buf: &bytes.Buffer{}, in: in, compressionKind: opts.CompressionKind,
+		chunkSize: opts.ChunkSize}
 	return &varIntStreamReader{stream: sr, decoder: &encoding.Base128VarInt{}}
 }
 
@@ -1340,7 +1345,8 @@ type longV2StreamReader struct {
 }
 
 func newLongV2StreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker, signed bool) *longV2StreamReader {
-	sr := &streamReader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}
+	sr := &streamReader{info: info, start: start, buf: &bytes.Buffer{}, in: in, compressionKind: opts.CompressionKind,
+		chunkSize: opts.ChunkSize}
 	return &longV2StreamReader{stream: sr, decoder: &encoding.IntRleV2{Signed: signed}}
 }
 
@@ -1395,7 +1401,8 @@ type boolStreamReader struct {
 }
 
 func newBoolStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *boolStreamReader {
-	sr := &streamReader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}
+	sr := &streamReader{info: info, start: start, in: in, buf: &bytes.Buffer{},
+		compressionKind: opts.CompressionKind, chunkSize: opts.ChunkSize}
 	return &boolStreamReader{stream: sr, decoder: &encoding.BoolRunLength{&encoding.ByteRunLength{}}}
 }
 
@@ -1414,16 +1421,40 @@ func (r *boolStreamReader) next() (v bool, err error) {
 	return
 }
 
+// if entry==nil will locate to stream start
+func (r *boolStreamReader) locate(entry *pb.RowIndexEntry) (err error) {
+	if entry == nil {
+		return r.stream.seek(0, 0)
+	}
+
+	if r.stream.compressionKind == pb.CompressionKind_NONE {
+		if err = r.stream.seek(entry.Positions[0], 0); err != nil {
+			return
+		}
+		for i:=0; i<int(entry.Positions[1]); i++ {
+			if _, err= r.next();err!=nil {
+				return
+			}
+		}
+		return
+	}
+
+	if err = r.stream.seek(entry.Positions[0], int(entry.Positions[1])); err != nil {
+		return
+	}
+	for i:=0; i<int(entry.Positions[2]); i++ {
+		if _, err= r.next();err!=nil {
+			return
+		}
+	}
+
+	return
+}
+
 func (r *boolStreamReader) finished() bool {
 	// fixme:
 	return r.stream.finished() && (r.pos == len(r.values))
 }
-
-/*type streamReader interface {
-	io.Reader
-	io.ByteReader
-	finished() bool
-}*/
 
 type streamReader struct {
 	info *pb.Stream
@@ -1433,15 +1464,12 @@ type streamReader struct {
 
 	buf *bytes.Buffer
 
-	opts *ReaderOptions
+	//opts *ReaderOptions
+	compressionKind pb.CompressionKind
+	chunkSize       uint64
 
 	in io.ReadSeeker
 }
-
-/*func (stream streamReader) String() string {
-	return fmt.Sprintf("start %d, length %d, kind %stream, already read %d", stream.start, stream.length,
-		stream.kind.String(), stream.readLength)
-}*/
 
 func (s *streamReader) ReadByte() (b byte, err error) {
 	if s.buf.Len() >= 1 {
@@ -1489,16 +1517,29 @@ func (s *streamReader) Read(p []byte) (n int, err error) {
 	return
 }
 
+// offset seek to specific chunk and cuncompressedOffset in that chunk
+// if NONE_COMPRESSION, offset just stream offset, and uncompressedOffset should be 0
+func (s *streamReader) seek(offset uint64, uncompressedOffset int) (err error) {
+	if _, err = s.in.Seek(int64(s.start+offset), io.SeekStart); err != nil {
+		return
+	}
+	if err = s.readAChunk(); err != nil {
+		return
+	}
+	s.buf.Next(uncompressedOffset)
+	return
+}
+
 // read a chunk to s.buf
 func (s *streamReader) readAChunk() error {
 
-	seek := int64(s.start + s.readLength)
+	/*seek := int64(s.start + s.readLength)
 	if _, err := s.in.Seek(seek, 0); err != nil {
 		return errors.WithStack(err)
-	}
+	}*/
 
-	if s.opts.CompressionKind == pb.CompressionKind_NONE { // no header
-		l := s.opts.ChunkSize
+	if s.compressionKind == pb.CompressionKind_NONE { // no header
+		l := s.chunkSize
 		if s.info.GetLength()-s.readLength < l {
 			l = s.info.GetLength() - s.readLength
 		}
@@ -1518,11 +1559,11 @@ func (s *streamReader) readAChunk() error {
 	s.readLength += 3
 	chunkLength, original := decChunkHeader(head)
 
-	log.Tracef("read a chunk, stream %s, compressing kind %s, chunkLength %d, original %t, seek position %d",
-		s.info.String(), s.opts.CompressionKind, chunkLength, original, seek)
+	log.Tracef("read a chunk, stream %s, compressing kind %s, chunkLength %d, original %t",
+		s.info.String(), s.compressionKind, chunkLength, original)
 
-	if uint64(chunkLength) > s.opts.ChunkSize {
-		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, s.opts.ChunkSize)
+	if uint64(chunkLength) > s.chunkSize {
+		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, s.chunkSize)
 	}
 
 	if original {
@@ -1539,7 +1580,7 @@ func (s *streamReader) readAChunk() error {
 		return errors.WithStack(err)
 	}
 
-	if _, err := decompressChunkData(s.opts.CompressionKind, s.buf, readBuf); err != nil {
+	if _, err := decompressChunkData(s.compressionKind, s.buf, readBuf); err != nil {
 		return err
 	}
 

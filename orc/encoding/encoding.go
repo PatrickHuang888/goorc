@@ -35,6 +35,7 @@ type BufferedReader interface {
 }
 
 type ByteRunLength struct {
+	mark int
 }
 
 func (d *ByteRunLength) Decode(in io.ByteReader, values []byte) ([]byte, error) {
@@ -62,6 +63,15 @@ func (d *ByteRunLength) Decode(in io.ByteReader, values []byte) ([]byte, error) 
 		}
 	}
 	return values, nil
+}
+
+func (e *ByteRunLength) Write(v byte)  error{
+
+}
+
+// Position returns current position in current run length encoding
+func (e ByteRunLength) Position() uint64 {
+	return uint64(e.mark)
 }
 
 func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {

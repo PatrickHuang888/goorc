@@ -1398,12 +1398,133 @@ func (c floatWriter) getStreams() []*streamWriter {
 type streamWriter struct {
 	info *pb.Stream
 
-	buf *bytes.Buffer
+	buf           *bytes.Buffer
+	compressedBuf *bytes.Buffer
 
-	opts *WriterOptions
+	compressionKind pb.CompressionKind
+	chunkSize       int
+	chunkMark       int
+
+	//opts *WriterOptions
 
 	encodingBuf *bytes.Buffer
 	encoder     encoding.Encoder
+}
+
+func (s *streamWriter) WriteByte(c byte) error {
+	var err error
+
+	if err= s.buf.WriteByte(c);err!=nil {
+		return err
+	}
+
+	if s.compressionKind == pb.CompressionKind_NONE || s.buf.Len()<s.chunkSize{
+		return err
+	}
+
+	return compressAChunk(s.compressionKind, s.chunkSize, s.compressedBuf, s.buf)
+}
+
+// Write write p to stream buf
+func (s *streamWriter) Write(p []byte) (n int, err error) {
+	if p==nil {
+		return
+	}
+
+	if n, err = s.buf.Write(p);err != nil {
+		return
+	}
+
+	if s.compressionKind == pb.CompressionKind_NONE || s.buf.Len() < s.chunkSize {
+		return
+	}
+
+	// compress chunksize data from buf to compressedbuf
+	// todo: move buf data after compression
+	if err= compressAChunk(s.compressionKind, s.chunkSize, s.compressedBuf, s.buf);err!=nil {
+		return
+	}
+
+	return
+}
+
+// return compressed data + uncompressed data
+func (s streamWriter) size() int{
+	if s.compressionKind==pb.CompressionKind_NONE {
+		return s.buf.Len()
+	}
+
+	return s.compressedBuf.Len()+s.buf.Len()
+}
+
+func (s streamWriter) position() []uint64 {
+	if s.compressionKind==pb.CompressionKind_NONE {
+		return []uint64{uint64(s.buf.Len())}
+	}
+
+	return []uint64{uint64(s.compressedBuf.Len()), uint64(s.buf.Len())}
+}
+
+func (s *streamWriter) writeOut(out io.Writer) (n int64, err error) {
+	if s.compressionKind== pb.CompressionKind_NONE {
+		*s.info.Length = uint64(s.buf.Len())
+		n, err= s.buf.WriteTo(out)
+		return
+	}
+
+	// compressing remaining
+	if s.buf.Len()!=0 {
+		if err= compressAChunk(s.compressionKind, s.compressedBuf, s.buf);err!=nil {
+			return
+		}
+	}
+
+	*s.info.Length= uint64(s.compressedBuf.Len())
+	n, err= s.compressedBuf.WriteTo(out)
+	return
+}
+
+
+type boolStreamWriter struct {
+	stream *streamWriter
+	encoder encoding.BoolRunLength
+}
+
+func (s *boolStreamWriter) write(v bool) error {
+	s.encoder.Encode()
+}
+
+func (s *boolStreamWriter) position() []uint64 {
+	var r []uint64
+	r= append(r, s.stream.position()...)
+	// todo:
+	r= append(r, )
+	return r
+}
+
+type byteStreamWriter struct {
+	info *pb.Stream
+	stream *streamWriter
+	encoder encoding.ByteRunLength
+}
+
+func (s *byteStreamWriter) write(v byte) error {
+	var err error
+	if err=s.encoder.Write(v);err!=nil {
+		return err
+	}
+	if _, err=  s.stream.Write(s.encoder.Flush());err!=nil {
+		return err
+	}
+	return err
+}
+
+func (s *byteStreamWriter) position() []uint64  {
+	var r []uint64
+	r= append(r, s.stream.position()...)
+	// todo:
+	r= append(r, s.encoder.Position())
+	return r
 }
 
 // write and compress data to stream buffer in 1 or more chunk if compressed
@@ -1448,9 +1569,6 @@ func (s *streamWriter) writeValues(values interface{}) (n int, err error) {
 	return
 }
 
-func (s *streamWriter) writeOut(out io.Writer) (n int64, err error) {
-	return s.buf.WriteTo(out)
-}
 
 func (s *streamWriter) reset() {
 	*s.info.Length = 0
