@@ -128,6 +128,10 @@ func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
 
 	schemas := unmarshallSchema(tail.Footer.Types)
 
+	for i, stat := range tail.Footer.Statistics {
+		schemas[i].HasNulls = stat.GetHasNull()
+	}
+
 	opts.CompressionKind = tail.Postscript.GetCompression()
 	if opts.CompressionKind != pb.CompressionKind_NONE { // compression_none no block size
 		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
@@ -427,6 +431,7 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 	for _, streamInfo := range footer.GetStreams() {
 
 		id := streamInfo.GetColumn()
+		schema := s.schemas[id]
 		streamKind := streamInfo.GetKind()
 		length := streamInfo.GetLength()
 
@@ -437,12 +442,14 @@ func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFoot
 		}
 
 		if streamKind == pb.Stream_PRESENT {
+			if !schema.HasNulls {
+				return errors.New("reader column %d has !HasNulls, why has present stream?")
+			}
 			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
 			dataStart += length
 			continue
 		}
 
-		schema := s.schemas[id]
 		encoding := footer.GetColumns()[id].GetKind()
 		switch schema.Kind {
 		case pb.Type_SHORT:

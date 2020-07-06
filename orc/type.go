@@ -22,25 +22,20 @@ type TypeDescription struct {
 	HasNulls  bool
 }
 
-func (td TypeDescription) String() string{
-	sb:= strings.Builder{}
-	sb.WriteString(fmt.Sprintf("Id %d, Kind %s ", td.Id, td.Kind.String()))
-	if td.ChildrenNames != nil && len(td.ChildrenNames) != 0 {
-		sb.WriteString(fmt.Sprint("ChildrenNames: "))
+func (td TypeDescription) String() string {
+	sb := strings.Builder{}
+	sb.WriteString(fmt.Sprintf("id %d, kind %s: ", td.Id, td.Kind.String()))
+
+	if len(td.Children) != 0 {
+		sb.WriteString(fmt.Sprintf("\n"))
 	}
 
-	for i, cn := range td.ChildrenNames {
-		if i == len(td.ChildrenNames)-1 {
-			sb.WriteString(fmt.Sprintf("%s ", cn))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s, ", cn))
-		}
+	for i, name := range td.ChildrenNames {
+			sb.WriteString(fmt.Sprintf("child %s: ", name))
+			sb.WriteString(td.Children[i].String())
 	}
 
-	for _, n := range td.Children {
-		sb.WriteString(fmt.Sprintf("Children of %d:", td.Id))
-		sb.WriteString(n.String())
-	}
+	sb.WriteString(fmt.Sprintf("\n"))
 
 	return sb.String()
 }
