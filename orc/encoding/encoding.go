@@ -26,7 +26,16 @@ const (
 )
 
 type Encoder interface {
-	Encode(out *bytes.Buffer, values interface{}) error
+	// Encode maybe return empty due to buffer and algorithm need more v to encoding
+	Encode(v interface{}) (data []byte, err error)
+
+	MarkPosition() error
+
+	// Flush flush remaining data
+	Flush() (data []byte, err error)
+
+	// GetPositions get positions marked previously after flush
+	GetPositions() []uint64
 }
 
 type BufferedReader interface {
@@ -35,10 +44,24 @@ type BufferedReader interface {
 }
 
 type ByteRunLength struct {
-	mark int
+	offset int
+	values []byte
+	buf    *bytes.Buffer
 }
 
-func (d *ByteRunLength) Decode(in io.ByteReader, values []byte) ([]byte, error) {
+func (e *ByteRunLength) MarkPosition() error {
+	panic("implement me")
+}
+
+func (e *ByteRunLength) GetPositions() (ps []uint64) {
+	panic("implement me")
+}
+
+func NewByteEncoder() *ByteRunLength {
+	return &ByteRunLength{offset: -1, values: make([]byte, MAX_BYTE_RL), buf: &bytes.Buffer{}}
+}
+
+func DecodeBytes(in io.ByteReader, values []byte) ([]byte, error) {
 	control, err := in.ReadByte()
 	if err != nil {
 		return values, err
@@ -47,7 +70,7 @@ func (d *ByteRunLength) Decode(in io.ByteReader, values []byte) ([]byte, error) 
 		l := int(control) + MIN_REPEAT_SIZE
 		v, err := in.ReadByte()
 		if err != nil {
-			return values, errors.WithStack(err)
+			return values, err
 		}
 		for i := 0; i < l; i++ {
 			values = append(values, v)
@@ -57,7 +80,7 @@ func (d *ByteRunLength) Decode(in io.ByteReader, values []byte) ([]byte, error) 
 		for i := 0; i < l; i++ {
 			v, err := in.ReadByte()
 			if err != nil {
-				return values, errors.WithStack(err)
+				return values, err
 			}
 			values = append(values, v)
 		}
@@ -65,17 +88,46 @@ func (d *ByteRunLength) Decode(in io.ByteReader, values []byte) ([]byte, error) 
 	return values, nil
 }
 
-func (e *ByteRunLength) Write(v byte)  error{
+const MAX_BYTE_RL = 128
 
+func (e *ByteRunLength) Encode(v interface{}) (data []byte, err error) {
+	value := v.(byte)
+
+	e.offset++
+	e.values[e.offset] = value
+
+	if e.offset >= MAX_BYTE_RL-1 {
+		if err = encodeBytes(e.buf, e.values[:e.offset+1]); err != nil {
+			return
+		}
+		e.offset = -1
+		data = e.buf.Bytes()
+		e.buf.Reset()
+		return
+	}
+
+	return
 }
 
 // Position returns current position in current run length encoding
-func (e ByteRunLength) Position() uint64 {
-	return uint64(e.mark)
+func (e ByteRunLength) Position() (p int, err error) {
+	p = e.offset + 1
+	return
 }
 
-func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
-	vs := v.([]byte)
+func (e *ByteRunLength) Flush() (data []byte, err error) {
+	if e.offset != -1 {
+		if err = encodeBytes(e.buf, e.values[:e.offset+1]); err != nil {
+			return
+		}
+	}
+	e.offset = -1
+	data = e.buf.Bytes()
+	e.buf.Reset()
+	return
+}
+
+func encodeBytes(out *bytes.Buffer, vs []byte) error {
 
 	for i := 0; i < len(vs); {
 		l := len(vs) - i
@@ -139,40 +191,94 @@ func (e *ByteRunLength) Encode(out *bytes.Buffer, v interface{}) error {
 	return nil
 }
 
-// bool run length use byte run length encoding, but how to know the length of bools?
 type BoolRunLength struct {
-	*ByteRunLength
+	brl    *ByteRunLength
+	offset int
+	values []bool
 }
 
-func (d *BoolRunLength) Decode(in io.ByteReader, vs []bool) (result []bool, err error) {
+func NewBoolEncoder() *BoolRunLength {
+	return &BoolRunLength{offset: -1, values: make([]bool, MAX_BOOL_RL), brl: NewByteEncoder()}
+}
+
+func DecodeBools(in io.ByteReader, vs []bool) ([]bool, error) {
 	var bs []byte
-	if bs, err = d.ByteRunLength.Decode(in, bs); err != nil {
-		return
+	var err error
+
+	if bs, err = DecodeBytes(in, bs); err != nil {
+		return vs, err
 	}
+
 	for _, b := range bs {
 		for i := 0; i < 8; i++ {
 			v := (b>>byte(7-i))&0x01 == 0x01
 			vs = append(vs, v)
 		}
 	}
-	result = vs
-	return
+	return vs, err
 }
 
-func (e *BoolRunLength) Encode(out *bytes.Buffer, vs interface{}) error {
-	values := vs.([]bool)
-	var bs []byte
-	for i := 0; i < len(values); {
+const MAX_BOOL_RL = 8
+
+func (e *BoolRunLength) MarkPosition() error {
+	panic("implement me")
+}
+
+func (e *BoolRunLength) GetPositions() []uint64 {
+	return []uint64{uint64(e.offset + 1)}
+}
+
+func (e *BoolRunLength) Encode(v interface{}) (data []byte, err error) {
+	value := v.(bool)
+
+	e.offset++
+	e.values[e.offset] = value
+
+	if e.offset >= MAX_BOOL_RL-1 {
 		var b byte
-		for j := 0; j <= 7 && (i < len(values)); j++ {
-			if values[i] {
-				b |= 0x01 << byte(7-j)
+		for i := 0; i <= 7; i++ {
+			if e.values[i] {
+				b |= 0x01 << byte(7-i)
 			}
 			i++
 		}
-		bs = append(bs, b)
+		if data, err = e.brl.Encode(b); err != nil {
+			return
+		}
+		e.offset = -1
+		return
 	}
-	return e.ByteRunLength.Encode(out, bs)
+
+	return
+}
+
+func (e *BoolRunLength) Flush() (data []byte, err error) {
+	if e.offset != -1 {
+		var b byte
+		for i := 0; i <= e.offset; i++ {
+			if e.values[i] {
+				b |= 0x01 << byte(7-i)
+			}
+		}
+		if data, err = e.brl.Encode(b); err != nil {
+			return
+		}
+		e.offset = -1
+	}
+
+	var dd []byte
+	if dd, err = e.brl.Flush(); err != nil {
+		return
+	}
+	if data == nil {
+		data = dd
+	} else {
+		data = append(data, dd...)
+	}
+	return
+}
+
+func (e BoolRunLength) Position() (p int, err error) {
 }
 
 /*type intRunLengthV1 struct {
@@ -277,23 +383,33 @@ func (irl *intRunLengthV1) Encode(out *bytes.Buffer) error {
 
 // string contents, decoding need length decoder
 type BytesContent struct {
-	/*	decoder
-		content       [][]byte // utf-8 bytes
-		lengthDecoder Decoder
-		pos           int*/
 }
 
 func (bd *BytesContent) DecodeNext(in BufferedReader, byteLength int) (value []byte, err error) {
-	value= make([]byte, byteLength)
+	value = make([]byte, byteLength)
 	if _, err = io.ReadFull(in, value); err != nil {
 		return value, err
 	}
 	return
 }
 
+func (e *BytesContent) Encode(v interface{}) (data []byte, err error) {
+	data = v.([]byte)
+	return
+}
+
+func (e BytesContent) Flush() (data []byte, err error) {
+	//
+	return []byte{}, nil
+}
+
+func (e BytesContent) Position() (p int, err error) {
+	p = -1
+	return
+}
+
 // write out content do not base length field, just base on len of content
-func (e *BytesContent) Encode(out *bytes.Buffer, vs interface{}) error {
-	values := vs.([][]byte)
+func encodeBytesContent(out *bytes.Buffer, values [][]byte) error {
 	for _, v := range values {
 		if _, err := out.Write(v); err != nil {
 			return errors.WithStack(err)
@@ -307,7 +423,14 @@ type IntRleV2 struct {
 	lastByte byte // different align when using read/writer, used in r/w
 	bitsLeft int  // used in r/w
 
-	Signed bool // for read
+	Signed bool
+
+	position int
+	offset   int
+	count    int
+
+	values []uint64
+	buf    *bytes.Buffer
 }
 
 // decoding buffer all to u/literals
@@ -534,7 +657,7 @@ func (d *IntRleV2) readPatched(in BufferedReader, firstByte byte, values []uint6
 
 		patchGap := int(pp >> pw)
 		mark += patchGap
-		patch:= pp & ((1 << pw)-1)
+		patch := pp & ((1 << pw) - 1)
 
 		// todo: check gap==255 and patch==0
 
@@ -612,7 +735,53 @@ func (e *IntRleV2) writeLeftBits(out *bytes.Buffer) error {
 	return nil
 }
 
-func (e *IntRleV2) Encode(out *bytes.Buffer, vs interface{}) error {
+const MAX_INT_RL = 512
+
+func (e *IntRleV2) Encode(v interface{}) (data []byte, err error) {
+	value := v.(uint64)
+
+	e.offset++
+	e.values[e.offset] = value
+
+	if e.offset >= MAX_INT_RL-1 {
+		if err = e.write(e.buf, e.values); err != nil {
+			return
+		}
+		data = e.buf.Bytes()
+		e.reset()
+	}
+
+	return []byte{}, nil
+}
+
+func (e *IntRleV2) Position() (p int, err error) {
+	// subtype should determined right now
+	if err = e.write(e.buf, e.values[:e.offset+1]); err != nil {
+		return
+	}
+	e.offset = -1
+	return e.position, nil
+}
+
+func (e *IntRleV2) reset() {
+	e.offset = -1
+	e.position = -1
+	e.buf.Reset()
+}
+
+func (e *IntRleV2) Flush() (data []byte, err error) {
+	if e.offset != -1 {
+		if err = e.write(e.buf, e.values[:e.offset+1]); err != nil {
+			return
+		}
+	}
+
+	data = e.buf.Bytes()
+	e.reset()
+	return
+}
+
+func (e *IntRleV2) EncodeValues(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]uint64)
 	return e.write(out, values)
 }
@@ -622,13 +791,18 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 		return e.writeDirect(out, true, values)
 	}
 
+	var sub byte
+	var subStart int
+
 	for i := 0; i < len(values); {
 		// try repeat first
 		repeat := getRepeat(values, i)
 		if repeat >= 3 {
 			// short repeat
 			if repeat <= 10 {
-				//e.sub = Encoding_SHORT_REPEAT
+				sub = Encoding_SHORT_REPEAT
+				subStart = i
+
 				var v uint64
 				if e.Signed {
 					log.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
@@ -646,7 +820,9 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 			}
 
 			// fixed delta 0
-			//e.sub = Encoding_DELTA
+			sub = Encoding_DELTA
+			subStart = i
+
 			b := make([]byte, 8)
 			var n int
 			if e.Signed {
@@ -665,6 +841,9 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 		// delta, need width should be stable?
 		dv := &deltaValues{}
 		if e.tryDeltaEncoding(values[i:], dv) {
+			sub = Encoding_DELTA
+			subStart = i
+
 			b := make([]byte, 8)
 			var n int
 			if e.Signed {
@@ -679,7 +858,7 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 			continue
 		}
 
-		var sub byte
+		//var sub byte
 		var pvs patchedValues
 		if e.Signed {
 			// try patch
@@ -688,9 +867,9 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 				return err
 			}
 		} else {
-			// fixme: make sure this
 			sub = Encoding_DIRECT
 		}
+		subStart = i
 
 		if sub == Encoding_PATCHED_BASE {
 			//log.Tracef("encoding: int rl v2 Patch %s", pvs.toString())
@@ -702,11 +881,11 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 			continue
 		}
 
-		// todo: max scope every encoding method varies
+		// len(values) will not over MAX_INT_RL
 		var scope int
 		l := len(values) - i
-		if l >= MAX_SCOPE {
-			scope = MAX_SCOPE
+		if l >= MAX_INT_RL {
+			scope = MAX_INT_RL
 		} else {
 			scope = l
 		}
@@ -721,6 +900,8 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 
 		return errors.New("encoding: no sub decided!")
 	}
+
+	e.position = len(values) - subStart
 
 	return
 }
@@ -761,7 +942,7 @@ func (e *IntRleV2) writeDirect(out *bytes.Buffer, widthAlign bool, values []uint
 			return err
 		}
 	}
-	if err:=e.writeLeftBits(out);err!=nil {
+	if err := e.writeLeftBits(out); err != nil {
 		return err
 	}
 	return nil
@@ -1077,7 +1258,7 @@ func (e *IntRleV2) writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 			return err
 		}
 	}
-	if err:= e.writeLeftBits(out);err!=nil {
+	if err := e.writeLeftBits(out); err != nil {
 		return err
 	}
 
@@ -1089,11 +1270,11 @@ func (e *IntRleV2) writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 	e.forgetBits()
 	for i, p := range pvs.patches {
 		patch := (uint64(pvs.gaps[i]) << patchWidth) | p
-		if err:= e.writeBits(patch, pgw+patchWidth, out);err!=nil {
+		if err := e.writeBits(patch, pgw+patchWidth, out); err != nil {
 			return err
 		}
 	}
-	if err:= e.writeLeftBits(out);err!=nil {
+	if err := e.writeLeftBits(out); err != nil {
 		return err
 	}
 
@@ -1368,8 +1549,23 @@ func (e *IntRleV2) writeShortRepeat(count uint16, x uint64, out *bytes.Buffer) e
 type Base128VarInt struct {
 }
 
-func (e *Base128VarInt) Encode(out *bytes.Buffer, vs interface{}) error {
-	values := vs.([]int64)
+func (e *Base128VarInt) Encode(v interface{}) (data []byte, err error) {
+	value := v.(int64)
+	bb := make([]byte, 10)
+	c := binary.PutVarint(bb, value)
+	return bb[:c], nil
+}
+
+func (e Base128VarInt) Flush() (data []byte, err error) {
+	return []byte{}, nil
+}
+
+func (e *Base128VarInt) Position() (p int, err error) {
+	p = -1
+	return
+}
+
+func encodeBase128VarInts(out *bytes.Buffer, values []int64) error {
 	bb := make([]byte, 10)
 	for _, v := range values {
 		c := binary.PutVarint(bb, v)
@@ -1386,7 +1582,6 @@ func (d *Base128VarInt) DecodeNext(in BufferedReader) (value int64, err error) {
 }
 
 type Ieee754Float struct {
-
 }
 
 func (d *Ieee754Float) Decode(in BufferedReader) (float32, error) {
@@ -1398,7 +1593,23 @@ func (d *Ieee754Float) Decode(in BufferedReader) (float32, error) {
 	return v, nil
 }
 
-func (e *Ieee754Float) Encode(out *bytes.Buffer, vs interface{}) error {
+func (e *Ieee754Float) Encode(v interface{}) (data []byte, err error) {
+	value := v.(float32)
+	bb := make([]byte, 4)
+	binary.BigEndian.PutUint32(bb, math.Float32bits(value))
+	return bb, nil
+}
+
+func (e Ieee754Float) Position() (p int, err error) {
+	p = -1
+	return
+}
+
+func (e *Ieee754Float) Flush() (data []byte, err error) {
+	return []byte{}, nil
+}
+
+func encodeIeee754Float(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]float32)
 	bb := make([]byte, 4)
 	for _, v := range values {
@@ -1424,7 +1635,23 @@ func (d *Ieee754Double) Decode(in BufferedReader) (float64, error) {
 	return v, nil
 }
 
-func (e *Ieee754Double) Encode(out *bytes.Buffer, vs interface{}) error {
+func (e *Ieee754Double) Encode(v interface{}) (data []byte, err error) {
+	value := v.(float64)
+	bb := make([]byte, 8)
+	binary.LittleEndian.PutUint64(bb, math.Float64bits(value))
+	return bb, nil
+}
+
+func (e Ieee754Double) Position() (p int, err error) {
+	p = -1
+	return
+}
+
+func (e Ieee754Double) Flush() (data []byte, err error) {
+	return []byte{}, nil
+}
+
+func encodeIeee754Double(out *bytes.Buffer, vs interface{}) error {
 	values := vs.([]float64)
 	bb := make([]byte, 8)
 	for _, v := range values {
