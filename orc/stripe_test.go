@@ -2,6 +2,7 @@ package orc
 
 import (
 	"bytes"
+	"github.com/patrickhuang888/goorc/orc/column"
 	"testing"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var dummyOut = &bufSeeker{&bytes.Buffer{}}
+var dummyOut = &column.bufSeeker{&bytes.Buffer{}}
 
 func TestStripeStructBasic(t *testing.T) {
 

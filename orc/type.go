@@ -19,7 +19,7 @@ type TypeDescription struct {
 	// maybe changed at nextStripe?
 	Encoding pb.ColumnEncoding_Kind
 
-	HasNulls  bool
+	HasNulls  bool  // fixme: used in reader?
 }
 
 func (td TypeDescription) String() string {

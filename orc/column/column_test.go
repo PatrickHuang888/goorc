@@ -1,8 +1,9 @@
-package orc
+package column
 
 import (
 	"bytes"
 	"fmt"
+	"github.com/patrickhuang888/goorc/orc"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 	}
 
 	// with no compression, default chunksize is buffer size
-	opts := &WriterOptions{CompressionKind: pb.CompressionKind_NONE}
+	opts := &orc.WriterOptions{CompressionKind: pb.CompressionKind_NONE}
 	k := pb.Stream_DATA
 	id := uint32(0)
 	l := uint64(0)
@@ -59,9 +60,9 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 	}
 
 	vs := make([]byte, 500)
-	ropts := &ReaderOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
+	ropts := &orc.ReaderOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
 	*info.Length= uint64(out.Len())
-	sr := &streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
+	sr := &orc.streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
 
 	n, err := sr.Read(vs)
 	if err != nil {
@@ -82,7 +83,7 @@ func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
 	bs := data.Bytes()
 
 	// expand to several chunks
-	opts := &WriterOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
+	opts := &orc.WriterOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
 	k := pb.Stream_DATA
 	id := uint32(0)
 	l := uint64(0)
@@ -100,9 +101,9 @@ func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
 	}
 
 	vs := make([]byte, 500)
-	ropts := &ReaderOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
+	ropts := &orc.ReaderOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
 	*info.Length= uint64(out.Len())
-	sr := &streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
+	sr := &orc.streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
 
 	n, err := sr.Read(vs)
 	if err != nil {
@@ -113,8 +114,8 @@ func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
 }
 
 func TestLongColumnRWwithNoPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_LONG}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_LONG}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	var values []int64
@@ -124,13 +125,13 @@ func TestLongColumnRWwithNoPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newLongV2Writer(schema, wopts)
-	rows, err := writer.write(&batchInternal{ColumnVector:batch})
+	rows, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, 100, rows)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	rbatch := schema.CreateReaderBatch(ropts)
 
 	bs := &bufSeeker{writer.data.buf}
@@ -138,10 +139,10 @@ func TestLongColumnRWwithNoPresents(t *testing.T) {
 	length_ := uint64(writer.data.buf.Len())
 	info := &pb.Stream{Column: &schema.Id, Kind: &kind_, Length: &length_}
 
-	cr := &treeReader{schema: schema, numberOfRows: uint64(rows)}
-	dataStream := &streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
-	data := &longV2StreamReader{decoder: &encoding.IntRleV2{Signed: true}, stream: dataStream}
-	reader := &longV2Reader{treeReader: cr, data: data}
+	cr := &orc.treeReader{schema: schema, numberOfRows: uint64(rows)}
+	dataStream := &orc.streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
+	data := &orc.longV2StreamReader{decoder: &encoding.IntRleV2{Signed: true}, stream: dataStream}
+	reader := &orc.longV2Reader{treeReader: cr, data: data}
 	err = reader.next(rbatch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -151,8 +152,8 @@ func TestLongColumnRWwithNoPresents(t *testing.T) {
 }
 
 func TestLongColumnRWwithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_LONG, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_LONG, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	//bool don't know how many values, so 13*8
@@ -182,28 +183,28 @@ func TestLongColumnRWwithPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newLongV2Writer(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
+	data := orc.newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
 
-	base := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &longV2Reader{treeReader: base, data: data}
+	base := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.longV2Reader{treeReader: base, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -213,8 +214,8 @@ func TestLongColumnRWwithPresents(t *testing.T) {
 }
 
 func TestBoolColumnRWwithoutPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 104
@@ -228,13 +229,13 @@ func TestBoolColumnRWwithoutPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newBoolWriter(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	rbatch := schema.CreateReaderBatch(ropts)
 
 	bs := &bufSeeker{writer.data.buf}
@@ -242,10 +243,10 @@ func TestBoolColumnRWwithoutPresents(t *testing.T) {
 	length_ := uint64(writer.data.buf.Len())
 	info := &pb.Stream{Column: &schema.Id, Kind: &kind_, Length: &length_}
 
-	cr := &treeReader{schema: schema, numberOfRows: uint64(rows)}
-	dataStream := &streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
-	data := &boolStreamReader{decoder: &encoding.BoolRunLength{&encoding.ByteRunLength{}}, stream: dataStream}
-	reader := &boolReader{treeReader: cr, data: data}
+	cr := &orc.treeReader{schema: schema, numberOfRows: uint64(rows)}
+	dataStream := &orc.streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
+	data := &orc.boolStreamReader{decoder: &encoding.BoolRunLength{&encoding.ByteRunLength{}}, stream: dataStream}
+	reader := &orc.boolReader{treeReader: cr, data: data}
 	err = reader.next(rbatch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -254,8 +255,8 @@ func TestBoolColumnRWwithoutPresents(t *testing.T) {
 }
 
 func TestFloatColumnWithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_FLOAT, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_FLOAT, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
@@ -278,28 +279,28 @@ func TestFloatColumnWithPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newFloatWriter(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newFloatStreamReader(ropts, dInfo, 0, dataBs)
+	data := orc.newFloatStreamReader(ropts, dInfo, 0, dataBs)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &floatReader{treeReader: cr, data: data}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.floatReader{treeReader: cr, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -309,8 +310,8 @@ func TestFloatColumnWithPresents(t *testing.T) {
 }
 
 func TestDoubleColumnWithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_DOUBLE, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_DOUBLE, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
@@ -333,28 +334,28 @@ func TestDoubleColumnWithPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newDoubleWriter(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newDoubleStreamReader(ropts, dInfo, 0, dataBs)
+	data := orc.newDoubleStreamReader(ropts, dInfo, 0, dataBs)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &doubleReader{treeReader: cr, data: data}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.doubleReader{treeReader: cr, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -364,8 +365,8 @@ func TestDoubleColumnWithPresents(t *testing.T) {
 }
 
 func TestColumnStringDirectV2WithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
@@ -388,34 +389,34 @@ func TestColumnStringDirectV2WithPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newStringDirectV2Writer(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newStringContentsStreamReader(ropts, dInfo, 0, dataBs)
+	data := orc.newStringContentsStreamReader(ropts, dInfo, 0, dataBs)
 
 	lengthBs := &bufSeeker{writer.length.buf}
 	lKind := pb.Stream_LENGTH
 	lLength := uint64(writer.length.buf.Len())
 	lInfo := &pb.Stream{Column: &schema.Id, Kind: &lKind, Length: &lLength}
-	length := newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
+	length := orc.newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &stringDirectV2Reader{treeReader: cr, data: data, length: length}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.stringDirectV2Reader{treeReader: cr, data: data, length: length}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -425,8 +426,8 @@ func TestColumnStringDirectV2WithPresents(t *testing.T) {
 }
 
 func TestColumnTinyIntWithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_BYTE, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_BYTE, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
@@ -449,28 +450,28 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newByteWriter(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newByteStreamReader(ropts, dInfo, 0, dataBs)
+	data := orc.newByteStreamReader(ropts, dInfo, 0, dataBs)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &byteReader{treeReader: cr, data: data}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.byteReader{treeReader: cr, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -480,8 +481,8 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 }
 
 func TestColumnBinaryV2WithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_BINARY, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_BINARY, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
@@ -504,34 +505,34 @@ func TestColumnBinaryV2WithPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newBinaryDirectV2Writer(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newStringContentsStreamReader(ropts, dInfo, 0, dataBs)
+	data := orc.newStringContentsStreamReader(ropts, dInfo, 0, dataBs)
 
 	lengthBs := &bufSeeker{writer.length.buf}
 	lKind := pb.Stream_LENGTH
 	lLength := uint64(writer.length.buf.Len())
 	lInfo := &pb.Stream{Column: &schema.Id, Kind: &lKind, Length: &lLength}
-	length := newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
+	length := orc.newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &binaryV2Reader{treeReader: cr, data: data, length: length}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.binaryV2Reader{treeReader: cr, data: data, length: length}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -541,58 +542,58 @@ func TestColumnBinaryV2WithPresents(t *testing.T) {
 }
 
 func TestColumnDecimal64WithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_DECIMAL, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_DECIMAL, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
-	vector := make([]Decimal64, rows)
+	vector := make([]orc.Decimal64, rows)
 	for i := 0; i < rows; i++ {
-		vector[i] = Decimal64{Precision: int64(i), Scale: 10}
+		vector[i] = orc.Decimal64{Precision: int64(i), Scale: 10}
 	}
 	presents := make([]bool, rows)
 	for i := 0; i < rows; i++ {
 		presents[i] = true
 	}
 	presents[0] = false
-	vector[0] = Decimal64{}
+	vector[0] = orc.Decimal64{}
 	presents[45] = false
-	vector[45] = Decimal64{}
+	vector[45] = orc.Decimal64{}
 	presents[98] = false
-	vector[98] = Decimal64{}
+	vector[98] = orc.Decimal64{}
 
 	batch.Presents = presents
 	batch.Vector = vector
 
 	writer := newDecimal64DirectV2Writer(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newVarIntStreamReader(ropts, dInfo, 0, dataBs)
+	data := orc.newVarIntStreamReader(ropts, dInfo, 0, dataBs)
 
 	secondaryBs := &bufSeeker{writer.secondary.buf}
 	sKind := pb.Stream_SECONDARY
 	sLength := uint64(writer.secondary.buf.Len())
 	sInfo := &pb.Stream{Column: &schema.Id, Kind: &sKind, Length: &sLength}
-	secondary := newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, true)
+	secondary := orc.newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, true)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &decimal64DirectV2Reader{treeReader: cr, data: data, secondary: secondary}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.decimal64DirectV2Reader{treeReader: cr, data: data, secondary: secondary}
 
 	err = reader.next(batch)
 	if err != nil {
@@ -604,52 +605,52 @@ func TestColumnDecimal64WithPresents(t *testing.T) {
 }
 
 func TestColumnDateWithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_DATE, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_DATE, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
-	values := make([]Date, rows)
+	values := make([]orc.Date, rows)
 	for i := 0; i < rows; i++ {
-		values[i] = NewDate(2020, time.February, i%30)
+		values[i] = orc.NewDate(2020, time.February, i%30)
 	}
 	presents := make([]bool, rows)
 	for i := 0; i < rows; i++ {
 		presents[i] = true
 	}
 	presents[0] = false
-	values[0] = Date{}
+	values[0] = orc.Date{}
 	presents[45] = false
-	values[45] = Date{}
+	values[45] = orc.Date{}
 	presents[98] = false
-	values[98] = Date{}
+	values[98] = orc.Date{}
 
 	batch.Presents = presents
 	batch.Vector = values
 
 	writer := newDateDirectV2Writer(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
+	data := orc.newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &dateV2Reader{treeReader: cr, data: data}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.dateV2Reader{treeReader: cr, data: data}
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -659,15 +660,15 @@ func TestColumnDateWithPresents(t *testing.T) {
 }
 
 func TestColumnTimestampWithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_TIMESTAMP, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_TIMESTAMP, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
 
-	vector := make([]Timestamp, rows)
+	vector := make([]orc.Timestamp, rows)
 	for i := 0; i < rows; i++ {
-		vector[i] = GetTimestamp(time.Now())
+		vector[i] = orc.GetTimestamp(time.Now())
 	}
 
 	presents := make([]bool, rows)
@@ -678,43 +679,43 @@ func TestColumnTimestampWithPresents(t *testing.T) {
 	presents[45] = false
 	presents[99] = false
 
-	vector[0]= Timestamp{}
-	vector[45]= Timestamp{}
-	vector[99]= Timestamp{}
+	vector[0]= orc.Timestamp{}
+	vector[45]= orc.Timestamp{}
+	vector[99]= orc.Timestamp{}
 
 	batch.Presents = presents
 	batch.Vector = vector
 
 	writer := newTimestampDirectV2Writer(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
+	data := orc.newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
 
 	secondaryBs := &bufSeeker{writer.secondary.buf}
 	sKind := pb.Stream_SECONDARY
 	sLength := uint64(writer.secondary.buf.Len())
 	sInfo := &pb.Stream{Column: &schema.Id, Kind: &sKind, Length: &sLength}
-	secondary := newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, false)
+	secondary := orc.newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, false)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &timestampV2Reader{treeReader: cr, data: data, secondary: secondary}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.timestampV2Reader{treeReader: cr, data: data, secondary: secondary}
 
 	err = reader.next(batch)
 	if err != nil {
@@ -726,15 +727,15 @@ func TestColumnTimestampWithPresents(t *testing.T) {
 }
 
 func TestColumnStructWithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRUCT, HasNulls: true}
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_STRUCT, HasNulls: true}
 	schema.Encoding = pb.ColumnEncoding_DIRECT
-	child1 := &TypeDescription{Id: 0, Kind: pb.Type_INT}
+	child1 := &orc.TypeDescription{Id: 0, Kind: pb.Type_INT}
 	child1.Encoding = pb.ColumnEncoding_DIRECT_V2
 	schema.ChildrenNames = []string{"child1"}
-	schema.Children = []*TypeDescription{child1}
+	schema.Children = []*orc.TypeDescription{child1}
 	schema.normalize()
 
-	wopts := DefaultWriterOptions()
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
@@ -756,19 +757,19 @@ func TestColumnStructWithPresents(t *testing.T) {
 	values[45]=0
 	values[99]=0
 
-	batch.Vector.([]*ColumnVector)[0].Vector = values
+	batch.Vector.([]*orc.ColumnVector)[0].Vector = values
 
 	writer, err := createColumnWriter(schema, wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	rbatch := schema.CreateReaderBatch(ropts)
 
 	w := writer.(*structWriter)
@@ -777,7 +778,7 @@ func TestColumnStructWithPresents(t *testing.T) {
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(w.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	intWriter := w.children[0].(*longV2Writer)
 
@@ -785,13 +786,13 @@ func TestColumnStructWithPresents(t *testing.T) {
 	dKind := pb.Stream_DATA
 	dLength := uint64(intWriter.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
+	data := orc.newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
 
-	intCr := &treeReader{schema: schema, numberOfRows: uint64(rows)}
-	intReader := &longV2Reader{treeReader: intCr, data: data}
+	intCr := &orc.treeReader{schema: schema, numberOfRows: uint64(rows)}
+	intReader := &orc.longV2Reader{treeReader: intCr, data: data}
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &structReader{treeReader: cr, children: []columnReader{intReader}}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.structReader{treeReader: cr, children: []orc.columnReader{intReader}}
 
 	err = reader.next(rbatch)
 	if err != nil {
@@ -799,12 +800,12 @@ func TestColumnStructWithPresents(t *testing.T) {
 	}
 
 	assert.Equal(t, presents, rbatch.Presents)
-	assert.Equal(t, values, rbatch.Vector.([]*ColumnVector)[0].Vector)
+	assert.Equal(t, values, rbatch.Vector.([]*orc.ColumnVector)[0].Vector)
 }
 
 func TestColumnStringUsingDictWithPresents(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: true}
-	wopts := DefaultWriterOptions()
+	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: true}
+	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
 
 	rows := 100
@@ -827,41 +828,41 @@ func TestColumnStringUsingDictWithPresents(t *testing.T) {
 	batch.Vector = values
 
 	writer := newStringDictV2Writer(schema, wopts)
-	n, err := writer.write(&batchInternal{ColumnVector:batch})
+	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := DefaultReaderOptions()
+	ropts := orc.DefaultReaderOptions()
 	batch = schema.CreateReaderBatch(ropts)
 
 	presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := newBoolStreamReader(ropts, pInfo, 0, presentBs)
+	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
 
 	dataBs := &bufSeeker{writer.data.buf}
 	dKind := pb.Stream_DATA
 	dLength := uint64(writer.data.buf.Len())
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := newLongV2StreamReader(ropts, dInfo, 0, dataBs, false)
+	data := orc.newLongV2StreamReader(ropts, dInfo, 0, dataBs, false)
 
 	dDataBs := &bufSeeker{writer.dictData.buf}
 	dDataKind := pb.Stream_DICTIONARY_DATA
 	dDataLength := uint64(writer.dictData.buf.Len())
 	dDataInfo := &pb.Stream{Column: &schema.Id, Kind: &dDataKind, Length: &dDataLength}
-	dictData := newStringContentsStreamReader(ropts, dDataInfo, 0, dDataBs)
+	dictData := orc.newStringContentsStreamReader(ropts, dDataInfo, 0, dDataBs)
 
 	dictLengthBs := &bufSeeker{writer.length.buf}
 	dlKind := pb.Stream_LENGTH
 	dlLength := uint64(writer.length.buf.Len())
 	dlInfo := &pb.Stream{Column: &schema.Id, Kind: &dlKind, Length: &dlLength}
-	dictLength := newLongV2StreamReader(ropts, dlInfo, 0, dictLengthBs, false)
+	dictLength := orc.newLongV2StreamReader(ropts, dlInfo, 0, dictLengthBs, false)
 
-	cr := &treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &stringDictV2Reader{treeReader: cr, data: data, dictData: dictData, dictLength: dictLength}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
+	reader := &orc.stringDictV2Reader{treeReader: cr, data: data, dictData: dictData, dictLength: dictLength}
 
 	err = reader.next(batch)
 	if err != nil {

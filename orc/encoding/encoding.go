@@ -11,8 +11,6 @@ import (
 )
 
 const (
-	MIN_REPEAT_SIZE = 3
-
 	Encoding_SHORT_REPEAT = byte(0)
 	Encoding_DIRECT       = byte(1)
 	Encoding_PATCHED_BASE = byte(2)
@@ -26,16 +24,17 @@ const (
 )
 
 type Encoder interface {
-	// Encode maybe return empty due to buffer and algorithm need more v to encoding
+	// Encode may returns no data due to buffer and algorithm need more v to encoding
 	Encode(v interface{}) (data []byte, err error)
 
-	MarkPosition() error
-
-	// Flush flush remaining data
+	// Flush flush remaining data, make sure there is only one position mark in one flush
 	Flush() (data []byte, err error)
 
-	// GetPositions get positions marked previously after flush
-	GetPositions() []uint64
+	MarkPosition()
+	// GetPositions get positions marked previously after stream flush, then clear
+	GetAndClearPositions() []uint64
+
+	Reset()
 }
 
 type BufferedReader interface {
@@ -43,243 +42,7 @@ type BufferedReader interface {
 	io.Reader
 }
 
-type ByteRunLength struct {
-	offset int
-	values []byte
-	buf    *bytes.Buffer
-}
 
-func (e *ByteRunLength) MarkPosition() error {
-	panic("implement me")
-}
-
-func (e *ByteRunLength) GetPositions() (ps []uint64) {
-	panic("implement me")
-}
-
-func NewByteEncoder() *ByteRunLength {
-	return &ByteRunLength{offset: -1, values: make([]byte, MAX_BYTE_RL), buf: &bytes.Buffer{}}
-}
-
-func DecodeBytes(in io.ByteReader, values []byte) ([]byte, error) {
-	control, err := in.ReadByte()
-	if err != nil {
-		return values, err
-	}
-	if control < 0x80 { // run
-		l := int(control) + MIN_REPEAT_SIZE
-		v, err := in.ReadByte()
-		if err != nil {
-			return values, err
-		}
-		for i := 0; i < l; i++ {
-			values = append(values, v)
-		}
-	} else { // literals
-		l := int(-int8(control))
-		for i := 0; i < l; i++ {
-			v, err := in.ReadByte()
-			if err != nil {
-				return values, err
-			}
-			values = append(values, v)
-		}
-	}
-	return values, nil
-}
-
-const MAX_BYTE_RL = 128
-
-func (e *ByteRunLength) Encode(v interface{}) (data []byte, err error) {
-	value := v.(byte)
-
-	e.offset++
-	e.values[e.offset] = value
-
-	if e.offset >= MAX_BYTE_RL-1 {
-		if err = encodeBytes(e.buf, e.values[:e.offset+1]); err != nil {
-			return
-		}
-		e.offset = -1
-		data = e.buf.Bytes()
-		e.buf.Reset()
-		return
-	}
-
-	return
-}
-
-// Position returns current position in current run length encoding
-func (e ByteRunLength) Position() (p int, err error) {
-	p = e.offset + 1
-	return
-}
-
-func (e *ByteRunLength) Flush() (data []byte, err error) {
-	if e.offset != -1 {
-		if err = encodeBytes(e.buf, e.values[:e.offset+1]); err != nil {
-			return
-		}
-	}
-	e.offset = -1
-	data = e.buf.Bytes()
-	e.buf.Reset()
-	return
-}
-
-func encodeBytes(out *bytes.Buffer, vs []byte) error {
-
-	for i := 0; i < len(vs); {
-		l := len(vs) - i
-		if l > 128 { // max 128
-			l = 128
-		}
-
-		values := vs[i : i+l]
-		repeats := findRepeatsInBytes(values, 3)
-
-		if repeats == nil {
-			if err := out.WriteByte(byte(-l)); err != nil {
-				return errors.WithStack(err)
-			}
-			if _, err := out.Write(values); err != nil {
-				return errors.WithStack(err)
-			}
-			i += l
-			continue
-		}
-
-		if repeats[0].start != 0 {
-			if err := out.WriteByte(byte(-(repeats[0].start))); err != nil {
-				return errors.WithStack(err)
-			}
-			if _, err := out.Write(values[:repeats[0].start]); err != nil {
-				return errors.WithStack(err)
-			}
-		}
-		for j := 0; j < len(repeats); j++ {
-
-			if err := out.WriteByte(byte(repeats[j].count - MIN_REPEAT_SIZE)); err != nil {
-				return errors.WithStack(err)
-			}
-			if err := out.WriteByte(values[repeats[j].start]); err != nil {
-				return errors.WithStack(err)
-			}
-
-			if j+1 < len(repeats) {
-				if err := out.WriteByte(byte(-(repeats[j+1].start - (repeats[j].start + repeats[j].count)))); err != nil {
-					return errors.WithStack(err)
-				}
-				if _, err := out.Write(values[repeats[j].start+repeats[j].count : repeats[j+1].start]); err != nil {
-					return errors.WithStack(err)
-				}
-			}
-		}
-		left := repeats[len(repeats)-1].start + repeats[len(repeats)-1].count // first not include in repeat
-		if left < l {
-			if err := out.WriteByte(byte(-(l - left))); err != nil {
-				return errors.WithStack(err)
-			}
-			if _, err := out.Write(values[left:l]); err != nil {
-				return errors.WithStack(err)
-			}
-		}
-
-		i += l
-	}
-
-	return nil
-}
-
-type BoolRunLength struct {
-	brl    *ByteRunLength
-	offset int
-	values []bool
-}
-
-func NewBoolEncoder() *BoolRunLength {
-	return &BoolRunLength{offset: -1, values: make([]bool, MAX_BOOL_RL), brl: NewByteEncoder()}
-}
-
-func DecodeBools(in io.ByteReader, vs []bool) ([]bool, error) {
-	var bs []byte
-	var err error
-
-	if bs, err = DecodeBytes(in, bs); err != nil {
-		return vs, err
-	}
-
-	for _, b := range bs {
-		for i := 0; i < 8; i++ {
-			v := (b>>byte(7-i))&0x01 == 0x01
-			vs = append(vs, v)
-		}
-	}
-	return vs, err
-}
-
-const MAX_BOOL_RL = 8
-
-func (e *BoolRunLength) MarkPosition() error {
-	panic("implement me")
-}
-
-func (e *BoolRunLength) GetPositions() []uint64 {
-	return []uint64{uint64(e.offset + 1)}
-}
-
-func (e *BoolRunLength) Encode(v interface{}) (data []byte, err error) {
-	value := v.(bool)
-
-	e.offset++
-	e.values[e.offset] = value
-
-	if e.offset >= MAX_BOOL_RL-1 {
-		var b byte
-		for i := 0; i <= 7; i++ {
-			if e.values[i] {
-				b |= 0x01 << byte(7-i)
-			}
-			i++
-		}
-		if data, err = e.brl.Encode(b); err != nil {
-			return
-		}
-		e.offset = -1
-		return
-	}
-
-	return
-}
-
-func (e *BoolRunLength) Flush() (data []byte, err error) {
-	if e.offset != -1 {
-		var b byte
-		for i := 0; i <= e.offset; i++ {
-			if e.values[i] {
-				b |= 0x01 << byte(7-i)
-			}
-		}
-		if data, err = e.brl.Encode(b); err != nil {
-			return
-		}
-		e.offset = -1
-	}
-
-	var dd []byte
-	if dd, err = e.brl.Flush(); err != nil {
-		return
-	}
-	if data == nil {
-		data = dd
-	} else {
-		data = append(data, dd...)
-	}
-	return
-}
-
-func (e BoolRunLength) Position() (p int, err error) {
-}
 
 /*type intRunLengthV1 struct {
 	signed      bool
@@ -425,9 +188,11 @@ type IntRleV2 struct {
 
 	Signed bool
 
-	position int
-	offset   int
-	count    int
+	//todo: make sure indexStride <= MAX_INT_RL
+	markedPosition int
+	positions      []int
+	offset         int
+	//count    int
 
 	values []uint64
 	buf    *bytes.Buffer
@@ -744,28 +509,34 @@ func (e *IntRleV2) Encode(v interface{}) (data []byte, err error) {
 	e.values[e.offset] = value
 
 	if e.offset >= MAX_INT_RL-1 {
-		if err = e.write(e.buf, e.values); err != nil {
-			return
-		}
-		data = e.buf.Bytes()
-		e.reset()
+		return e.Flush()
 	}
 
-	return []byte{}, nil
+	return
 }
 
-func (e *IntRleV2) Position() (p int, err error) {
+func (e *IntRleV2) MarkPosition() {
 	// subtype should determined right now
-	if err = e.write(e.buf, e.values[:e.offset+1]); err != nil {
+	/*if err = e.write(e.buf, e.values[:e.offset+1]); err != nil {
 		return
 	}
 	e.offset = -1
-	return e.position, nil
+	return e.position, nil*/
+	e.markedPosition = e.offset
+}
+
+// after flush
+func (e *IntRleV2) GetPositions() []int {
+	return e.positions
+}
+
+func (e *IntRleV2) ResetPositions() {
+	e.positions = e.positions[:0]
 }
 
 func (e *IntRleV2) reset() {
 	e.offset = -1
-	e.position = -1
+	e.markedPosition = -1
 	e.buf.Reset()
 }
 
@@ -816,6 +587,10 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 				if err := e.writeShortRepeat(repeat-3, v, out); err != nil {
 					return errors.WithStack(err)
 				}
+
+				if e.markedPosition != -1 && i >= e.markedPosition {
+					e.positions = append(e.positions, e.markedPosition-subStart)
+				}
 				continue
 			}
 
@@ -834,6 +609,10 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 			i += int(repeat)
 			if err = e.writeDelta(b[:n], 0, repeat, []uint64{}, out); err != nil {
 				return
+			}
+
+			if e.markedPosition != -1 && i >= e.markedPosition {
+				e.positions = append(e.positions, e.markedPosition-subStart)
 			}
 			continue
 		}
@@ -854,6 +633,10 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 			i += int(dv.length)
 			if err = e.writeDelta(b[:n], dv.base, dv.length, dv.deltas, out); err != nil {
 				return
+			}
+
+			if e.markedPosition != -1 && i >= e.markedPosition {
+				e.positions = append(e.positions, e.markedPosition-subStart)
 			}
 			continue
 		}
@@ -878,6 +661,10 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 			}
 			// todo: test len(values) > 512
 			i += pvs.count
+
+			if e.markedPosition != -1 && i >= e.markedPosition {
+				e.positions = append(e.positions, e.markedPosition-subStart)
+			}
 			continue
 		}
 
@@ -895,13 +682,15 @@ func (e *IntRleV2) write(out *bytes.Buffer, values []uint64) (err error) {
 				return
 			}
 			i += scope
+
+			if e.markedPosition != -1 && i >= e.markedPosition {
+				e.positions = append(e.positions, e.markedPosition-subStart)
+			}
 			continue
 		}
 
 		return errors.New("encoding: no sub decided!")
 	}
-
-	e.position = len(values) - subStart
 
 	return
 }
