@@ -6,14 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/patrickhuang888/goorc/orc/encoding"
+	"github.com/patrickhuang888/goorc/orc/column"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -31,6 +30,9 @@ type Reader interface {
 
 	Next(batch *ColumnVector) error
 
+	// fixme: how this function should be ?
+	Seek(rowNumber uint64) error
+
 	GetStatistics() []*pb.ColumnStatistics
 }
 
@@ -40,6 +42,11 @@ type ReaderOptions struct {
 	RowSize         int
 
 	Loc *time.Location
+
+	HasIndex    bool
+	IndexStride uint64
+
+	MockTest bool
 }
 
 func DefaultReaderOptions() *ReaderOptions {
@@ -47,12 +54,12 @@ func DefaultReaderOptions() *ReaderOptions {
 		CompressionKind: pb.CompressionKind_ZLIB}
 }
 
-type File interface {
+/*type File interface {
 	io.ReadSeeker
 	io.Closer
 	Size() (int64, error)
 }
-
+*/
 type reader struct {
 	opts    *ReaderOptions
 	schemas []*TypeDescription
@@ -61,13 +68,13 @@ type reader struct {
 
 	stripeIndex int
 
-	f File
+	path string
 
 	numberOfRows uint64
 	stats        []*pb.ColumnStatistics
 }
 
-type fileFile struct {
+/*type fileFile struct {
 	f *os.File
 }
 
@@ -97,17 +104,17 @@ func (fr fileFile) Close() error {
 	}
 	return nil
 }
+*/
 
-func NewFileReader(path string, opts *ReaderOptions) (r Reader, err error) {
+func NewFileReader(path string, opts ReaderOptions) (r Reader, err error) {
 	var f *os.File
-	f, err = os.Open(path)
-	if err != nil {
+	if f, err = os.Open(path); err != nil {
 		return nil, errors.Wrapf(err, "open file %s error", path)
 	}
+	defer f.Close()
 	log.Infof("open file %s", path)
-	fr := &fileFile{f: f}
 
-	r, err = newReader(opts, fr)
+	r, err = newReader(&opts, f)
 	if err != nil {
 		return
 	}
@@ -115,9 +122,9 @@ func NewFileReader(path string, opts *ReaderOptions) (r Reader, err error) {
 	return
 }
 
-func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
-	tail, err := extractFileTail(f)
-	if err != nil {
+func newReader(opts *ReaderOptions, f *os.File) (r *reader, err error) {
+	var tail *pb.FileTail
+	if tail, err = extractFileTail(f); err != nil {
 		return nil, errors.Wrap(err, "read file tail error")
 	}
 
@@ -137,10 +144,10 @@ func newReader(opts *ReaderOptions, f File) (r *reader, err error) {
 		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
 	}
 
-	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: tail.GetFooter().GetNumberOfRows(),
+	r = &reader{path: f.Name(), opts: opts, schemas: schemas, numberOfRows: tail.GetFooter().GetNumberOfRows(),
 		stats: tail.Footer.GetStatistics()}
 
-	r.initStripes(tail.Footer.GetStripes())
+	r.initStripes(f, tail.Footer.GetStripes())
 
 	return
 }
@@ -149,7 +156,11 @@ func (r *reader) GetSchema() *TypeDescription {
 	return r.schemas[0]
 }
 
-func (r *reader) initStripes(infos []*pb.StripeInformation) error {
+func (r *reader) NumberOfRows() uint64 {
+	return r.numberOfRows
+}
+
+func (r *reader) initStripes(f *os.File, infos []*pb.StripeInformation) error {
 	var err error
 
 	for i, stripeInfo := range infos {
@@ -163,36 +174,15 @@ func (r *reader) initStripes(infos []*pb.StripeInformation) error {
 		indexLength := stripeInfo.GetIndexLength()
 		dataLength := stripeInfo.GetDataLength()
 
-		// row index
-		indexOffset := offset
-		log.Tracef("seek index of stripe %d", i)
-		if _, err = r.f.Seek(int64(indexOffset), 0); err != nil {
-			return errors.WithStack(err)
-		}
-		indexBuf := make([]byte, indexLength)
-		if _, err = io.ReadFull(r.f, indexBuf); err != nil {
-			return errors.WithStack(err)
-		}
-		if r.opts.CompressionKind != pb.CompressionKind_NONE {
-			ib := &bytes.Buffer{}
-			if err = decompressBuffer(r.opts.CompressionKind, ib, bytes.NewBuffer(indexBuf)); err != nil {
-				return err
-			}
-			indexBuf = ib.Bytes()
-		}
-		index := &pb.RowIndex{}
-		if err = proto.Unmarshal(indexBuf, index); err != nil {
-			return errors.Wrapf(err, "unmarshal strip index error")
-		}
-
 		// footer
 		log.Tracef("seek stripe footer of %d", i)
 		footerOffset := int64(offset + indexLength + dataLength)
-		if _, err = r.f.Seek(footerOffset, 0); err != nil {
+		if _, err = f.Seek(footerOffset, 0); err != nil {
 			return errors.WithStack(err)
 		}
+
 		footerBuf := make([]byte, stripeInfo.GetFooterLength())
-		if _, err = io.ReadFull(r.f, footerBuf); err != nil {
+		if _, err = io.ReadFull(f, footerBuf); err != nil {
 			return errors.WithStack(err)
 		}
 		if r.opts.CompressionKind != pb.CompressionKind_NONE {
@@ -204,17 +194,16 @@ func (r *reader) initStripes(infos []*pb.StripeInformation) error {
 		}
 		footer := &pb.StripeFooter{}
 		if err = proto.Unmarshal(footerBuf, footer); err != nil {
-			return errors.Wrapf(err, "unmarshal currentStripe footer error")
+			return errors.Wrapf(err, "unmarshal stripe footer error")
 		}
 		log.Debugf("extracted stripe footer %d: %s", i, footer.String())
 
 		var sr *stripeReader
-		if sr, err = newStripeReader(r.f, r.schemas, r.opts, i, stripeInfo, footer); err != nil {
+		if sr, err = newStripeReader(f.Name(), r.schemas, r.opts, i, stripeInfo, footer); err != nil {
 			return err
 		}
 
 		r.stripes = append(r.stripes, sr)
-
 	}
 
 	return nil
@@ -225,461 +214,145 @@ func (r reader) GetStatistics() []*pb.ColumnStatistics {
 }
 
 func (r *reader) Close() error {
-	return r.f.Close()
+	return r.stripes[r.stripeIndex].Close()
 }
 
 func (r *reader) Next(batch *ColumnVector) (err error) {
-	if err = r.stripes[r.stripeIndex].next(batch); err != nil {
+	if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
 		return
 	}
 
 	// next stripe
 	if (r.stripeIndex < len(r.stripes)-1) && (batch.ReadRows == 0) {
 		r.stripeIndex++
-		if err = r.stripes[r.stripeIndex].next(batch); err != nil {
+		if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
 			return
 		}
 	}
 	return
 }
 
+func (r *reader) Seek(rowNumber uint64) error {
+	if rowNumber > r.numberOfRows {
+		return errors.New("row number larger than number of rows")
+	}
+
+	var rows uint64
+	for i := 0; i < len(r.stripes); i++ {
+		if rows+r.stripes[i].numberOfRows > rowNumber {
+			return r.stripes[i].Seek(rowNumber - rows)
+		}
+		rows += r.stripes[i].numberOfRows
+	}
+	return errors.New("no row found")
+}
+
 type stripeReader struct {
-	in io.ReadSeeker
+	//in io.ReadSeeker
+	path string
 
 	schemas []*TypeDescription
 	opts    *ReaderOptions
 
-	columnReaders []columnReader
+	columnReaders []column.Reader
 
-	idx int
+	number int
+
+	numberOfRows uint64
 }
 
-func newStripeReader(in io.ReadSeeker, schemas []*TypeDescription, opts *ReaderOptions, idx int, info *pb.StripeInformation,
-	footer *pb.StripeFooter) (reader *stripeReader, err error) {
-
-	reader = &stripeReader{in: in, schemas: schemas, opts: opts, idx: idx}
-
-	err = reader.prepare(info, footer)
-
+func newStripeReader(path string, schemas []*TypeDescription, opts *ReaderOptions, idx int, info *pb.StripeInformation, footer *pb.StripeFooter) (reader *stripeReader, err error) {
+	reader = &stripeReader{path: path, schemas: schemas, opts: opts, number: idx}
+	err = reader.init(info, footer)
 	return
 }
 
 // stripe {index{},column{[present],data,[length]},footer}
-func (s *stripeReader) prepare(info *pb.StripeInformation, footer *pb.StripeFooter) error {
+func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter) error {
+	var err error
 
 	//prepare column reader
-	s.columnReaders = make([]columnReader, len(s.schemas))
-	columns := make([]*treeReader, len(s.schemas))
+	s.columnReaders = make([]column.Reader, len(s.schemas))
 	// id==i
-	for _, schema := range s.schemas {
-		encoding := footer.GetColumns()[schema.Id].GetKind()
-
-		c := &treeReader{schema: schema, numberOfRows: info.GetNumberOfRows()}
-		columns[schema.Id] = c
-
-		switch schema.Kind {
-		case pb.Type_SHORT:
-			fallthrough
-		case pb.Type_INT:
-			fallthrough
-		case pb.Type_LONG:
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &longV2Reader{treeReader: c}
-				break
-			}
-			return errors.New("not impl")
-
-		case pb.Type_FLOAT:
-		// todo:
-
-		case pb.Type_DOUBLE:
-			if encoding != pb.ColumnEncoding_DIRECT {
-				return errors.New("column encoding error")
-			}
-			s.columnReaders[schema.Id] = &doubleReader{treeReader: c}
-
-		case pb.Type_STRING:
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &stringDirectV2Reader{treeReader: c}
-				break
-			}
-			if encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-				s.columnReaders[schema.Id] = &stringDictV2Reader{treeReader: c}
-				break
-			}
-			return errors.New("column encoding error")
-
-		case pb.Type_BOOLEAN:
-			if encoding != pb.ColumnEncoding_DIRECT {
-				return errors.New("bool column encoding error")
-			}
-			s.columnReaders[schema.Id] = &boolReader{treeReader: c}
-
-		case pb.Type_BYTE: // tinyint
-			if encoding != pb.ColumnEncoding_DIRECT {
-				return errors.New("tinyint column encoding error")
-			}
-			s.columnReaders[schema.Id] = &byteReader{treeReader: c}
-
-		case pb.Type_BINARY:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &binaryV2Reader{treeReader: c}
-				break
-			}
-			return errors.New("binary column encoding error")
-
-		case pb.Type_DECIMAL:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &decimal64DirectV2Reader{treeReader: c}
-				break
-			}
-			return errors.New("column encoding error")
-
-		case pb.Type_DATE:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &dateV2Reader{treeReader: c}
-				break
-			}
-			return errors.New("column encoding error")
-
-		case pb.Type_TIMESTAMP:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				s.columnReaders[schema.Id] = &timestampV2Reader{treeReader: c}
-				break
-			}
-			return errors.New("column encoding error")
-
-		case pb.Type_STRUCT:
-			if encoding != pb.ColumnEncoding_DIRECT {
-				return errors.New("encoding error")
-			}
-			s.columnReaders[schema.Id] = &structReader{treeReader: c}
-
-		case pb.Type_LIST:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				// todo:
-				break
-			}
-			return errors.New("encoding error")
-
-		case pb.Type_MAP:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				// todo:
-				break
-			}
-			return errors.New("encoding error")
-
-		case pb.Type_UNION:
-			if encoding != pb.ColumnEncoding_DIRECT {
-				return errors.New("column encoding error")
-			}
-		//todo:
-		// fixme: pb.Stream_DIRECT
-
-		default:
-			return errors.New("type unwkone")
+	for i, schema := range s.schemas {
+		schema.Encoding= footer.GetColumns()[schema.Id].GetKind()
+		if s.columnReaders[i], err = column.NewReader(schema, s.opts, s.path, info.GetNumberOfRows()); err != nil {
+			return err
 		}
 	}
 
 	// build tree
 	for _, schema := range s.schemas {
 		if schema.Kind == pb.Type_STRUCT {
-			var crs []columnReader
+			var crs []column.Reader
 			for _, childSchema := range schema.Children {
 				crs = append(crs, s.columnReaders[childSchema.Id])
 			}
-			s.columnReaders[schema.Id].(*structReader).children = crs
+			s.columnReaders[schema.Id].InitChildren(crs)
 		}
 	}
 
-	// setup streams
+	// init streams
 	// streams has sequence
 	indexStart := info.GetOffset()
 	dataStart := indexStart + info.GetIndexLength()
 
 	for _, streamInfo := range footer.GetStreams() {
-
 		id := streamInfo.GetColumn()
-		schema := s.schemas[id]
 		streamKind := streamInfo.GetKind()
 		length := streamInfo.GetLength()
+		encoding := footer.GetColumns()[id].GetKind()
 
 		if streamKind == pb.Stream_ROW_INDEX {
-			// todo: init index streamReader
+			if err := s.columnReaders[id].InitIndex(indexStart, length, s.path); err != nil {
+				return err
+			}
 			indexStart += length
 			continue
 		}
 
-		if streamKind == pb.Stream_PRESENT {
-			if !schema.HasNulls {
-				return errors.New("reader column %d has !HasNulls, why has present stream?")
-			}
-			columns[id].present = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
-			dataStart += length
-			continue
+		if err := s.columnReaders[id].InitStream(streamKind, encoding, dataStart, streamInfo, s.path); err != nil {
+			return err
 		}
-
-		encoding := footer.GetColumns()[id].GetKind()
-		switch schema.Kind {
-		case pb.Type_SHORT:
-			fallthrough
-		case pb.Type_INT:
-			fallthrough
-		case pb.Type_LONG:
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader := s.columnReaders[id].(*longV2Reader)
-				if streamKind == pb.Stream_DATA {
-					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, true)
-					break
-				}
-				return errors.New("stream kind error")
-			}
-
-		case pb.Type_FLOAT:
-			reader := s.columnReaders[id].(*floatReader)
-			if streamKind == pb.Stream_DATA {
-				reader.data = newFloatStreamReader(s.opts, streamInfo, dataStart, s.in)
-				break
-			}
-			return errors.New("stream kind error")
-
-		case pb.Type_DOUBLE:
-			reader := s.columnReaders[id].(*doubleReader)
-			if streamKind == pb.Stream_DATA {
-				reader.data = newDoubleStreamReader(s.opts, streamInfo, dataStart, s.in)
-				break
-			}
-			return errors.New("stream kind error")
-
-		case pb.Type_STRING:
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader := s.columnReaders[id].(*stringDirectV2Reader)
-
-				if streamKind == pb.Stream_DATA {
-					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.in)
-					break
-				}
-				if streamKind == pb.Stream_LENGTH {
-					reader.length = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
-					break
-				}
-				return errors.New("stream kind error")
-			}
-
-			if encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-				reader := s.columnReaders[id].(*stringDictV2Reader)
-				if streamKind == pb.Stream_DATA {
-					data := newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
-					reader.data = data
-					break
-				}
-				if streamKind == pb.Stream_DICTIONARY_DATA {
-					dictData := newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.in)
-					reader.dictData = dictData
-					break
-				}
-				if streamKind == pb.Stream_LENGTH {
-					dictLength := newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
-					reader.dictLength = dictLength
-					break
-				}
-				return errors.New("stream kind error")
-			}
-
-		case pb.Type_BOOLEAN:
-			reader := s.columnReaders[id].(*boolReader)
-			if streamKind == pb.Stream_DATA {
-				reader.data = newBoolStreamReader(s.opts, streamInfo, dataStart, s.in)
-				break
-			}
-			return errors.New("stream kind error")
-
-		case pb.Type_BYTE: // tinyint
-			reader := s.columnReaders[id].(*byteReader)
-			if streamKind == pb.Stream_DATA {
-				reader.data = newByteStreamReader(s.opts, streamInfo, dataStart, s.in)
-				break
-			}
-			return errors.New("stream kind error")
-
-		case pb.Type_BINARY:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader := s.columnReaders[id].(*binaryV2Reader)
-				if streamKind == pb.Stream_DATA {
-					reader.data = newStringContentsStreamReader(s.opts, streamInfo, dataStart, s.in)
-					break
-				}
-				if streamKind == pb.Stream_LENGTH {
-					reader.length = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
-					break
-				}
-				return errors.New("stream kind error")
-			}
-
-		case pb.Type_DECIMAL:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader := s.columnReaders[id].(*decimal64DirectV2Reader)
-				if streamKind == pb.Stream_DATA {
-					reader.data = newVarIntStreamReader(s.opts, streamInfo, dataStart, s.in)
-					break
-				}
-				if streamKind == pb.Stream_SECONDARY {
-					reader.secondary = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
-					break
-				}
-				return errors.New("stream kind error")
-			}
-
-		case pb.Type_DATE:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader := s.columnReaders[id].(*dateV2Reader)
-				if streamKind == pb.Stream_DATA {
-					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
-					break
-				}
-				return errors.New("stream kind error")
-			}
-
-		case pb.Type_TIMESTAMP:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				reader := s.columnReaders[id].(*timestampV2Reader)
-				if streamKind == pb.Stream_DATA {
-					reader.data = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, true)
-					break
-				}
-				if streamKind == pb.Stream_SECONDARY {
-					reader.secondary = newLongV2StreamReader(s.opts, streamInfo, dataStart, s.in, false)
-					break
-				}
-				return errors.New("stream kind error")
-			}
-
-		case pb.Type_STRUCT:
-			// no data
-
-		case pb.Type_LIST:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				if streamKind == pb.Stream_LENGTH {
-					// todo:
-					//decoder := &encoding.IntRleV2{}
-					//length := &longStream{r: r, decoder: decoder}
-
-				}
-				break
-			}
-			return errors.New("encoding error")
-
-		case pb.Type_MAP:
-			if encoding == pb.ColumnEncoding_DIRECT {
-				// todo:
-				return errors.New("not impl")
-				break
-			}
-			if encoding == pb.ColumnEncoding_DIRECT_V2 {
-				if streamKind == pb.Stream_LENGTH {
-					//decoder := &encoding.IntRleV2{}
-					//length := &longStream{r: r, decoder: decoder}
-					// todo:
-				}
-			}
-
-		case pb.Type_UNION:
-			if encoding != pb.ColumnEncoding_DIRECT {
-				return errors.New("column encoding error")
-			}
-
-			// fixme: pb.Stream_DIRECT
-
-		}
-
 		dataStart += length
 	}
 
-	// todo: streamreader needed existing check
-
-	/*for _, v := range crs {
-		v.Print()
-	}*/
 	return nil
 }
 
-// entry of stripeR reader
-// a stripeR is typically  ~200MB
-func (s *stripeReader) next(batch *ColumnVector) error {
+// a stripe is typically  ~200MB
+func (s *stripeReader) Next(batch *ColumnVector) error {
+	var err error
 
-	err := s.columnReaders[batch.Id].next(batch)
-	if err != nil {
+	batch.Presents= batch.Presents[:0]
+
+	if batch.ReadRows, err = s.columnReaders[batch.Id].Next(&batch.Presents, false, &batch.Vector); err != nil {
 		return err
 	}
 
-	log.Debugf("stripe %d column %d has read %d", s.idx, batch.Id, batch.ReadRows)
-
+	log.Debugf("stripe %d column %d has read %d", s.number, batch.Id, batch.ReadRows)
 	return nil
 }
 
-type columnReader interface {
-	next(batch *ColumnVector) error
+// locate rows in this stripe
+func (s *stripeReader) Seek(rowNumber uint64) error {
+	// rethink: all column seek to row ?
+	for _, r := range s.columnReaders {
+		if err := r.Seek(rowNumber); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
+func (s *stripeReader) Close() error {
+	for _, r := range s.columnReaders {
+		r.Close()
+	}
+	return nil
+}
 
-type dateV2Reader struct {
+/*type dateV2Reader struct {
 	*treeReader
 	data *longV2StreamReader
 }
@@ -1281,12 +954,7 @@ func (r *longV2StreamReader) getAllUInts() (vs []uint64, err error) {
 func (r *longV2StreamReader) finished() bool {
 	return r.stream.finished() && (r.pos == len(r.values))
 }
-
-
-
-func (r *reader) NumberOfRows() uint64 {
-	return r.numberOfRows
-}
+*/
 
 func unmarshallSchema(types []*pb.Type) (schemas []*TypeDescription) {
 	schemas = make([]*TypeDescription, len(types))
@@ -1325,12 +993,13 @@ func preOrderWalkSchema(node *TypeDescription) (types []*pb.Type) {
 	return
 }
 
-func extractFileTail(f File) (tail *pb.FileTail, err error) {
-
-	size, err := f.Size()
+func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
+	fs, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
+
+	size := fs.Size()
 	if size == 0 {
 		// Hive often creates empty files (including ORC) and has an
 		// optimization to create a 0 byte file as an empty ORC file.
@@ -1507,5 +1176,3 @@ func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSi
 	}
 	return
 }
-
-

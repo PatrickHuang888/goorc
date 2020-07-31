@@ -2,11 +2,13 @@ package stream
 
 import (
 	"bytes"
+	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
+	"os"
 )
 
 type reader struct {
@@ -20,7 +22,7 @@ type reader struct {
 	compressionKind pb.CompressionKind
 	chunkSize       uint64
 
-	in io.ReadSeeker
+	in in
 }
 
 func (r *reader) ReadByte() (b byte, err error) {
@@ -140,4 +142,23 @@ func (r *reader) readAChunk() error {
 
 func (r reader) finished() bool {
 	return r.readLength >= r.info.GetLength() && r.buf.Len() == 0
+}
+
+func (r *reader) Close() error {
+	if err := r.in.Close(); err != nil {
+		log.Errorf("stream close err %+v", err)
+	}
+	return nil
+}
+
+type in interface {
+	io.ReadSeeker
+	io.Closer
+}
+
+func createInStream(opts *orc.ReaderOptions, path string) (in in, err error) {
+	if opts.MockTest {
+
+	}
+	return os.Open(path)
 }

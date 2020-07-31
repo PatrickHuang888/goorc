@@ -19,7 +19,7 @@ type ColumnVector struct {
 	Vector   interface{}
 
 	// assigned when every next(), that is reader user can know how many rows read after next()
-	// because vector is no type
+	// because vector has no type
 	ReadRows int
 }
 

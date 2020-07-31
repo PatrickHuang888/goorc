@@ -19,7 +19,7 @@ type TypeDescription struct {
 	// maybe changed at nextStripe?
 	Encoding pb.ColumnEncoding_Kind
 
-	HasNulls  bool  // fixme: used in reader?
+	HasNulls  bool  // create initial batch presents vector on this when reading
 }
 
 func (td TypeDescription) String() string {

@@ -5,7 +5,6 @@ import (
 	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	"io"
 )
 
 type ByteReader struct {
@@ -15,9 +14,14 @@ type ByteReader struct {
 	consumed int
 }
 
-func NewByteReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *ByteReader {
-	r := &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}, compressionKind: opts.CompressionKind, chunkSize: opts.ChunkSize}
-	return &ByteReader{stream: r}
+func NewByteReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *ByteReader, err error) {
+	var in in
+	if in, err = createInStream(opts, path); err != nil {
+		return
+	}
+
+	r = &ByteReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}, compressionKind: opts.CompressionKind, chunkSize: opts.ChunkSize}}
+	return
 }
 
 func (r *ByteReader) Next() (v byte, err error) {
@@ -49,4 +53,8 @@ func (r *ByteReader) Seek(chunkOffset uint64, uncompressionOffset uint64, decodi
 
 func (r *ByteReader) Finished() bool {
 	return r.stream.finished() && (r.consumed == len(r.values))
+}
+
+func (r *ByteReader) Close() error {
+	return r.stream.Close()
 }

@@ -6,7 +6,6 @@ import (
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	log "github.com/sirupsen/logrus"
-	"io"
 )
 
 type BoolReader struct {
@@ -16,9 +15,14 @@ type BoolReader struct {
 	pos    int
 }
 
-func NewBoolReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *BoolReader {
-	r := &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}, compressionKind: opts.CompressionKind, chunkSize: opts.ChunkSize}
-	return &BoolReader{stream: r}
+func NewBoolReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *BoolReader, err error) {
+	var in in
+	if in, err= createInStream(opts, path);err!=nil {
+		return
+	}
+
+	r= &BoolReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}, compressionKind: opts.CompressionKind, chunkSize: opts.ChunkSize}}
+	return
 }
 
 func (r *BoolReader) Next() (v bool, err error) {
@@ -50,4 +54,8 @@ func (r *BoolReader) Seek(chunkOffset uint64, uncompressedOffset uint64, decodin
 
 func (r *BoolReader) Finished() bool {
 	return r.stream.finished() && (r.pos == len(r.values))
+}
+
+func (r *BoolReader) Close() error {
+	return r.stream.Close()
 }
