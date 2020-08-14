@@ -7,17 +7,16 @@ import (
 	"github.com/pkg/errors"
 )
 
-type byteReader struct {
+func NewDoubleReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string, numberOfRows uint64) Reader {
+	return &doubleReader{reader: &reader{schema: schema, opts: opts, path: path, numberOfRows: numberOfRows}}
+}
+
+type doubleReader struct {
 	*reader
-	data *stream.ByteReader
+	data *stream.DoubleReader
 }
 
-func NewByteReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string, numberOfRows uint64) Reader {
-	return &byteReader{reader: &reader{opts: opts, schema: schema, path: path, numberOfRows: numberOfRows}}
-}
-
-// create a file for every stream
-func (c *byteReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream, path string) error {
+func (c *doubleReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream, path string) error {
 	if kind == pb.Stream_PRESENT {
 		var err error
 		c.present, err = stream.NewBoolReader(c.opts, info, startOffset, path)
@@ -26,27 +25,27 @@ func (c *byteReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_
 
 	if kind == pb.Stream_DATA {
 		var err error
-		c.data, err = stream.NewByteReader(c.opts, info, startOffset, path)
+		c.data, err = stream.NewDoubleReader(c.opts, info, startOffset, path)
 		return err
 	}
 
 	return errors.New("stream kind error")
 }
 
-func (c *byteReader) Next(presents *[]bool, pFromParent bool, vec *interface{}) (rows int, err error) {
-	vector := (*vec).([]byte)
+func (c *doubleReader) Next(presents *[]bool, pFromParent bool, vec *interface{}) (rows int, err error) {
+	vector := (*vec).([]float64)
 	vector = vector[:0]
 
 	if !pFromParent {
-		if err := c.nextPresents(presents); err != nil {
+		if err = c.nextPresents(presents); err != nil {
 			return
 		}
 	}
 
 	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
 		if len(*presents) == 0 || (len(*presents) != 0 && (*presents)[i]) {
-			v, err := c.data.Next()
-			if err != nil {
+			var v float64
+			if v, err = c.data.Next(); err != nil {
 				return
 			}
 			vector = append(vector, v)
@@ -57,12 +56,12 @@ func (c *byteReader) Next(presents *[]bool, pFromParent bool, vec *interface{}) 
 		c.cursor++
 	}
 
-	rows = len(vector)
 	*vec = vector
+	rows = len(vector)
 	return
 }
 
-func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
+func (c *doubleReader) seek(indexEntry *pb.RowIndexEntry) error {
 	pos := indexEntry.GetPositions()
 
 	if c.present == nil {
@@ -92,7 +91,7 @@ func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
 	return nil
 }
 
-func (c *byteReader) Seek(rowNumber uint64) error {
+func (c *doubleReader) Seek(rowNumber uint64) error {
 	if !c.opts.HasIndex {
 		return errors.New("no index")
 	}
@@ -106,19 +105,13 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 
 	c.cursor = stride * c.opts.IndexStride
 
-	for i := 0; i < int(strideOffset); i++ {
-		if _, err := c.present.Next(); err != nil {
-			return err
-		}
-		if _, err := c.data.Next(); err != nil {
-			return err
-		}
-		c.cursor++
-	}
+	pp:=make([]bool, )
 	return nil
 }
 
-func (c *byteReader) Close(){
-	c.present.Close()
+func (c *doubleReader) Close() {
+	if c.present != nil {
+		c.present.Close()
+	}
 	c.data.Close()
 }

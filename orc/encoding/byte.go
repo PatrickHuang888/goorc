@@ -147,7 +147,7 @@ func (e *ByteRunLength) encodeBytes(out *bytes.Buffer, vs []byte) error {
 	return nil
 }
 
-func DecodeBytes(in io.ByteReader, values []byte) ([]byte, error) {
+func DecodeByteRL(in io.ByteReader, values []byte) ([]byte, error) {
 	control, err := in.ReadByte()
 	if err != nil {
 		return values, err

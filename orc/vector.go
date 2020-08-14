@@ -96,14 +96,14 @@ func (d *Date) String() string {
 	return time.Time(*d).Format("2006-01-02")
 }
 
-func fromDays(days int64) Date {
+func FromDays(days int64) Date {
 	d := time.Duration(days * 24 * int64(time.Hour))
 	t := Date(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC).Add(d))
 	return t
 }
 
 // days from 1970, Jan, 1 UTC
-func toDays(d Date) int64 {
+func ToDays(d Date) int64 {
 	s := time.Time(d).Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
 	return int64(s.Hours() / 24)
 }

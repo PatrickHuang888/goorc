@@ -17,8 +17,9 @@ func NewStructReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path 
 	return &structReader{reader: &reader{opts: opts, schema: schema, path: path, numberOfRows: numberOfRows}}
 }
 
-func (s *structReader) InitChildren(children []Reader) {
+func (s *structReader) InitChildren(children []Reader) error {
 	s.children = children
+	return nil
 }
 
 func (s structReader) Children() []Reader {

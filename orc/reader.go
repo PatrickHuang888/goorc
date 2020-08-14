@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"fmt"
+	"github.com/patrickhuang888/goorc/orc/encoding"
 	"io"
 	"os"
 	"time"
@@ -54,12 +55,12 @@ func DefaultReaderOptions() *ReaderOptions {
 		CompressionKind: pb.CompressionKind_ZLIB}
 }
 
-/*type File interface {
+type File interface {
 	io.ReadSeeker
 	io.Closer
 	Size() (int64, error)
 }
-*/
+
 type reader struct {
 	opts    *ReaderOptions
 	schemas []*TypeDescription
@@ -74,11 +75,27 @@ type reader struct {
 	stats        []*pb.ColumnStatistics
 }
 
-/*type fileFile struct {
+func OpenOsFile(f *os.File) File {
+	return &fileFile{f: f}
+}
+
+func Open(opts *ReaderOptions, path string) (in File, err error) {
+	if opts.MockTest {
+
+	}
+
+	var f *os.File
+	if f, err = os.Open(path); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return OpenOsFile(f), nil
+}
+
+type fileFile struct {
 	f *os.File
 }
 
-func (fr fileFile) Size() (size int64, err error) {
+func (fr fileFile) Size() (int64, error) {
 	fi, err := fr.f.Stat()
 	if err != nil {
 		return 0, errors.WithStack(err)
@@ -104,7 +121,6 @@ func (fr fileFile) Close() error {
 	}
 	return nil
 }
-*/
 
 func NewFileReader(path string, opts ReaderOptions) (r Reader, err error) {
 	var f *os.File
@@ -275,7 +291,7 @@ func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter)
 	s.columnReaders = make([]column.Reader, len(s.schemas))
 	// id==i
 	for i, schema := range s.schemas {
-		schema.Encoding= footer.GetColumns()[schema.Id].GetKind()
+		schema.Encoding = footer.GetColumns()[schema.Id].GetKind()
 		if s.columnReaders[i], err = column.NewReader(schema, s.opts, s.path, info.GetNumberOfRows()); err != nil {
 			return err
 		}
@@ -324,7 +340,7 @@ func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter)
 func (s *stripeReader) Next(batch *ColumnVector) error {
 	var err error
 
-	batch.Presents= batch.Presents[:0]
+	batch.Presents = batch.Presents[:0]
 
 	if batch.ReadRows, err = s.columnReaders[batch.Id].Next(&batch.Presents, false, &batch.Vector); err != nil {
 		return err
@@ -352,40 +368,7 @@ func (s *stripeReader) Close() error {
 	return nil
 }
 
-/*type dateV2Reader struct {
-	*treeReader
-	data *longV2StreamReader
-}
-
-func (c *dateV2Reader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([]Date)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.nextInt64()
-			if err != nil {
-				return err
-			}
-			vector = append(vector, fromDays(v))
-
-		} else {
-			vector = append(vector, Date{})
-		}
-
-		c.cursor++
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
-
+/*
 type timestampV2Reader struct {
 	*treeReader
 
@@ -609,39 +592,6 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 	return nil
 }
 
-type longV2Reader struct {
-	*treeReader
-	data *longV2StreamReader
-}
-
-func (c *longV2Reader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([]int64)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.nextInt64()
-			if err != nil {
-				return err
-			}
-			vector = append(vector, v)
-
-		} else {
-			vector = append(vector, 0)
-		}
-
-		c.cursor++
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
 
 type decimal64DirectV2Reader struct {
 	*treeReader
@@ -720,39 +670,6 @@ func (c *floatReader) next(batch *ColumnVector) error {
 	return nil
 }
 
-type doubleReader struct {
-	*treeReader
-	data *doubleStreamReader
-}
-
-func (c *doubleReader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([]float64)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.next()
-			if err != nil {
-				return err
-			}
-			vector = append(vector, v)
-
-		} else {
-			vector = append(vector, 0)
-		}
-
-		c.cursor++
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
 
 type structReader struct {
 	*treeReader
@@ -794,166 +711,7 @@ func (c *structReader) next(batch *ColumnVector) error {
 }
 
 
-type stringContentsStreamReader struct {
-	stream  *streamReader
-	decoder *encoding.BytesContent
-}
 
-func newStringContentsStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *stringContentsStreamReader {
-	sr := &streamReader{info: info, buf: &bytes.Buffer{}, in: in, start: start, compressionKind: opts.CompressionKind,
-		chunkSize: opts.ChunkSize}
-	return &stringContentsStreamReader{stream: sr, decoder: &encoding.BytesContent{}}
-}
-
-func (r *stringContentsStreamReader) nextBytes(byteLength uint64) (v []byte, err error) {
-	v, err = r.decoder.DecodeNext(r.stream, int(byteLength))
-	return
-}
-
-func (r *stringContentsStreamReader) next(byteLength uint64) (v string, err error) {
-	var bb []byte
-	bb, err = r.nextBytes(byteLength)
-	if err != nil {
-		return
-	}
-	return string(bb), err
-}
-
-func (r *stringContentsStreamReader) finished() bool {
-	return r.stream.finished()
-}
-
-// for read column using encoding like dict
-func (r *stringContentsStreamReader) getAll(byteLengths []uint64) (vs []string, err error) {
-	for !r.finished() {
-		// todo: data check
-		for _, l := range byteLengths {
-			var v string
-			v, err = r.next(l)
-			if err != nil {
-				return
-			}
-			vs = append(vs, v)
-		}
-	}
-	return
-}
-
-type doubleStreamReader struct {
-	stream  *streamReader
-	decoder *encoding.Ieee754Double
-}
-
-func newDoubleStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64,
-	in io.ReadSeeker) *doubleStreamReader {
-	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, compressionKind: opts.CompressionKind,
-		chunkSize: opts.ChunkSize}
-	return &doubleStreamReader{stream: sr, decoder: &encoding.Ieee754Double{}}
-}
-
-func (r *doubleStreamReader) next() (v float64, err error) {
-	return r.decoder.Decode(r.stream)
-}
-
-func (r *doubleStreamReader) finished() bool {
-	return r.stream.finished()
-}
-
-type floatStreamReader struct {
-	stream  *streamReader
-	decoder *encoding.Ieee754Float
-}
-
-func newFloatStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *floatStreamReader {
-	sr := &streamReader{start: start, info: info, buf: &bytes.Buffer{}, in: in, compressionKind: opts.CompressionKind,
-		chunkSize: opts.ChunkSize}
-	return &floatStreamReader{stream: sr, decoder: &encoding.Ieee754Float{}}
-}
-
-func (r *floatStreamReader) next() (v float32, err error) {
-	return r.decoder.Decode(r.stream)
-}
-
-func (r *floatStreamReader) finished() bool {
-	return r.stream.finished()
-}
-
-type varIntStreamReader struct {
-	stream *streamReader
-
-	decoder *encoding.Base128VarInt
-}
-
-func newVarIntStreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker) *varIntStreamReader {
-	sr := &streamReader{info: info, start: start, buf: &bytes.Buffer{}, in: in, compressionKind: opts.CompressionKind,
-		chunkSize: opts.ChunkSize}
-	return &varIntStreamReader{stream: sr, decoder: &encoding.Base128VarInt{}}
-}
-
-func (r *varIntStreamReader) next() (v int64, err error) {
-	v, err = r.decoder.DecodeNext(r.stream)
-	return
-}
-
-func (r *varIntStreamReader) finished() bool {
-	return r.stream.finished()
-}
-
-type longV2StreamReader struct {
-	stream *streamReader
-
-	values []uint64
-	pos    int
-
-	decoder *encoding.IntRleV2
-}
-
-func newLongV2StreamReader(opts *ReaderOptions, info *pb.Stream, start uint64, in io.ReadSeeker, signed bool) *longV2StreamReader {
-	sr := &streamReader{info: info, start: start, buf: &bytes.Buffer{}, in: in, compressionKind: opts.CompressionKind,
-		chunkSize: opts.ChunkSize}
-	return &longV2StreamReader{stream: sr, decoder: &encoding.IntRleV2{Signed: signed}}
-}
-
-func (r *longV2StreamReader) nextInt64() (v int64, err error) {
-	var uv uint64
-	uv, err = r.nextUInt()
-	if err != nil {
-		return
-	}
-	v = encoding.UnZigzag(uv)
-	return
-}
-
-func (r *longV2StreamReader) nextUInt() (v uint64, err error) {
-	if r.pos >= len(r.values) {
-		r.pos = 0
-		r.values = r.values[:0]
-
-		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
-			return
-		}
-
-		log.Tracef("stream long read column %d has read %d values", r.stream.info.GetColumn(), len(r.values))
-	}
-
-	v = r.values[r.pos]
-	r.pos++
-	return
-}
-
-// for small data like dict index, ignore stream.signed
-func (r *longV2StreamReader) getAllUInts() (vs []uint64, err error) {
-	for !r.stream.finished() {
-		if vs, err = r.decoder.Decode(r.stream, vs); err != nil {
-			return
-		}
-	}
-	return
-}
-
-func (r *longV2StreamReader) finished() bool {
-	return r.stream.finished() && (r.pos == len(r.values))
-}
 */
 
 func unmarshallSchema(types []*pb.Type) (schemas []*TypeDescription) {

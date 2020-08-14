@@ -86,7 +86,7 @@ func DecodeBools(in io.ByteReader, vs []bool) ([]bool, error) {
 	var bs []byte
 	var err error
 
-	if bs, err = DecodeBytes(in, bs); err != nil {
+	if bs, err = DecodeByteRL(in, bs); err != nil {
 		return vs, err
 	}
 

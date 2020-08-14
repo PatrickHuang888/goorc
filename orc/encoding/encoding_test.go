@@ -19,7 +19,7 @@ func TestByteRunLength(t *testing.T) {
 	buf := bytes.NewBuffer([]byte{0x61, 0x00})
 	brl := NewByteEncoder()
 
-	values, err = DecodeBytes(buf, values)
+	values, err = DecodeByteRL(buf, values)
 	if err != nil {
 		t.Error(err)
 	}
@@ -30,7 +30,7 @@ func TestByteRunLength(t *testing.T) {
 	buf.Reset()
 	buf.Write([]byte{0xfe, 0x44, 0x45})
 	values= values[:0]
-	values, err = DecodeBytes(buf, values)
+	values, err = DecodeByteRL(buf, values)
 	if err != nil {
 		t.Error(err)
 	}
@@ -57,7 +57,7 @@ func TestByteRunLength(t *testing.T) {
 	buf.Write(data)
 
 	values= values[:0]
-	values, err= DecodeBytes(buf, values)
+	values, err= DecodeByteRL(buf, values)
 	assert.Equal(t, vs, values)
 
 	pos:= brl.GetAndClearPositions()
@@ -78,7 +78,7 @@ func TestByteRunLength(t *testing.T) {
 
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = DecodeBytes(buf, values); err != nil {
+		if values, err = DecodeByteRL(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -99,7 +99,7 @@ func TestByteRunLength(t *testing.T) {
 
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = DecodeBytes(buf, values); err != nil {
+		if values, err = DecodeByteRL(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -126,7 +126,7 @@ func TestByteRunLength(t *testing.T) {
 
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = DecodeBytes(buf, values); err != nil {
+		if values, err = DecodeByteRL(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -152,7 +152,7 @@ func TestByteRunLength(t *testing.T) {
 
 	values=values[:0]
 	for buf.Len()!=0 {
-		if values, err = DecodeBytes(buf, values); err != nil {
+		if values, err = DecodeByteRL(buf, values); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
@@ -178,7 +178,7 @@ func TestFindBytesRepeats(t *testing.T) {
 
 /*func TestDouble(test *testing.T) {
 	vs := []float64{0.0001, 125.001, 1343822337.759, 0.8}
-	c := &Ieee754Double{}
+	c := &ieee754Double{}
 	buf := &bytes.Buffer{}
 
 	if err := c.Encode(buf, vs); err != nil {
@@ -224,7 +224,7 @@ func TestFindBytesRepeats(t *testing.T) {
 
 /*func TestIntRunLengthV2_Delta(t *testing.T) {
 	var err error
-	irl := &IntRleV2{}
+	irl := &IntRL2{}
 	irl.Signed = false
 
 	uvs := []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
@@ -331,7 +331,7 @@ func TestFindBytesRepeats(t *testing.T) {
 }*/
 
 /*func TestIntRunLengthV2Direct(t *testing.T) {
-	irl := &IntRleV2{}
+	irl := &IntRL2{}
 	buf := &bytes.Buffer{}
 
 	//uint
@@ -436,7 +436,7 @@ func TestFindBytesRepeats(t *testing.T) {
 }*/
 
 /*func TestIntRunLengthV2Patch(t *testing.T) {
-	irl := &IntRleV2{}
+	irl := &IntRL2{}
 	irl.Signed = true
 
 	values := []int64{2030, 2000, 2020, 1000000, 2040, 2050, 2060, 2070, 2080, 2090, 2100, 2110, 2120, 2130,
@@ -487,7 +487,7 @@ func TestFindBytesRepeats(t *testing.T) {
 }*/
 
 /*func TestIntRunLengthV2(t *testing.T) {
-	irl := &IntRleV2{}
+	irl := &IntRL2{}
 	//short repeat
 	irl.Signed = false
 	bs := []byte{0x0a, 0x27, 0x10}

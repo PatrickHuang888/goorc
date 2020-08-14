@@ -16,12 +16,12 @@ type BoolReader struct {
 }
 
 func NewBoolReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *BoolReader, err error) {
-	var in in
-	if in, err= createInStream(opts, path);err!=nil {
+	var in orc.File
+	if in, err = orc.Open(opts, path); err != nil {
 		return
 	}
 
-	r= &BoolReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}, compressionKind: opts.CompressionKind, chunkSize: opts.ChunkSize}}
+	r = &BoolReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}}}
 	return
 }
 
@@ -56,6 +56,6 @@ func (r *BoolReader) Finished() bool {
 	return r.stream.finished() && (r.pos == len(r.values))
 }
 
-func (r *BoolReader) Close() error {
-	return r.stream.Close()
+func (r *BoolReader) Close(){
+	r.stream.Close()
 }

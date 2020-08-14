@@ -16,16 +16,20 @@ import (
 )
 
 type Reader interface {
-	InitChildren(children []Reader)
+	InitChildren(children []Reader) error
 	InitIndex(startOffset uint64, length uint64, path string) error
 	InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream, path string) error
 
 	Next(presents *[]bool, pFromParent bool, vec *interface{}) (int, error)
+
+	// Seek seek to rownumber ralated to current stripe
+	// if column is struct (or else)  children, and struct has present stream, then
+	// seek to non-null row that is calculated by parent
 	Seek(rowNumber uint64) error
 
 	Children() []Reader
 
-	Close() error
+	Close()
 }
 
 type reader struct {
@@ -37,8 +41,6 @@ type reader struct {
 
 	numberOfRows uint64 // from stripe information
 	cursor       uint64
-
-	compressionKind pb.CompressionKind
 
 	opts *orc.ReaderOptions
 
@@ -99,8 +101,8 @@ func (r *reader) nextPresents(presents *[]bool) error {
 	return nil
 }
 
-func (r reader) InitChildren([]Reader)  {
-	//
+func (r reader) InitChildren([]Reader) error {
+	return errors.New("cannot init children")
 }
 
 func (r reader) Children() []Reader {
@@ -115,8 +117,7 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		fallthrough
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//s.columnReaders[schema.Id] = &longV2Reader{treeReader: c}
-			break
+			return NewLongV2Reader(schema, opts, path, numberOfRows), nil
 		}
 		return nil, errors.New("not impl")
 
@@ -127,7 +128,7 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("column encoding error")
 		}
-		//s.columnReaders[schema.Id] = &doubleReader{treeReader: c}
+		return NewDoubleReader(schema, opts, path, numberOfRows), nil
 
 	case pb.Type_STRING:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
@@ -176,14 +177,12 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		return nil, errors.New("column encoding error")
 
 	case pb.Type_DATE:
-		if encoding == pb.ColumnEncoding_DIRECT {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT {
 			// todo:
 			return nil, errors.New("not impl")
-			break
 		}
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//s.columnReaders[schema.Id] = &dateV2Reader{treeReader: c}
-			break
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			return NewDateV2Reader(schema, opts, path, numberOfRows), nil
 		}
 		return nil, errors.New("column encoding error")
 
@@ -201,37 +200,35 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		return nil, errors.New("column encoding error")
 
 	case pb.Type_STRUCT:
-		if encoding != pb.ColumnEncoding_DIRECT {
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
-		return  NewStructReader(schema, opts, path, numberOfRows)
+		return  NewStructReader(schema, opts, path, numberOfRows), nil
 
 	case pb.Type_LIST:
-		if encoding == pb.ColumnEncoding_DIRECT {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT {
 			// todo:
 			return nil, errors.New("not impl")
-			break
 		}
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			// todo:
-			break
+
 		}
 		return nil, errors.New("encoding error")
 
 	case pb.Type_MAP:
-		if encoding == pb.ColumnEncoding_DIRECT {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT {
 			// todo:
 			return nil, errors.New("not impl")
-			break
 		}
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			// todo:
 			break
 		}
 		return nil, errors.New("encoding error")
 
 	case pb.Type_UNION:
-		if encoding != pb.ColumnEncoding_DIRECT {
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("column encoding error")
 		}
 	//todo:

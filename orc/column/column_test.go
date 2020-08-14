@@ -141,7 +141,7 @@ func TestLongColumnRWwithNoPresents(t *testing.T) {
 
 	cr := &orc.treeReader{schema: schema, numberOfRows: uint64(rows)}
 	dataStream := &orc.streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
-	data := &orc.longV2StreamReader{decoder: &encoding.IntRleV2{Signed: true}, stream: dataStream}
+	data := &orc.longV2StreamReader{decoder: &encoding.IntRL2{Signed: true}, stream: dataStream}
 	reader := &orc.longV2Reader{treeReader: cr, data: data}
 	err = reader.next(rbatch)
 	if err != nil {

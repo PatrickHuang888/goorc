@@ -8,7 +8,6 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
-	"os"
 )
 
 type reader struct {
@@ -19,10 +18,9 @@ type reader struct {
 
 	buf *bytes.Buffer
 
-	compressionKind pb.CompressionKind
-	chunkSize       uint64
+	opts *orc.ReaderOptions
 
-	in in
+	in orc.File
 }
 
 func (r *reader) ReadByte() (b byte, err error) {
@@ -84,18 +82,18 @@ func (r *reader) seek(offset uint64, uncompressedOffset uint64) error {
 	return nil
 }
 
-// read a chunk to s.buf
+// readAChunk read one chunk to s.buf
 func (r *reader) readAChunk() error {
-	if r.compressionKind == pb.CompressionKind_NONE { // no header
-		l := r.chunkSize
+	// no compression
+	if r.opts.CompressionKind == pb.CompressionKind_NONE { // no header
+		l := r.opts.ChunkSize
 		if r.info.GetLength()-r.readLength < l {
 			l = r.info.GetLength() - r.readLength
 		}
 
 		log.Tracef("read a chunk, no compression copy %d from stream", l)
 
-		_, err := io.CopyN(r.buf, r.in, int64(l))
-		if err != nil {
+		if _, err := io.CopyN(r.buf, r.in, int64(l));err != nil {
 			return errors.WithStack(err)
 		}
 
@@ -111,10 +109,10 @@ func (r *reader) readAChunk() error {
 	chunkLength, original := common.DecChunkHeader(head)
 
 	log.Tracef("read a chunk, stream %s, compressing kind %s, chunkLength %d, original %t",
-		r.info.String(), r.compressionKind, chunkLength, original)
+		r.info.String(), r.opts.CompressionKind, chunkLength, original)
 
-	if uint64(chunkLength) > r.chunkSize {
-		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, r.chunkSize)
+	if uint64(chunkLength) > r.opts.ChunkSize {
+		return errors.Errorf("chunk length %d larger than chunk size %d", chunkLength, r.opts.ChunkSize)
 	}
 
 	if original {
@@ -131,7 +129,7 @@ func (r *reader) readAChunk() error {
 		return errors.WithStack(err)
 	}
 
-	if _, err := common.DecompressChunkData(r.compressionKind, r.buf, readBuf); err != nil {
+	if _, err := common.DecompressChunkData(r.opts.CompressionKind, r.buf, readBuf); err != nil {
 		return err
 	}
 
@@ -144,21 +142,8 @@ func (r reader) finished() bool {
 	return r.readLength >= r.info.GetLength() && r.buf.Len() == 0
 }
 
-func (r *reader) Close() error {
-	if err := r.in.Close(); err != nil {
-		log.Errorf("stream close err %+v", err)
+func (r *reader) Close(){
+	if err:=r.in.Close();err!=nil {
+		log.Errorf("closing error ", err)
 	}
-	return nil
-}
-
-type in interface {
-	io.ReadSeeker
-	io.Closer
-}
-
-func createInStream(opts *orc.ReaderOptions, path string) (in in, err error) {
-	if opts.MockTest {
-
-	}
-	return os.Open(path)
 }

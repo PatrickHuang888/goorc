@@ -15,12 +15,12 @@ type ByteReader struct {
 }
 
 func NewByteReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *ByteReader, err error) {
-	var in in
-	if in, err = createInStream(opts, path); err != nil {
+	var in orc.File
+	if in, err = orc.Open(opts, path); err != nil {
 		return
 	}
 
-	r = &ByteReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}, compressionKind: opts.CompressionKind, chunkSize: opts.ChunkSize}}
+	r = &ByteReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}}}
 	return
 }
 
@@ -29,7 +29,7 @@ func (r *ByteReader) Next() (v byte, err error) {
 		r.values = r.values[:0]
 		r.consumed = 0
 
-		if r.values, err = encoding.DecodeBytes(r.stream, r.values); err != nil {
+		if r.values, err = encoding.DecodeByteRL(r.stream, r.values); err != nil {
 			return 0, err
 		}
 	}
