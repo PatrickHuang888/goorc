@@ -22,8 +22,8 @@ type Reader interface {
 
 	Next(presents *[]bool, pFromParent bool, vec *interface{}) (int, error)
 
-	// Seek seek to rownumber ralated to current stripe
-	// if column is struct (or else)  children, and struct has present stream, then
+	// Seek seek to row number offset to current stripe
+	// if column is struct (or like)  children, and struct has present stream, then
 	// seek to non-null row that is calculated by parent
 	Seek(rowNumber uint64) error
 
@@ -135,42 +135,42 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 			//s.columnReaders[schema.Id] = &stringDirectV2Reader{treeReader: c}
 			break
 		}
-		if encoding == pb.ColumnEncoding_DICTIONARY_V2 {
+		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
 			//s.columnReaders[schema.Id] = &stringDictV2Reader{treeReader: c}
 			break
 		}
 		return nil, errors.New("column encoding error")
 
 	case pb.Type_BOOLEAN:
-		if encoding != pb.ColumnEncoding_DIRECT {
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("bool column encoding error")
 		}
 		//s.columnReaders[schema.Id] = &boolReader{treeReader: c}
 
 	case pb.Type_BYTE: // tinyint
-		if encoding != pb.ColumnEncoding_DIRECT {
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("tinyint column encoding error")
 		}
 		return NewByteReader(schema, opts, path, numberOfRows), nil
 
 	case pb.Type_BINARY:
-		if encoding == pb.ColumnEncoding_DIRECT {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("not impl")
 			break
 		}
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			//s.columnReaders[schema.Id] = &binaryV2Reader{treeReader: c}
 			break
 		}
 		return nil, errors.New("binary column encoding error")
 
 	case pb.Type_DECIMAL:
-		if encoding == pb.ColumnEncoding_DIRECT {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT {
 			// todo:
 			return nil, errors.New("not impl")
 			break
 		}
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			//s.columnReaders[schema.Id] = &decimal64DirectV2Reader{treeReader: c}
 			break
 		}
@@ -187,13 +187,13 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		return nil, errors.New("column encoding error")
 
 	case pb.Type_TIMESTAMP:
-		if encoding == pb.ColumnEncoding_DIRECT {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT {
 			// todo:
 			return nil, errors.New("not impl")
 			break
 		}
 
-		if encoding == pb.ColumnEncoding_DIRECT_V2 {
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			//s.columnReaders[schema.Id] = &timestampV2Reader{treeReader: c}
 			break
 		}

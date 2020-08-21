@@ -2,8 +2,9 @@ package stream
 
 import (
 	"bytes"
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
+	"github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	log "github.com/sirupsen/logrus"
 )
@@ -17,9 +18,9 @@ type IntRLV2Reader struct {
 	decoder *encoding.IntRL2
 }
 
-func NewRLV2Reader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, signed bool, path string) (r *IntRLV2Reader, err error) {
-	var in orc.File
-	if in, err = orc.Open(opts, path); err != nil {
+func NewRLV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, signed bool, path string) (r *IntRLV2Reader, err error) {
+	var in io.File
+	if in, err = io.Open(opts, path); err != nil {
 		return
 	}
 	r = &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}, decoder: encoding.NewIntRLV2(signed)}
@@ -79,17 +80,17 @@ func (r *IntRLV2Reader) Seek(offset, uncompressedOffset, pos uint64) error {
 	return nil
 }
 
-func (r *IntRLV2Reader) Close() error {
-	return r.stream.Close()
+func (r *IntRLV2Reader) Close(){
+	r.stream.Close()
 }
 
 type VarIntReader struct {
 	stream *reader
 }
 
-func NewVarIntReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *VarIntReader, err error) {
-	var in orc.File
-	if in, err = orc.Open(opts, path); err != nil {
+func NewVarIntReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *VarIntReader, err error) {
+	var in io.File
+	if in, err = io.Open(opts, path); err != nil {
 		return
 	}
 
@@ -120,6 +121,6 @@ func (r *VarIntReader) Seek(offset, uncompressedOffset, pos uint64) error {
 	return nil
 }
 
-func (r *VarIntReader) Close() error {
-	return r.stream.Close()
+func (r *VarIntReader) Close(){
+	r.stream.Close()
 }

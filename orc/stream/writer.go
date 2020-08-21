@@ -2,8 +2,8 @@ package stream
 
 import (
 	"bytes"
-	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/common"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"io"
@@ -86,7 +86,7 @@ type writer struct {
 	buf           *bytes.Buffer
 	compressedBuf *bytes.Buffer
 
-	opts *orc.WriterOptions
+	opts *config.WriterOptions
 
 	positions [][]uint64
 }
@@ -177,7 +177,7 @@ func (w *writer) Size() int {
 	return w.compressedBuf.Len() + w.buf.Len()
 }
 
-func NewByteWriter(id uint32, kind pb.Stream_Kind, opts *orc.WriterOptions) Writer {
+func NewByteWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) Writer {
 	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
@@ -189,10 +189,10 @@ func NewByteWriter(id uint32, kind pb.Stream_Kind, opts *orc.WriterOptions) Writ
 		cbuf.Reset()
 	}
 
-	return &encodingWriter{&writer{buf: buf, compressedBuf: cbuf, info: info, opts:opts}, encoding.NewByteEncoder()}
+	return &encodingWriter{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, encoding.NewByteEncoder()}
 }
 
-func NewBoolWriter(id uint32, kind pb.Stream_Kind, opts *orc.WriterOptions) Writer {
+func NewBoolWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) Writer {
 	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
@@ -204,10 +204,10 @@ func NewBoolWriter(id uint32, kind pb.Stream_Kind, opts *orc.WriterOptions) Writ
 		cbuf.Reset()
 	}
 
-	return &encodingWriter{&writer{info: info, buf: buf, compressedBuf: cbuf, opts:opts}, encoding.NewBoolEncoder()}
+	return &encodingWriter{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewBoolEncoder()}
 }
 
-func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *orc.WriterOptions, signed bool) Writer {
+func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions, signed bool) Writer {
 	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
@@ -219,5 +219,5 @@ func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *orc.WriterOptions, s
 		cbuf.Reset()
 	}
 
-	return &encodingWriter{&writer{info: info, buf: buf, compressedBuf: cbuf, opts:opts}, encoding.NewIntRLV2(signed)}
+	return &encodingWriter{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewIntRLV2(signed)}
 }

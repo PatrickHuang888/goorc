@@ -18,13 +18,6 @@ func init() {
 	log.SetLevel(log.DebugLevel)
 }
 
-type bufSeeker struct {
-	*bytes.Buffer
-}
-
-func (bs *bufSeeker) Seek(offset int64, whence int) (int64, error) {
-	return offset, nil
-}
 
 type testEncoder struct {
 }
@@ -34,43 +27,6 @@ func (e *testEncoder) Encode(out *bytes.Buffer, values interface{}) error  {
 	return err
 }
 
-func TestStreamReadWriteNoCompression(t *testing.T) {
-	data := make([]byte, 200)
-	for i := 0; i < 200; i++ {
-		data[i]= byte(1)
-	}
-
-	// with no compression, default chunksize is buffer size
-	opts := &orc.WriterOptions{CompressionKind: pb.CompressionKind_NONE}
-	k := pb.Stream_DATA
-	id := uint32(0)
-	l := uint64(0)
-	info := &pb.Stream{Kind: &k, Column: &id, Length: &l}
-
-	sw := &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: &testEncoder{},
-		encodingBuf: &bytes.Buffer{}}
-
-	if _, err := sw.writeValues(data);err != nil {
-		t.Fatal(err)
-	}
-
-	out := &bufSeeker{&bytes.Buffer{}}
-	if _, err := sw.writeOut(out); err != nil {
-		t.Fatal(err)
-	}
-
-	vs := make([]byte, 500)
-	ropts := &orc.ReaderOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
-	*info.Length= uint64(out.Len())
-	sr := &orc.streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
-
-	n, err := sr.Read(vs)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, 200, n)
-	assert.Equal(t, data, vs[:n])
-}
 
 func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
 	data := &bytes.Buffer{}

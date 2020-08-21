@@ -5,7 +5,6 @@ import (
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 func NewLongV2Reader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string, numberOfRows uint64) Reader {
@@ -104,7 +103,7 @@ func (c *longV2Reader) Seek(rowNumber uint64) error {
 	}
 
 	stride := rowNumber / c.opts.IndexStride
-	offsetInStride := rowNumber % c.opts.IndexStride
+	strideOffset := rowNumber % (stride * c.opts.IndexStride)
 
 	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
 		return err
@@ -112,28 +111,26 @@ func (c *longV2Reader) Seek(rowNumber uint64) error {
 
 	c.cursor = stride * c.opts.IndexStride
 
-	for i := 0; i < int(offsetInStride); i++ {
-		if c.present != nil {
-			if _, err := c.present.Next(); err != nil {
-				return err
-			}
-		}
-		if _, err := c.data.NextInt64(); err != nil {
-			return err
-		}
-		c.cursor++
+	var pp []bool
+	if c.present != nil {
+		pp = make([]bool, strideOffset)
 	}
+
+	vv := make([]int64, strideOffset)
+	var vec *interface{}
+	*vec = vv
+
+	if _, err := c.Next(&pp, false, vec); err != nil {
+		return err
+	}
+
+	c.cursor += strideOffset
 	return nil
 }
 
-func (c *longV2Reader) Close() error {
+func (c *longV2Reader) Close() {
 	if c.present != nil {
-		if err := c.present.Close(); err != nil {
-			log.Errorf("present closing err", err)
-		}
+		c.present.Close()
 	}
-	if err := c.data.Close(); err != nil {
-		log.Errorf("data closing err", err)
-	}
-	return nil
+	c.data.Close()
 }

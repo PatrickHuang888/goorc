@@ -2,8 +2,9 @@ package stream
 
 import (
 	"bytes"
-	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/common"
+	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -18,9 +19,9 @@ type reader struct {
 
 	buf *bytes.Buffer
 
-	opts *orc.ReaderOptions
+	opts *config.ReaderOptions
 
-	in orc.File
+	in orcio.File
 }
 
 func (r *reader) ReadByte() (b byte, err error) {
@@ -144,6 +145,6 @@ func (r reader) finished() bool {
 
 func (r *reader) Close(){
 	if err:=r.in.Close();err!=nil {
-		log.Errorf("closing error ", err)
+		log.Error("closing error ", err)
 	}
 }

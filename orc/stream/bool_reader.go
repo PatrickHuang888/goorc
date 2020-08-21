@@ -2,8 +2,9 @@ package stream
 
 import (
 	"bytes"
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
+	"github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	log "github.com/sirupsen/logrus"
 )
@@ -15,9 +16,9 @@ type BoolReader struct {
 	pos    int
 }
 
-func NewBoolReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *BoolReader, err error) {
-	var in orc.File
-	if in, err = orc.Open(opts, path); err != nil {
+func NewBoolReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *BoolReader, err error) {
+	var in io.File
+	if in, err = io.Open(opts, path); err != nil {
 		return
 	}
 

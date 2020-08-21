@@ -28,12 +28,6 @@ const (
 
 var VERSION = []uint32{0, 12}
 
-type WriterOptions struct {
-	ChunkSize       int
-	CompressionKind pb.CompressionKind
-	StripeSize      uint64 // ~200MB
-	BufferSize      uint   // written data in memory
-}
 
 func DefaultWriterOptions() *WriterOptions {
 	o := &WriterOptions{}

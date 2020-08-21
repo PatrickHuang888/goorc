@@ -98,7 +98,7 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 	}
 
 	stride := rowNumber / c.opts.IndexStride
-	strideOffset := rowNumber % c.opts.IndexStride
+	strideOffset := rowNumber % (stride*c.opts.IndexStride)
 
 	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
 		return err
@@ -106,19 +106,24 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 
 	c.cursor = stride * c.opts.IndexStride
 
-	for i := 0; i < int(strideOffset); i++ {
-		if _, err := c.present.Next(); err != nil {
-			return err
-		}
-		if _, err := c.data.Next(); err != nil {
-			return err
-		}
-		c.cursor++
+	var pp []bool
+	if c.present != nil {
+		pp = make([]bool, strideOffset)
 	}
+
+	vv := make([]byte, strideOffset)
+	var v *interface{}
+	*v = vv
+
+	if _, err := c.Next(&pp, false, v); err != nil {
+		return err
+	}
+
+	c.cursor+=strideOffset
 	return nil
 }
 
-func (c *byteReader) Close(){
+func (c *byteReader) Close() {
 	c.present.Close()
 	c.data.Close()
 }

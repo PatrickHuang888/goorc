@@ -2,8 +2,9 @@ package stream
 
 import (
 	"bytes"
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
+	"github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -11,9 +12,9 @@ type FloatReader struct {
 	stream  *reader
 }
 
-func NewFloatReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *FloatReader, err error) {
-	var in orc.File
-	if in, err = orc.Open(opts, path); err != nil {
+func NewFloatReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *FloatReader, err error) {
+	var in io.File
+	if in, err = io.Open(opts, path); err != nil {
 		return
 	}
 
@@ -51,7 +52,7 @@ type DoubleReader struct {
 	*FloatReader
 }
 
-func NewDoubleReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *DoubleReader, err error) {
+func NewDoubleReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *DoubleReader, err error) {
 	var fr *FloatReader
 	if fr, err= NewFloatReader(opts, info, start, path);err!=nil {
 		return

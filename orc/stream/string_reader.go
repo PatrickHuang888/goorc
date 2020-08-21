@@ -3,8 +3,9 @@ package stream
 import (
 	"bytes"
 	"errors"
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
+	"github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -12,9 +13,9 @@ type StringContentsReader struct {
 	stream *reader
 }
 
-func NewStringContentsReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *StringContentsReader, err error) {
-	var in orc.File
-	if in, err = orc.Open(opts, path); err != nil {
+func NewStringContentsReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *StringContentsReader, err error) {
+	var in io.File
+	if in, err = io.Open(opts, path); err != nil {
 		return
 	}
 
@@ -73,6 +74,6 @@ func (r *StringContentsReader) Seek(chunkOffset uint64, uncompressionOffset uint
 	return nil
 }
 
-func (r *StringContentsReader) Close() error {
-	return r.stream.Close()
+func (r *StringContentsReader) Close(){
+	r.stream.Close()
 }

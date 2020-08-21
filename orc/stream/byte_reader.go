@@ -2,7 +2,9 @@ package stream
 
 import (
 	"bytes"
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
+	"github.com/patrickhuang888/goorc/orc/io"
+
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
@@ -14,10 +16,12 @@ type ByteReader struct {
 	consumed int
 }
 
-func NewByteReader(opts *orc.ReaderOptions, info *pb.Stream, start uint64, path string) (r *ByteReader, err error) {
-	var in orc.File
-	if in, err = orc.Open(opts, path); err != nil {
-		return
+func NewByteReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *ByteReader, err error) {
+	var in io.File
+	if !opts.MockTest {
+		if in, err = io.Open(opts, path); err != nil {
+			return
+		}
 	}
 
 	r = &ByteReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}}}
@@ -55,6 +59,6 @@ func (r *ByteReader) Finished() bool {
 	return r.stream.finished() && (r.consumed == len(r.values))
 }
 
-func (r *ByteReader) Close() error {
-	return r.stream.Close()
+func (r *ByteReader) Close() {
+	r.stream.Close()
 }

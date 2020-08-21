@@ -97,7 +97,7 @@ func (c *doubleReader) Seek(rowNumber uint64) error {
 	}
 
 	stride := rowNumber / c.opts.IndexStride
-	strideOffset := rowNumber % c.opts.IndexStride
+	strideOffset := rowNumber % (stride * c.opts.IndexStride)
 
 	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
 		return err
@@ -105,7 +105,19 @@ func (c *doubleReader) Seek(rowNumber uint64) error {
 
 	c.cursor = stride * c.opts.IndexStride
 
-	pp:=make([]bool, )
+	var pp []bool
+	if c.present != nil {
+		pp = make([]bool, strideOffset)
+	}
+	vv := make([]int64, strideOffset)
+	var vec *interface{}
+	*vec = vv
+
+	if _, err := c.Next(&pp, false, vec); err != nil {
+		return err
+	}
+
+	c.cursor += strideOffset
 	return nil
 }
 

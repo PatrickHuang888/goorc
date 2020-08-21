@@ -2,8 +2,6 @@ package column
 
 import (
 	"errors"
-	log "github.com/sirupsen/logrus"
-
 	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
@@ -107,7 +105,7 @@ func (c *dateV2Reader) Seek(rowNumber uint64) error {
 	}
 
 	stride := rowNumber / c.opts.IndexStride
-	offsetInStride := rowNumber % c.opts.IndexStride
+	offsetInStride := rowNumber % (stride * c.opts.IndexStride)
 
 	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
 		return err
@@ -129,14 +127,9 @@ func (c *dateV2Reader) Seek(rowNumber uint64) error {
 	return nil
 }
 
-func (c *dateV2Reader) Close() error {
+func (c *dateV2Reader) Close() {
 	if c.present != nil {
-		if err := c.present.Close(); err != nil {
-			log.Errorf("date present closing err", err)
-		}
+		c.present.Close()
 	}
-	if err := c.data.Close(); err != nil {
-		log.Errorf("date data closing err", err)
-	}
-	return nil
+	c.data.Close()
 }
