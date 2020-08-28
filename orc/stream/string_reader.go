@@ -13,14 +13,8 @@ type StringContentsReader struct {
 	stream *reader
 }
 
-func NewStringContentsReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *StringContentsReader, err error) {
-	var in io.File
-	if in, err = io.Open(opts, path); err != nil {
-		return
-	}
-
-	r = &StringContentsReader{stream: &reader{info: info, buf: &bytes.Buffer{}, in: in, start: start}}
-	return
+func NewStringContentsReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *StringContentsReader {
+	return &StringContentsReader{stream: &reader{info: info, buf: &bytes.Buffer{}, in: in, start: start}}
 }
 
 func (r *StringContentsReader) NextBytes(len uint64) (v []byte, err error) {
@@ -74,6 +68,6 @@ func (r *StringContentsReader) Seek(chunkOffset uint64, uncompressionOffset uint
 	return nil
 }
 
-func (r *StringContentsReader) Close(){
+func (r *StringContentsReader) Close() {
 	r.stream.Close()
 }

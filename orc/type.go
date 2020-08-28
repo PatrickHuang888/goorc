@@ -2,6 +2,7 @@ package orc
 
 import (
 	"fmt"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"strings"
 
 	"github.com/patrickhuang888/goorc/pb/pb"
@@ -180,7 +181,7 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) *ColumnVector 
 }
 
 // should normalize first
-func (td TypeDescription) CreateWriterBatch(opts *WriterOptions) *ColumnVector {
+func (td TypeDescription) CreateWriterBatch(opts config.WriterOptions) *ColumnVector {
 	// set id
 	td.normalize()
 

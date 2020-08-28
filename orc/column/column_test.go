@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"testing"
 	"time"
 
@@ -27,47 +28,6 @@ func (e *testEncoder) Encode(out *bytes.Buffer, values interface{}) error  {
 	return err
 }
 
-
-func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
-	data := &bytes.Buffer{}
-	for i := 0; i < 100; i++ {
-		data.WriteByte(byte(1))
-	}
-	for i := 0; i < 200; i++ {
-		data.WriteByte(byte(i))
-	}
-	bs := data.Bytes()
-
-	// expand to several chunks
-	opts := &orc.WriterOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
-	k := pb.Stream_DATA
-	id := uint32(0)
-	l := uint64(0)
-	info := &pb.Stream{Kind: &k, Column: &id, Length: &l}
-	sw := &streamWriter{info: info, buf: &bytes.Buffer{}, opts: opts, encoder: &testEncoder{},
-		encodingBuf: &bytes.Buffer{}}
-
-	if _, err := sw.writeValues(bs);err != nil {
-		t.Fatal(err)
-	}
-
-	out := &bufSeeker{&bytes.Buffer{}}
-	if _, err := sw.writeOut(out); err != nil {
-		t.Fatal(err)
-	}
-
-	vs := make([]byte, 500)
-	ropts := &orc.ReaderOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
-	*info.Length= uint64(out.Len())
-	sr := &orc.streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
-
-	n, err := sr.Read(vs)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, 300, n)
-	assert.Equal(t, bs, vs[:n])
-}
 
 func TestLongColumnRWwithNoPresents(t *testing.T) {
 	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_LONG}

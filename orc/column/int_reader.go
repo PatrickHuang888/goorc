@@ -2,13 +2,15 @@ package column
 
 import (
 	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 )
 
-func NewLongV2Reader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string, numberOfRows uint64) Reader {
-	return &longV2Reader{reader: &reader{schema: schema, opts: opts, path: path, numberOfRows: numberOfRows}}
+func NewLongV2Reader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
+	return &longV2Reader{reader: &reader{schema: schema, opts: opts, in:in, numberOfRows: numberOfRows}}
 }
 
 type longV2Reader struct {
@@ -16,22 +18,29 @@ type longV2Reader struct {
 	data *stream.IntRLV2Reader
 }
 
-func (c *longV2Reader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream, path string) error {
-	var err error
+func (c *longV2Reader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error {
 
 	if encoding == pb.ColumnEncoding_DIRECT {
-		err = errors.New("int reader encoding direct not impl")
+		err := errors.New("int reader encoding direct not impl")
 		return err
 	}
 
 	if kind == pb.Stream_PRESENT {
-		c.present, err = stream.NewBoolReader(c.opts, info, startOffset, path)
-		return err
+		ic, err:= c.in.Clone()
+		if err!=nil {
+			return err
+		}
+		c.present= stream.NewBoolReader(c.opts, info, startOffset, ic)
+		return nil
 	}
 
 	if kind == pb.Stream_DATA {
-		c.data, err = stream.NewRLV2Reader(c.opts, info, startOffset, true, path)
-		return err
+		ic, err:= c.in.Clone()
+		if err!=nil {
+			return err
+		}
+		c.data= stream.NewRLV2Reader(c.opts, info, startOffset, true, ic)
+		return nil
 	}
 	return errors.New("stream unknown")
 }

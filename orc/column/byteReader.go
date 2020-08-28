@@ -2,6 +2,8 @@ package column
 
 import (
 	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
@@ -12,22 +14,28 @@ type byteReader struct {
 	data *stream.ByteReader
 }
 
-func NewByteReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string, numberOfRows uint64) Reader {
-	return &byteReader{reader: &reader{opts: opts, schema: schema, path: path, numberOfRows: numberOfRows}}
+func NewByteReader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
+	return &byteReader{reader: &reader{opts: opts, schema: schema, in: in, numberOfRows: numberOfRows}}
 }
 
-// create a file for every stream
-func (c *byteReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream, path string) error {
+// create a input for every stream
+func (c *byteReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error {
 	if kind == pb.Stream_PRESENT {
-		var err error
-		c.present, err = stream.NewBoolReader(c.opts, info, startOffset, path)
-		return err
+		ic, err := c.in.Clone()
+		if err != nil {
+			return err
+		}
+		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
+		return nil
 	}
 
 	if kind == pb.Stream_DATA {
-		var err error
-		c.data, err = stream.NewByteReader(c.opts, info, startOffset, path)
-		return err
+		ic, err := c.in.Clone()
+		if err != nil {
+			return err
+		}
+		c.data = stream.NewByteReader(c.opts, info, startOffset, ic)
+		return nil
 	}
 
 	return errors.New("stream kind error")
@@ -98,7 +106,7 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 	}
 
 	stride := rowNumber / c.opts.IndexStride
-	strideOffset := rowNumber % (stride*c.opts.IndexStride)
+	strideOffset := rowNumber % (stride * c.opts.IndexStride)
 
 	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
 		return err
@@ -119,7 +127,7 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 		return err
 	}
 
-	c.cursor+=strideOffset
+	c.cursor += strideOffset
 	return nil
 }
 

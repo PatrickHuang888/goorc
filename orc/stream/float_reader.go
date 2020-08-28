@@ -9,16 +9,11 @@ import (
 )
 
 type FloatReader struct {
-	stream  *reader
+	stream *reader
 }
 
-func NewFloatReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *FloatReader, err error) {
-	var in io.File
-	if in, err = io.Open(opts, path); err != nil {
-		return
-	}
-
-	r= &FloatReader{stream: &reader{start: start, info: info, buf: &bytes.Buffer{}, in: in}}
+func NewFloatReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) (r *FloatReader) {
+	r = &FloatReader{stream: &reader{opts: opts, start: start, info: info, buf: &bytes.Buffer{}, in: in}}
 	return
 }
 
@@ -47,21 +42,15 @@ func (r *FloatReader) Close() {
 	r.stream.Close()
 }
 
-
 type DoubleReader struct {
 	*FloatReader
 }
 
-func NewDoubleReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *DoubleReader, err error) {
-	var fr *FloatReader
-	if fr, err= NewFloatReader(opts, info, start, path);err!=nil {
-		return
-	}
-	r = &DoubleReader{FloatReader:fr}
-	return
+func NewDoubleReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *DoubleReader {
+	fr := NewFloatReader(opts, info, start, in)
+	return &DoubleReader{FloatReader: fr}
 }
 
 func (r *DoubleReader) Next() (v float64, err error) {
 	return encoding.DecodeDouble(r.stream)
 }
-

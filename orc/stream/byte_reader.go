@@ -16,16 +16,8 @@ type ByteReader struct {
 	consumed int
 }
 
-func NewByteReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *ByteReader, err error) {
-	var in io.File
-	if !opts.MockTest {
-		if in, err = io.Open(opts, path); err != nil {
-			return
-		}
-	}
-
-	r = &ByteReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}}}
-	return
+func NewByteReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *ByteReader{
+	return &ByteReader{stream: &reader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}}
 }
 
 func (r *ByteReader) Next() (v byte, err error) {

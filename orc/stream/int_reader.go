@@ -18,13 +18,8 @@ type IntRLV2Reader struct {
 	decoder *encoding.IntRL2
 }
 
-func NewRLV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, signed bool, path string) (r *IntRLV2Reader, err error) {
-	var in io.File
-	if in, err = io.Open(opts, path); err != nil {
-		return
-	}
-	r = &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}, decoder: encoding.NewIntRLV2(signed)}
-	return
+func NewRLV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, signed bool, in io.File) *IntRLV2Reader {
+	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}, decoder: encoding.NewIntRLV2(signed)}
 }
 
 func (r *IntRLV2Reader) NextInt64() (v int64, err error) {
@@ -80,7 +75,7 @@ func (r *IntRLV2Reader) Seek(offset, uncompressedOffset, pos uint64) error {
 	return nil
 }
 
-func (r *IntRLV2Reader) Close(){
+func (r *IntRLV2Reader) Close() {
 	r.stream.Close()
 }
 
@@ -88,14 +83,8 @@ type VarIntReader struct {
 	stream *reader
 }
 
-func NewVarIntReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *VarIntReader, err error) {
-	var in io.File
-	if in, err = io.Open(opts, path); err != nil {
-		return
-	}
-
-	r = &VarIntReader{stream: &reader{info: info, start: start, buf: &bytes.Buffer{}, in: in}}
-	return
+func NewVarIntReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *VarIntReader {
+	return &VarIntReader{stream: &reader{info: info, start: start, buf: &bytes.Buffer{}, in: in}}
 }
 
 func (r *VarIntReader) NextInt64() (v int64, err error) {
@@ -121,6 +110,6 @@ func (r *VarIntReader) Seek(offset, uncompressedOffset, pos uint64) error {
 	return nil
 }
 
-func (r *VarIntReader) Close(){
+func (r *VarIntReader) Close() {
 	r.stream.Close()
 }

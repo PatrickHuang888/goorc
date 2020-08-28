@@ -2,6 +2,8 @@ package column
 
 import (
 	"fmt"
+	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"io"
 	"os"
 	"strings"
@@ -18,7 +20,7 @@ import (
 type Reader interface {
 	InitChildren(children []Reader) error
 	InitIndex(startOffset uint64, length uint64, path string) error
-	InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream, path string) error
+	InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error
 
 	Next(presents *[]bool, pFromParent bool, vec *interface{}) (int, error)
 
@@ -33,7 +35,7 @@ type Reader interface {
 }
 
 type reader struct {
-	path string
+	in orcio.File
 
 	schema *orc.TypeDescription
 
@@ -42,7 +44,7 @@ type reader struct {
 	numberOfRows uint64 // from stripe information
 	cursor       uint64
 
-	opts *orc.ReaderOptions
+	opts *config.ReaderOptions
 
 	index *pb.RowIndex
 }
@@ -60,17 +62,17 @@ func (r *reader) String() string {
 func (r *reader) InitIndex(startOffset uint64, length uint64, path string) error {
 	var err error
 	var f *os.File
-	if f, err = os.Open(path);err!=nil {
+	if f, err = os.Open(path); err != nil {
 		return err
 	}
 	defer f.Close()
 
-	if _, err= f.Seek(int64(startOffset), io.SeekStart);err!=nil {
+	if _, err = f.Seek(int64(startOffset), io.SeekStart); err != nil {
 		return err
 	}
 
-	var buf= make([]byte, length)
-	if _, err=io.ReadFull(f, buf);err!=nil {
+	var buf = make([]byte, length)
+	if _, err = io.ReadFull(f, buf); err != nil {
 		return err
 	}
 
@@ -97,7 +99,7 @@ func (r *reader) nextPresents(presents *[]bool) error {
 	}
 	log.Debugf("column %d has read %d presents values", r.schema.Id, len(pp))
 
-	*presents= pp
+	*presents = pp
 	return nil
 }
 
@@ -109,7 +111,7 @@ func (r reader) Children() []Reader {
 	return nil
 }
 
-func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string, numberOfRows uint64) (Reader, error) {
+func NewReader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) (Reader, error) {
 	switch schema.Kind {
 	case pb.Type_SHORT:
 		fallthrough
@@ -117,7 +119,7 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		fallthrough
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return NewLongV2Reader(schema, opts, path, numberOfRows), nil
+			return NewLongV2Reader(schema, opts, in, numberOfRows), nil
 		}
 		return nil, errors.New("not impl")
 
@@ -128,7 +130,7 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("column encoding error")
 		}
-		return NewDoubleReader(schema, opts, path, numberOfRows), nil
+		return NewDoubleReader(schema, opts, in, numberOfRows), nil
 
 	case pb.Type_STRING:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
@@ -151,7 +153,7 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("tinyint column encoding error")
 		}
-		return NewByteReader(schema, opts, path, numberOfRows), nil
+		return NewByteReader(schema, opts, in, numberOfRows), nil
 
 	case pb.Type_BINARY:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
@@ -182,7 +184,7 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 			return nil, errors.New("not impl")
 		}
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return NewDateV2Reader(schema, opts, path, numberOfRows), nil
+			return NewDateV2Reader(schema, opts, in, numberOfRows), nil
 		}
 		return nil, errors.New("column encoding error")
 
@@ -203,7 +205,7 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
-		return  NewStructReader(schema, opts, path, numberOfRows), nil
+		return NewStructReader(schema, opts, in, numberOfRows), nil
 
 	case pb.Type_LIST:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
@@ -240,4 +242,3 @@ func NewReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string
 
 	return nil, nil
 }
-

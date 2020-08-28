@@ -1,10 +1,12 @@
 package column
 
 import (
-	"github.com/patrickhuang888/goorc/orc/stream"
-	"github.com/pkg/errors"
 	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
+	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/pkg/errors"
 )
 
 type structReader struct {
@@ -13,8 +15,8 @@ type structReader struct {
 	children []Reader
 }
 
-func NewStructReader(schema *orc.TypeDescription, opts *orc.ReaderOptions, path string, numberOfRows uint64) Reader {
-	return &structReader{reader: &reader{opts: opts, schema: schema, path: path, numberOfRows: numberOfRows}}
+func NewStructReader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
+	return &structReader{reader: &reader{opts: opts, schema: schema, in:in, numberOfRows: numberOfRows}}
 }
 
 func (s *structReader) InitChildren(children []Reader) error {
@@ -26,11 +28,14 @@ func (s structReader) Children() []Reader {
 	return s.children
 }
 
-func (s *structReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream, path string) error {
+func (s *structReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error {
 	if kind == pb.Stream_PRESENT {
-		var err error
-		s.present, err = stream.NewBoolReader(s.opts, info, startOffset, path)
-		return err
+		ic, err := s.in.Clone()
+		if err != nil {
+			return err
+		}
+		s.present = stream.NewBoolReader(s.opts, info, startOffset, ic)
+		return nil
 	}
 
 	return errors.New("struct column no stream other than present")
@@ -84,6 +89,6 @@ func (s *structReader) Seek(rowNumber uint64) error {
 	return nil
 }
 
-func (s structReader) Close() error {
-	return s.present.Close()
+func (s structReader) Close() {
+	s.present.Close()
 }

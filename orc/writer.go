@@ -13,30 +13,10 @@ import (
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
-const (
-	MIN_ROW_INDEX_STRIDE         = 1000
-	DEFAULT_STRIPE_SIZE          = 256 * 1024 * 1024
-	DefalutBufferSize            = 10 * 1024 * 2014
-	DEFAULT_INDEX_SIZE           = 100 * 1024
-	DEFAULT_PRESENT_SIZE         = 100 * 1024
-	DEFAULT_DATA_SIZE            = 1 * 1024 * 1024
-	DEFAULT_LENGTH_SIZE          = 100 * 1024
-	DEFAULT_ENCODING_BUFFER_SIZE = 100 * 1024
-	DEFAULT_CHUNK_SIZE           = 256 * 1024
-	MAX_CHUNK_LENGTH             = uint64(32768) // 15 bit
-)
 
 var VERSION = []uint32{0, 12}
 
 
-func DefaultWriterOptions() *WriterOptions {
-	o := &WriterOptions{}
-	o.CompressionKind = pb.CompressionKind_ZLIB
-	o.StripeSize = DEFAULT_STRIPE_SIZE
-	o.ChunkSize = DEFAULT_CHUNK_SIZE
-	o.BufferSize = DefalutBufferSize
-	return o
-}
 
 type Writer interface {
 	GetSchema() *TypeDescription

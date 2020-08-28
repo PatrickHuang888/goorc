@@ -2,6 +2,7 @@ package column
 
 import (
 	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
@@ -14,10 +15,10 @@ type byteWriter struct {
 	data stream.Writer
 }
 
-func newByteWriter(schema *orc.TypeDescription, opts *orc.WriterOptions) Writer {
+func newByteWriter(schema *orc.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
-	base := &writer{schema: schema, present: stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts.CompressionKind, opts.ChunkSize), stats: stats}
-	data := stream.NewByteWriter(schema.Id, pb.Stream_DATA, opts.CompressionKind, opts.ChunkSize)
+	base := &writer{schema: schema, present: stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	data := stream.NewByteWriter(schema.Id, pb.Stream_DATA, opts)
 	return &byteWriter{base, data}
 }
 

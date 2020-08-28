@@ -16,14 +16,8 @@ type BoolReader struct {
 	pos    int
 }
 
-func NewBoolReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, path string) (r *BoolReader, err error) {
-	var in io.File
-	if in, err = io.Open(opts, path); err != nil {
-		return
-	}
-
-	r = &BoolReader{stream: &reader{info: info, start: start, in: in, buf: &bytes.Buffer{}}}
-	return
+func NewBoolReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *BoolReader {
+	return &BoolReader{stream: &reader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}}
 }
 
 func (r *BoolReader) Next() (v bool, err error) {
@@ -57,6 +51,6 @@ func (r *BoolReader) Finished() bool {
 	return r.stream.finished() && (r.pos == len(r.values))
 }
 
-func (r *BoolReader) Close(){
+func (r *BoolReader) Close() {
 	r.stream.Close()
 }
