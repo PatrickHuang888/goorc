@@ -5,9 +5,14 @@ import (
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
+
+func init()  {
+	log.SetLevel(log.TraceLevel)
+}
 
 func TestStreamReadWriteNoCompression(t *testing.T) {
 	var err error
@@ -18,8 +23,7 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 		data[i] = byte(1)
 	}
 
-	// with no compression, default chunksize is buffer size
-	wopts := &config.WriterOptions{CompressionKind: pb.CompressionKind_NONE}
+	wopts := &config.WriterOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
 	id := uint32(0)
 	sw := NewByteWriter(id, pb.Stream_DATA, wopts).(*encodingWriter)
 
@@ -41,8 +45,6 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 	ropts := &config.ReaderOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
 
 	sr := NewByteReader(ropts, sw.info, 0, f)
-	sr.stream.buf = sw.buf
-
 
 	vs := make([]byte, 200)
 	for i := 0; i < num; i++ {
@@ -55,51 +57,57 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 	if !sr.Finished() {
 		t.Fatal("reader should be finished")
 	}
-	assert.Equal(t, data, vs[:num])
+	assert.Equal(t, data, vs)
 }
 
 
 func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
 	var err error
 
-	data := &bytes.Buffer{}
+	buf := &bytes.Buffer{}
 	for i := 0; i < 100; i++ {
-		data.WriteByte(byte(1))
+		buf.WriteByte(byte(1))
 	}
 	for i := 0; i < 200; i++ {
-		data.WriteByte(byte(i))
+		buf.WriteByte(byte(i))
 	}
-	bs := data.Bytes()
+	data := buf.Bytes()
 
 	// expand to several chunks
 	opts := &config.WriterOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
 	id := uint32(0)
 	w := NewByteWriter(id, pb.Stream_DATA, opts).(*encodingWriter)
 
-	for _, b := range bs {
+	for _, b := range data {
 		if err=w.Write(b);err!=nil {
 			t.Fatal(err)
 		}
 	}
-	
-	if _, err := sw.write(bs);err != nil {
+
+	if err = w.Flush(); err != nil {
 		t.Fatal(err)
 	}
 
-	out := &bufSeeker{&bytes.Buffer{}}
-	if _, err := sw.writeOut(out); err != nil {
-		t.Fatal(err)
-	}
-
-	vs := make([]byte, 500)
-	ropts := &orc.ReaderOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
-	*info.Length= uint64(out.Len())
-	sr := &orc.streamReader{info: info, opts: ropts, buf: &bytes.Buffer{}, in: out}
-
-	n, err := sr.Read(vs)
-	if err != nil {
+	bb := make([]byte, 500)
+	f := orcio.NewMockFile(bb)
+	if _, err = w.WriteOut(f); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, 300, n)
-	assert.Equal(t, bs, vs[:n])
+
+	ropts := &config.ReaderOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
+	sr := NewByteReader(ropts, w.info, 0, f)
+	sr.stream.buf = w.buf
+
+	vv := make([]byte, 300)
+	for i := 0; i < 300; i++ {
+		vv[i], err = sr.Next()
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+
+	if !sr.Finished() {
+		t.Fatal("reader should be finished")
+	}
+	assert.Equal(t, data, vv)
 }

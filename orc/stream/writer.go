@@ -6,6 +6,7 @@ import (
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/pkg/errors"
 	"io"
 )
 
@@ -109,7 +110,7 @@ func (w *writer) write(p []byte) error {
 		return err
 	}
 
-	w.buf = bytes.NewBuffer(w.buf.Bytes())
+	//w.buf = bytes.NewBuffer(w.buf.Bytes()) ??
 	return nil
 }
 
@@ -158,12 +159,16 @@ func (w *writer) flush() error {
 // used together with flush
 func (w *writer) WriteOut(out io.Writer) (n int64, err error) {
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
-		n, err = w.buf.WriteTo(out)
+		if n, err = w.buf.WriteTo(out); err != nil {
+			return 0, errors.WithStack(err)
+		}
 		*w.info.Length = uint64(n)
 		return
 	}
 
-	n, err = w.compressedBuf.WriteTo(out)
+	if n, err = w.compressedBuf.WriteTo(out); err != nil {
+		return 0, errors.WithStack(err)
+	}
 	*w.info.Length = uint64(n)
 	return
 }

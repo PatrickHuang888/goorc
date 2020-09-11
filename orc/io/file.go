@@ -81,7 +81,7 @@ func (m *MockFile) Close() error {
 }
 
 func (m *MockFile) Size() (int64, error) {
-	return int64(len(m.buf)), nil
+	return int64(m.waterMark), nil
 }
 
 func (m *MockFile) Seek(offset int64, whence int) (int64, error) {
@@ -109,7 +109,7 @@ func (m *MockFile) Write(p []byte) (n int, err error) {
 	m.waterMark += n
 
 	if n < len(p) {
-		err = errors.New("")
+		err = errors.New("no enough buf in mock file")
 	}
 
 	return
