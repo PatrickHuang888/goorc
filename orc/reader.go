@@ -37,12 +37,6 @@ type Reader interface {
 }
 
 
-func DefaultReaderOptions() *ReaderOptions {
-	return &ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE,
-		CompressionKind: pb.CompressionKind_ZLIB}
-}
-
-
 type reader struct {
 	opts    *ReaderOptions
 	schemas []*TypeDescription

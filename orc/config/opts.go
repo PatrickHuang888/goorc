@@ -16,6 +16,7 @@ const (
 	DEFAULT_ENCODING_BUFFER_SIZE = 100 * 1024
 	DEFAULT_CHUNK_SIZE           = 256 * 1024
 	MAX_CHUNK_LENGTH             = uint64(32768) // 15 bit
+	DEFAULT_ROW_SIZE = 1024 * 10
 )
 
 type ReaderOptions struct {
@@ -43,4 +44,9 @@ func DefaultWriterOptions() WriterOptions {
 	o.ChunkSize = DEFAULT_CHUNK_SIZE
 	o.BufferSize = DefalutBufferSize
 	return o
+}
+
+func DefaultReaderOptions() ReaderOptions {
+	return ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE,
+		CompressionKind: pb.CompressionKind_ZLIB}
 }

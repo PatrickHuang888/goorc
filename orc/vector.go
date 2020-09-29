@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-const (
-	DEFAULT_ROW_SIZE = 1024 * 10
-)
-
 type ColumnVector struct {
 	Id       uint32
 	Kind     pb.Type_Kind

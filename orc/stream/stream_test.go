@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func init()  {
+func init() {
 	log.SetLevel(log.TraceLevel)
 }
 
@@ -60,8 +60,7 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 	assert.Equal(t, data, vs)
 }
 
-
-func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
+func TestStreamReadWriteWithCompression(t *testing.T) {
 	var err error
 
 	buf := &bytes.Buffer{}
@@ -73,13 +72,12 @@ func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
 	}
 	data := buf.Bytes()
 
-	// expand to several chunks
-	opts := &config.WriterOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
+	opts := config.DefaultWriterOptions()
 	id := uint32(0)
-	w := NewByteWriter(id, pb.Stream_DATA, opts).(*encodingWriter)
+	w := NewByteWriter(id, pb.Stream_DATA, &opts).(*encodingWriter)
 
 	for _, b := range data {
-		if err=w.Write(b);err!=nil {
+		if err = w.Write(b); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -94,9 +92,8 @@ func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	ropts := &config.ReaderOptions{ChunkSize: 100, CompressionKind: pb.CompressionKind_ZLIB}
-	sr := NewByteReader(ropts, w.info, 0, f)
-	sr.stream.buf = w.buf
+	ropts := config.DefaultReaderOptions()
+	sr := NewByteReader(&ropts, w.info, 0, f)
 
 	vv := make([]byte, 300)
 	for i := 0; i < 300; i++ {
@@ -110,4 +107,56 @@ func TestStreamReadWriteMultipleChunksWithCompression(t *testing.T) {
 		t.Fatal("reader should be finished")
 	}
 	assert.Equal(t, data, vv)
+}
+
+func TestStreamReadWriteMultiChunkWithCompression(t *testing.T) {
+	var err error
+
+	buf := &bytes.Buffer{}
+	for i := 0; i < 100; i++ {
+		buf.WriteByte(byte(1))
+	}
+	for i := 0; i < 200; i++ {
+		buf.WriteByte(byte(i))
+	}
+	data := buf.Bytes()
+
+	// expand to several chunks
+	opts := &config.WriterOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_ZLIB}
+	id := uint32(0)
+	w := NewByteWriter(id, pb.Stream_DATA, opts).(*encodingWriter)
+
+	for _, b := range data {
+		if err = w.Write(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err = w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	bb := make([]byte, 500)
+	f := orcio.NewMockFile(bb)
+	if _, err = w.WriteOut(f); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	ropts := &config.ReaderOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_ZLIB}
+	sr := NewByteReader(ropts, w.info, 0, f)
+
+	vv := make([]byte, 300)
+	for i := 0; i < 300; i++ {
+		vv[i], err = sr.Next()
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+
+	if !sr.Finished() {
+		t.Fatal("reader should be finished")
+	}
+	assert.Equal(t, data, vv)
+
+	// todo: test above always write original, no compressing selected
 }

@@ -106,11 +106,12 @@ func (w *writer) write(p []byte) error {
 		return nil
 	}
 
-	if err := common.Compressing(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
+	if err := common.CompressingChunks(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
 		return err
 	}
 
-	//w.buf = bytes.NewBuffer(w.buf.Bytes()) ??
+	// compacting compressed buf
+	w.buf = bytes.NewBuffer(w.buf.Bytes())
 	return nil
 }
 
@@ -148,7 +149,7 @@ func (w *writer) flush() error {
 
 	// compressing remaining
 	if w.buf.Len() != 0 {
-		if err := common.Compressing(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
+		if err := common.CompressingLeft(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
 			return err
 		}
 	}

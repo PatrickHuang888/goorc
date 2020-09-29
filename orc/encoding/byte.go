@@ -161,8 +161,8 @@ func DecodeByteRL(in io.ByteReader, values []byte) ([]byte, error) {
 		for i := 0; i < l; i++ {
 			values = append(values, v)
 		}
-	} else { // literals
-		l := int(-int8(control))
+	} else { // literals -1 ~ -128
+		l:= -int(int8(control))
 		for i := 0; i < l; i++ {
 			v, err := in.ReadByte()
 			if err != nil {
