@@ -1,7 +1,7 @@
 package column
 
 import (
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
@@ -9,8 +9,8 @@ import (
 	"github.com/pkg/errors"
 )
 
-func NewLongV2Reader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
-	return &longV2Reader{reader: &reader{schema: schema, opts: opts, in:in, numberOfRows: numberOfRows}}
+func NewLongV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
+	return &longV2Reader{reader: &reader{schema: schema, opts: opts, in: in, numberOfRows: numberOfRows}}
 }
 
 type longV2Reader struct {
@@ -26,20 +26,20 @@ func (c *longV2Reader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncodin
 	}
 
 	if kind == pb.Stream_PRESENT {
-		ic, err:= c.in.Clone()
-		if err!=nil {
+		ic, err := c.in.Clone()
+		if err != nil {
 			return err
 		}
-		c.present= stream.NewBoolReader(c.opts, info, startOffset, ic)
+		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
 		return nil
 	}
 
 	if kind == pb.Stream_DATA {
-		ic, err:= c.in.Clone()
-		if err!=nil {
+		ic, err := c.in.Clone()
+		if err != nil {
 			return err
 		}
-		c.data= stream.NewRLV2Reader(c.opts, info, startOffset, true, ic)
+		c.data = stream.NewRLV2Reader(c.opts, info, startOffset, true, ic)
 		return nil
 	}
 	return errors.New("stream unknown")
@@ -50,7 +50,7 @@ func (c *longV2Reader) Next(presents *[]bool, pFromParent bool, vec *interface{}
 	vector = vector[:0]
 
 	if !pFromParent {
-		if err := c.nextPresents(presents); err != nil {
+		if err = c.nextPresents(presents); err != nil {
 			return
 		}
 	}

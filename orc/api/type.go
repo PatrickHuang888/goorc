@@ -1,4 +1,4 @@
-package orc
+package api
 
 import (
 	"fmt"
@@ -110,7 +110,7 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 	return t
 }
 
-func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) *ColumnVector {
+func (td *TypeDescription) CreateReaderBatch(opts *config.ReaderOptions) *ColumnVector {
 
 	var vector interface{}
 	switch td.Kind {
@@ -181,14 +181,14 @@ func (td *TypeDescription) CreateReaderBatch(opts *ReaderOptions) *ColumnVector 
 }
 
 // should normalize first
-func (td TypeDescription) CreateWriterBatch(opts config.WriterOptions) *ColumnVector {
+func (td TypeDescription) CreateWriterBatch() *ColumnVector {
 	// set id
 	td.normalize()
 
 	if td.Kind == pb.Type_STRUCT {
 		var vector []*ColumnVector
 		for _, v := range td.Children {
-			vector = append(vector, v.CreateWriterBatch(opts))
+			vector = append(vector, v.CreateWriterBatch())
 		}
 		return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: vector}
 	}

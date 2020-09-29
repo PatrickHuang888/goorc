@@ -1,7 +1,8 @@
 package column
 
 import (
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
@@ -32,7 +33,7 @@ type Writer interface {
 	Size() int
 }
 
-func CreateWriter(schema *orc.TypeDescription, opts *orc.WriterOptions) (w Writer, err error) {
+func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Writer, err error) {
 	switch schema.Kind {
 	case pb.Type_SHORT:
 		fallthrough
@@ -145,7 +146,7 @@ func CreateWriter(schema *orc.TypeDescription, opts *orc.WriterOptions) (w Write
 
 
 type writer struct {
-	schema *orc.TypeDescription
+	schema *api.TypeDescription
 	stats  *pb.ColumnStatistics
 
 	present stream.Writer

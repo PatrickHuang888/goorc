@@ -1,7 +1,7 @@
 package column
 
 import (
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
@@ -15,7 +15,7 @@ type structReader struct {
 	children []Reader
 }
 
-func NewStructReader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
+func NewStructReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
 	return &structReader{reader: &reader{opts: opts, schema: schema, in:in, numberOfRows: numberOfRows}}
 }
 
@@ -51,7 +51,7 @@ func (s *structReader) Next(presents *[]bool, pFromParent bool, vec *interface{}
 		*presents = pp
 	}
 
-	vector := (*vec).([]*orc.ColumnVector)
+	vector := (*vec).([]*api.ColumnVector)
 
 	var rt int
 	for i, child := range s.children {

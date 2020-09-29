@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"compress/flate"
 	"fmt"
-	"io"
-	"os"
-	"time"
-
 	"github.com/golang/protobuf/proto"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"io"
+	"os"
 
 	"github.com/patrickhuang888/goorc/orc/column"
 	"github.com/patrickhuang888/goorc/pb/pb"
@@ -22,13 +21,13 @@ const (
 )
 
 type Reader interface {
-	GetSchema() *TypeDescription
+	GetSchema() *api.TypeDescription
 
 	NumberOfRows() uint64
 
 	Close() error
 
-	Next(batch *ColumnVector) error
+	Next(batch *api.ColumnVector) error
 
 	// fixme: how this function should be ?
 	Seek(rowNumber uint64) error
@@ -39,7 +38,7 @@ type Reader interface {
 
 type reader struct {
 	opts    *ReaderOptions
-	schemas []*TypeDescription
+	schemas []*api.TypeDescription
 
 	stripes []*stripeReader
 
@@ -99,7 +98,7 @@ func newReader(opts *ReaderOptions, f *os.File) (r *reader, err error) {
 	return
 }
 
-func (r *reader) GetSchema() *TypeDescription {
+func (r *reader) GetSchema() *api.TypeDescription {
 	return r.schemas[0]
 }
 
@@ -164,7 +163,7 @@ func (r *reader) Close() error {
 	return r.stripes[r.stripeIndex].Close()
 }
 
-func (r *reader) Next(batch *ColumnVector) (err error) {
+func (r *reader) Next(batch *api.ColumnVector) (err error) {
 	if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
 		return
 	}
@@ -198,7 +197,7 @@ type stripeReader struct {
 	//in io.ReadSeeker
 	path string
 
-	schemas []*TypeDescription
+	schemas []*api.TypeDescription
 	opts    *ReaderOptions
 
 	columnReaders []column.Reader
@@ -208,7 +207,7 @@ type stripeReader struct {
 	numberOfRows uint64
 }
 
-func newStripeReader(path string, schemas []*TypeDescription, opts *ReaderOptions, idx int, info *pb.StripeInformation, footer *pb.StripeFooter) (reader *stripeReader, err error) {
+func newStripeReader(path string, schemas []*api.TypeDescription, opts *ReaderOptions, idx int, info *pb.StripeInformation, footer *pb.StripeFooter) (reader *stripeReader, err error) {
 	reader = &stripeReader{path: path, schemas: schemas, opts: opts, number: idx}
 	err = reader.init(info, footer)
 	return
@@ -268,7 +267,7 @@ func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter)
 }
 
 // a stripe is typically  ~200MB
-func (s *stripeReader) Next(batch *ColumnVector) error {
+func (s *stripeReader) Next(batch *api.ColumnVector) error {
 	var err error
 
 	batch.Presents = batch.Presents[:0]
@@ -645,14 +644,14 @@ func (c *structReader) next(batch *ColumnVector) error {
 
 */
 
-func unmarshallSchema(types []*pb.Type) (schemas []*TypeDescription) {
-	schemas = make([]*TypeDescription, len(types))
+func unmarshallSchema(types []*pb.Type) (schemas []*api.TypeDescription) {
+	schemas = make([]*api.TypeDescription, len(types))
 	for i, t := range types {
-		node := &TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
+		node := &api.TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
 		schemas[i] = node
 	}
 	for i, t := range types {
-		schemas[i].Children = make([]*TypeDescription, len(t.Subtypes))
+		schemas[i].Children = make([]*api.TypeDescription, len(t.Subtypes))
 		schemas[i].ChildrenNames = make([]string, len(t.Subtypes))
 		for j, v := range t.Subtypes {
 			schemas[i].ChildrenNames[j] = t.FieldNames[j]
@@ -662,12 +661,12 @@ func unmarshallSchema(types []*pb.Type) (schemas []*TypeDescription) {
 	return
 }
 
-func marshallSchema(schema *TypeDescription) (types []*pb.Type) {
+func marshallSchema(schema *api.TypeDescription) (types []*pb.Type) {
 	types = preOrderWalkSchema(schema)
 	return
 }
 
-func preOrderWalkSchema(node *TypeDescription) (types []*pb.Type) {
+func preOrderWalkSchema(node *api.TypeDescription) (types []*pb.Type) {
 	t := &pb.Type{}
 	t.Kind = &node.Kind
 	for i, name := range node.ChildrenNames {

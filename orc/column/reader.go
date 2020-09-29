@@ -2,6 +2,7 @@ package column
 
 import (
 	"fmt"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"io"
@@ -12,7 +13,6 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
@@ -37,7 +37,7 @@ type Reader interface {
 type reader struct {
 	in orcio.File
 
-	schema *orc.TypeDescription
+	schema *api.TypeDescription
 
 	present *stream.BoolReader
 
@@ -111,7 +111,7 @@ func (r reader) Children() []Reader {
 	return nil
 }
 
-func NewReader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) (Reader, error) {
+func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) (Reader, error) {
 	switch schema.Kind {
 	case pb.Type_SHORT:
 		fallthrough

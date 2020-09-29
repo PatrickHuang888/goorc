@@ -3,17 +3,18 @@ package main
 import (
 	"fmt"
 	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"os"
 	"strconv"
 )
 
 func main() {
-	schema := &orc.TypeDescription{Kind:pb.Type_STRUCT}
-	x := &orc.TypeDescription{Kind:pb.Type_INT}
-	y := &orc.TypeDescription{Kind: pb.Type_STRING}
+	schema := &api.TypeDescription{Kind: pb.Type_STRUCT}
+	x := &api.TypeDescription{Kind: pb.Type_INT}
+	y := &api.TypeDescription{Kind: pb.Type_STRING}
 	schema.ChildrenNames= []string{"x", "y"}
-	schema.Children=[]*orc.TypeDescription{x, y}
+	schema.Children=[]*api.TypeDescription{x, y}
 
 	opts := orc.DefaultWriterOptions()
 	writer, err := orc.NewWriter("my-file-w.orc", schema, opts)

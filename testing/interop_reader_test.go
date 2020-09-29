@@ -2,6 +2,7 @@ package testing
 
 import (
 	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -208,13 +209,13 @@ func TestStructs(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	cl1 := batch.Vector.([]*orc.ColumnVector)[0]
+	cl1 := batch.Vector.([]*api.ColumnVector)[0]
 	for i := 0; i < 1024; i++ {
 		if i < 200 || (i >= 400 && i < 600) || i >= 800 {
 			assert.Equal(t, false, cl1.Presents[i])
 		} else {
 			assert.Equal(t, true, cl1.Presents[i])
-			cl2 := cl1.Vector.([]*orc.ColumnVector)[0]
+			cl2 := cl1.Vector.([]*api.ColumnVector)[0]
 			vv := cl2.Vector.([]int64)
 			assert.Equal(t, i, int(vv[i]))
 		}
@@ -269,22 +270,22 @@ func TestTimestamp(t *testing.T) {
 
 	layout := "2006-01-02 15:04:05.999999999"
 	loc, _ := time.LoadLocation("US/Pacific")  //data write with us/pacific locale
-	assert.Equal(t, t1, batch.Vector.([]orc.Timestamp)[0].Time(loc).Format(layout))
-	assert.Equal(t, t2, batch.Vector.([]orc.Timestamp)[1].Time(loc).Format(layout))
-	assert.Equal(t, t3, batch.Vector.([]orc.Timestamp)[2].Time(loc).Format(layout))
-	assert.Equal(t, t4, batch.Vector.([]orc.Timestamp)[3].Time(loc).Format(layout))
-	assert.Equal(t, t5, batch.Vector.([]orc.Timestamp)[4].Time(loc).Format(layout))
-	assert.Equal(t, t6, batch.Vector.([]orc.Timestamp)[5].Time(loc).Format(layout))
-	assert.Equal(t, t7, batch.Vector.([]orc.Timestamp)[6].Time(loc).Format(layout))
-	assert.Equal(t, t8, batch.Vector.([]orc.Timestamp)[7].Time(loc).Format(layout))
-	assert.Equal(t, t9, batch.Vector.([]orc.Timestamp)[8].Time(loc).Format(layout))
+	assert.Equal(t, t1, batch.Vector.([]api.Timestamp)[0].Time(loc).Format(layout))
+	assert.Equal(t, t2, batch.Vector.([]api.Timestamp)[1].Time(loc).Format(layout))
+	assert.Equal(t, t3, batch.Vector.([]api.Timestamp)[2].Time(loc).Format(layout))
+	assert.Equal(t, t4, batch.Vector.([]api.Timestamp)[3].Time(loc).Format(layout))
+	assert.Equal(t, t5, batch.Vector.([]api.Timestamp)[4].Time(loc).Format(layout))
+	assert.Equal(t, t6, batch.Vector.([]api.Timestamp)[5].Time(loc).Format(layout))
+	assert.Equal(t, t7, batch.Vector.([]api.Timestamp)[6].Time(loc).Format(layout))
+	assert.Equal(t, t8, batch.Vector.([]api.Timestamp)[7].Time(loc).Format(layout))
+	assert.Equal(t, t9, batch.Vector.([]api.Timestamp)[8].Time(loc).Format(layout))
 
 	// data written has daylight saving
-	v10 := batch.Vector.([]orc.Timestamp)[9].Time(loc).Format(layout)
+	v10 := batch.Vector.([]api.Timestamp)[9].Time(loc).Format(layout)
 	assert.Equal(t, t10, v10)
 
-	assert.Equal(t, t11, batch.Vector.([]orc.Timestamp)[10].Time(loc).Format(layout))
-	assert.Equal(t, t12, batch.Vector.([]orc.Timestamp)[11].Time(loc).Format(layout))
+	assert.Equal(t, t11, batch.Vector.([]api.Timestamp)[10].Time(loc).Format(layout))
+	assert.Equal(t, t12, batch.Vector.([]api.Timestamp)[11].Time(loc).Format(layout))
 
 	if err := reader.Close(); err != nil {
 		t.Fatalf("%+v", err)

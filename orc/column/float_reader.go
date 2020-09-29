@@ -1,7 +1,7 @@
 package column
 
 import (
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
@@ -9,7 +9,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func NewDoubleReader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
+func NewDoubleReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
 	return &doubleReader{reader: &reader{schema: schema, opts: opts, in:in, numberOfRows: numberOfRows}}
 }
 

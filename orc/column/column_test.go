@@ -2,16 +2,12 @@ package column
 
 import (
 	"bytes"
-	"fmt"
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
-	"testing"
-	"time"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"testing"
 
-	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -29,10 +25,10 @@ func (e *testEncoder) Encode(out *bytes.Buffer, values interface{}) error  {
 }
 
 
-func TestLongColumnRWwithNoPresents(t *testing.T) {
+/*func TestLongColumnRWwithNoPresents(t *testing.T) {
 	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_LONG}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
+	wopts := config.DefaultWriterOptions()
+	batch := schema.CreateWriterBatch()
 
 	var values []int64
 	for i := 0; i < 100; i++ {
@@ -339,12 +335,11 @@ func TestColumnStringDirectV2WithPresents(t *testing.T) {
 	}
 	assert.Equal(t, presents, batch.Presents[:100])
 	assert.Equal(t, values, batch.Vector)
-}
+}*/
 
 func TestColumnTinyIntWithPresents(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_BYTE, HasNulls: true}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_BYTE, HasNulls: true}
+	wopts := config.DefaultWriterOptions()
 
 	rows := 100
 	values := make([]byte, rows)
@@ -362,19 +357,20 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	presents[98] = false
 	values[98] = 0
 
-	batch.Presents = presents
-	batch.Vector = values
-
-	writer := newByteWriter(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
+	writer := newByteWriter(schema, &wopts)
+	n, err := writer.Write(presents, false, values)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, rows, n)
 
-	ropts := orc.DefaultReaderOptions()
-	batch = schema.CreateReaderBatch(ropts)
-	presentBs := &bufSeeker{writer.present.buf}
+	if err := writer.Flush();err!=nil {
+		t.Fatalf("%+v", err)
+	}
+
+	ropts := config.DefaultReaderOptions()
+	batch := schema.CreateReaderBatch(&ropts)
+	/*presentBs := &bufSeeker{writer.present.buf}
 	pKind := pb.Stream_PRESENT
 	pLength_ := uint64(writer.present.buf.Len())
 	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
@@ -386,8 +382,8 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
 	data := orc.newByteStreamReader(ropts, dInfo, 0, dataBs)
 
-	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &orc.byteReader{treeReader: cr, data: data}
+	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}*/
+	reader := NewByteReader()
 	err = reader.next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -396,7 +392,7 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }
 
-func TestColumnBinaryV2WithPresents(t *testing.T) {
+/*func TestColumnBinaryV2WithPresents(t *testing.T) {
 	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_BINARY, HasNulls: true}
 	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)
@@ -788,3 +784,4 @@ func TestColumnStringUsingDictWithPresents(t *testing.T) {
 	assert.Equal(t, presents, batch.Presents[:100])
 	assert.Equal(t, values, batch.Vector)
 }
+*/

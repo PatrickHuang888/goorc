@@ -2,14 +2,14 @@ package column
 
 import (
 	"errors"
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
-func NewDateV2Reader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
+func NewDateV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
 	return &dateV2Reader{reader: &reader{schema: schema, opts: opts, in:in, numberOfRows: numberOfRows}}
 }
 
@@ -47,7 +47,7 @@ func (c *dateV2Reader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncodin
 }
 
 func (c *dateV2Reader) Next(presents *[]bool, pFromParent bool, vec *interface{}) (rows int, err error) {
-	vector := (*vec).([]orc.Date)
+	vector := (*vec).([]api.Date)
 	vector = vector[:0]
 
 	if !pFromParent {
@@ -59,13 +59,14 @@ func (c *dateV2Reader) Next(presents *[]bool, pFromParent bool, vec *interface{}
 	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
 
 		if len(*presents) == 0 || (len(*presents) != 0 && (*presents)[i]) {
-			v, err := c.data.NextInt64()
+			var v int64
+			v, err = c.data.NextInt64()
 			if err != nil {
 				return
 			}
-			vector = append(vector, orc.FromDays(v))
+			vector = append(vector, api.FromDays(v))
 		} else {
-			vector = append(vector, orc.Date{})
+			vector = append(vector, api.Date{})
 		}
 
 		c.cursor++

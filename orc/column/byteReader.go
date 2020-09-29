@@ -1,7 +1,7 @@
 package column
 
 import (
-	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
@@ -14,7 +14,7 @@ type byteReader struct {
 	data *stream.ByteReader
 }
 
-func NewByteReader(schema *orc.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
+func NewByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
 	return &byteReader{reader: &reader{opts: opts, schema: schema, in: in, numberOfRows: numberOfRows}}
 }
 
@@ -46,14 +46,15 @@ func (c *byteReader) Next(presents *[]bool, pFromParent bool, vec *interface{}) 
 	vector = vector[:0]
 
 	if !pFromParent {
-		if err := c.nextPresents(presents); err != nil {
+		if err = c.nextPresents(presents); err != nil {
 			return
 		}
 	}
 
 	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
 		if len(*presents) == 0 || (len(*presents) != 0 && (*presents)[i]) {
-			v, err := c.data.Next()
+			var v byte
+			v, err = c.data.Next()
 			if err != nil {
 				return
 			}

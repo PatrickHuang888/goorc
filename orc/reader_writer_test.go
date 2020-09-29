@@ -2,6 +2,7 @@ package orc
 
 import (
 	"fmt"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -62,7 +63,7 @@ func (df *dummyFile) Reset() {
 var df = &dummyFile{array: make([]byte, 2_000_000)}
 
 func TestBasicNoCompression(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
 	wopts := DefaultWriterOptions()
 	wopts.CompressionKind = pb.CompressionKind_NONE
 	batch := schema.CreateWriterBatch(wopts)
@@ -102,7 +103,7 @@ func TestBasicNoCompression(t *testing.T) {
 }
 
 func TestBasicZlibCompression(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
 	wopts := DefaultWriterOptions()
 	wopts.CompressionKind = pb.CompressionKind_ZLIB
 	batch := schema.CreateWriterBatch(wopts)
@@ -158,7 +159,7 @@ func TestBasicZlibCompression(t *testing.T) {
 }
 
 func TestBasicMultipleStripes(t *testing.T) {
-	schema := &TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
 	wopts := DefaultWriterOptions()
 	wopts.CompressionKind = pb.CompressionKind_ZLIB
 	wopts.StripeSize = 100_000

@@ -3,6 +3,7 @@ package orc
 import (
 	"bytes"
 	"github.com/golang/protobuf/proto"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -19,9 +20,9 @@ var VERSION = []uint32{0, 12}
 
 
 type Writer interface {
-	GetSchema() *TypeDescription
+	GetSchema() *api.TypeDescription
 
-	Write(batch *ColumnVector) error
+	Write(batch *api.ColumnVector) error
 
 	Close() error
 }
@@ -34,7 +35,7 @@ type fileWriter struct {
 }
 
 // current version always write new file, no append
-func NewFileWriter(path string, schema *TypeDescription, opts *WriterOptions) (writer Writer, err error) {
+func NewFileWriter(path string, schema *api.TypeDescription, opts *WriterOptions) (writer Writer, err error) {
 	// todo: overwrite exist file warning
 	log.Infof("open %stream", path)
 	f, err := os.Create(path)
@@ -55,7 +56,7 @@ func (w *fileWriter) Close() error {
 	return w.close()
 }
 
-func newWriter(schema *TypeDescription, opts *WriterOptions, out io.WriteCloser) (w *writer, err error) {
+func newWriter(schema *api.TypeDescription, opts *WriterOptions, out io.WriteCloser) (w *writer, err error) {
 	// normalize schema id from 0
 	schemas := schema.normalize()
 
@@ -82,7 +83,7 @@ func newWriter(schema *TypeDescription, opts *WriterOptions, out io.WriteCloser)
 // strip buffered in memory until the strip size
 // Encode out by columns
 type writer struct {
-	schemas []*TypeDescription
+	schemas []*api.TypeDescription
 	opts    *WriterOptions
 
 	offset uint64
@@ -99,7 +100,7 @@ type writer struct {
 
 // because stripe data in file is stream sequence, so every data should write to memory first
 // before write to file
-func (w *writer) Write(batch *ColumnVector) error {
+func (w *writer) Write(batch *api.ColumnVector) error {
 	var err error
 
 	if err = w.stripe.writeColumn(batch); err != nil {
@@ -115,7 +116,7 @@ func (w *writer) Write(batch *ColumnVector) error {
 	return nil
 }
 
-func (w *writer) GetSchema() *TypeDescription {
+func (w *writer) GetSchema() *api.TypeDescription {
 	return w.schemas[0]
 }
 
@@ -176,7 +177,7 @@ func (w *writer) writeFileTail() error {
 		*ft.NumberOfRows += si.GetNumberOfRows()
 	}
 	ft.Stripes = w.stripeInfos
-	ft.Types = schemasToTypes(w.schemas)
+	ft.Types = api.schemasToTypes(w.schemas)
 	ft.Statistics = w.columnStats
 	// metadata
 
@@ -225,7 +226,7 @@ func (w *writer) writeFileTail() error {
 	return nil
 }
 
-func newStripeWriter(offset uint64, schemas []*TypeDescription, opts *WriterOptions) (stripe *stripeWriter, err error) {
+func newStripeWriter(offset uint64, schemas []*api.TypeDescription, opts *WriterOptions) (stripe *stripeWriter, err error) {
 	// prepare streams
 	var writers []column.Writer
 	for _, schema := range schemas {
@@ -255,7 +256,7 @@ func newStripeWriter(offset uint64, schemas []*TypeDescription, opts *WriterOpti
 }
 
 type stripeWriter struct {
-	schemas []*TypeDescription
+	schemas []*api.TypeDescription
 
 	columnWriters []column.Writer
 
@@ -268,7 +269,7 @@ type stripeWriter struct {
 }
 
 // write to memory
-func (stripe *stripeWriter) writeColumn(batch *ColumnVector) error {
+func (stripe *stripeWriter) writeColumn(batch *api.ColumnVector) error {
 	writer := stripe.columnWriters[batch.Id]
 	rows, err := writer.Write(batch.Presents, false, batch.Vector)
 	if err != nil {

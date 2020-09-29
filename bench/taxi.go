@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"os"
 
 	log "github.com/sirupsen/logrus"
@@ -47,15 +48,15 @@ func main() {
 			break
 		}
 
-		columnes := batch.Vector.([]*orc.ColumnVector)
+		columnes := batch.Vector.([]*api.ColumnVector)
 
 		vendorId := columnes[0].Vector.([]int64)
 		fmt.Printf("vendor id %d, ", vendorId[0])
 
-		pickupTime := columnes[1].Vector.([]orc.Timestamp)
+		pickupTime := columnes[1].Vector.([]api.Timestamp)
 		fmt.Printf("pick-up time %s,", pickupTime[0].Time(nil).String())
 
-		dropTime := columnes[2].Vector.([]orc.Timestamp)
+		dropTime := columnes[2].Vector.([]api.Timestamp)
 		fmt.Printf("drop-off time: %s, ", dropTime[0].Time(nil).String())
 
 		passengerCount := columnes[3].Vector.([]int64)
@@ -85,25 +86,25 @@ func main() {
 		paymentType := columnes[11].Vector.([]int64)
 		fmt.Printf("payment_type %d, ", paymentType[0])
 
-		fareAmount := columnes[12].Vector.([]orc.Decimal64)
+		fareAmount := columnes[12].Vector.([]api.Decimal64)
 		fmt.Printf("fare_amount %f, ", fareAmount[0].Float64())
 
-		extra := columnes[13].Vector.([]orc.Decimal64)
+		extra := columnes[13].Vector.([]api.Decimal64)
 		fmt.Printf("extra %f, ", extra[0].Float64())
 
-		mtaTax := columnes[14].Vector.([]orc.Decimal64)
+		mtaTax := columnes[14].Vector.([]api.Decimal64)
 		fmt.Printf("mta_tax %f, ", mtaTax[0].Float64())
 
-		tipAmount := columnes[15].Vector.([]orc.Decimal64)
+		tipAmount := columnes[15].Vector.([]api.Decimal64)
 		fmt.Printf("tip_amount %f, ", tipAmount[0].Float64())
 
-		trollsAmount := columnes[16].Vector.([]orc.Decimal64)
+		trollsAmount := columnes[16].Vector.([]api.Decimal64)
 		fmt.Printf("trolls_amount %f, ", trollsAmount[0].Float64())
 
-		improvSurchage := columnes[17].Vector.([]orc.Decimal64)
+		improvSurchage := columnes[17].Vector.([]api.Decimal64)
 		fmt.Printf("improvement_surcharge %f, ", improvSurchage[0].Float64())
 
-		totalAmount := columnes[18].Vector.([]orc.Decimal64)
+		totalAmount := columnes[18].Vector.([]api.Decimal64)
 		fmt.Printf("total_amount %f, ", totalAmount[0].Float64())
 
 		rows += batch.ReadRows
