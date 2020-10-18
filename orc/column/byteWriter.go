@@ -118,10 +118,10 @@ func (c *byteWriter) Flush() error {
 	return nil
 }
 
-func (c *byteWriter) Size() int {
+/*func (c *byteWriter) Size() int {
 	return c.present.Size() + c.data.Size()
 }
-
+*/
 func (c *byteWriter) GetStreamInfos() []*pb.Stream {
 	return []*pb.Stream{c.present.Info(), c.data.Info()}
 }
@@ -131,8 +131,8 @@ func (c *byteWriter) GetStats() *pb.ColumnStatistics {
 }
 
 func (c *byteWriter) Reset() {
-	c.writer.reset()
-	c.data.Reset()
+	c.reset()
+	// c.data.Reset()
 }
 
 func (c *byteWriter) WriteOut(out io.Writer) (n int64, err error) {

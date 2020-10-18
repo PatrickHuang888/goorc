@@ -19,22 +19,24 @@ func NewByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, in o
 }
 
 // create a input for every stream
-func (c *byteReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error {
-	if kind == pb.Stream_PRESENT {
+func (c *byteReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error {
+	if info.GetKind() == pb.Stream_PRESENT {
 		ic, err := c.in.Clone()
 		if err != nil {
 			return err
 		}
 		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
+		ic.Seek(int64(startOffset), 0)
 		return nil
 	}
 
-	if kind == pb.Stream_DATA {
+	if info.GetKind() == pb.Stream_DATA {
 		ic, err := c.in.Clone()
 		if err != nil {
 			return err
 		}
 		c.data = stream.NewByteReader(c.opts, info, startOffset, ic)
+		ic.Seek(int64(startOffset), 0)
 		return nil
 	}
 

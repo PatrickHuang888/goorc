@@ -20,7 +20,7 @@ import (
 type Reader interface {
 	InitChildren(children []Reader) error
 	InitIndex(startOffset uint64, length uint64, path string) error
-	InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error
+	InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error
 
 	Next(presents *[]bool, pFromParent bool, vec *interface{}) (int, error)
 
@@ -87,6 +87,7 @@ func (r *reader) nextPresents(presents *[]bool) error {
 	}
 
 	pp := *presents
+	pp = pp[:0]
 
 	count := r.cursor
 	for i := 0; count < r.numberOfRows && i < cap(pp); i++ {

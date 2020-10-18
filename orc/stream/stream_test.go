@@ -27,11 +27,10 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 	id := uint32(0)
 	sw := NewByteWriter(id, pb.Stream_DATA, wopts).(*encodingWriter)
 
-	for _, v := range data {
-		if err = sw.Write(v); err != nil {
-			t.Fatal(err)
-		}
+	if err = sw.WriteBytes(data); err != nil {
+		t.Fatal(err)
 	}
+
 	if err = sw.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +75,8 @@ func TestStreamReadWriteWithCompression(t *testing.T) {
 	id := uint32(0)
 	w := NewByteWriter(id, pb.Stream_DATA, &opts).(*encodingWriter)
 
-	for _, b := range data {
-		if err = w.Write(b); err != nil {
-			t.Fatal(err)
-		}
+	if err = w.WriteBytes(data); err != nil {
+		t.Fatal(err)
 	}
 
 	if err = w.Flush(); err != nil {
@@ -109,6 +106,50 @@ func TestStreamReadWriteWithCompression(t *testing.T) {
 	assert.Equal(t, data, vv)
 }
 
+func TestBoolStreamReadWriteWithCompression(t *testing.T) {
+	var err error
+
+	rows := 100
+	data := make([]bool, rows)
+	for i := 0; i < rows; i++ {
+		data[i] = true
+	}
+	data[0] = false
+	data[45] = false
+	data[98] = false
+
+	opts := config.DefaultWriterOptions()
+	id := uint32(0)
+	w := NewBoolWriter(id, pb.Stream_DATA, &opts).(*encodingWriter)
+
+	if err = w.WriteBools(data); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	bb := make([]byte, 500)
+	f := orcio.NewMockFile(bb)
+	if _, err = w.WriteOut(f); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	ropts := config.DefaultReaderOptions()
+	sr := NewBoolReader(&ropts, w.info, 0, f)
+
+	vv := make([]bool, rows)
+	for i := 0; i < rows; i++ {
+		vv[i], err = sr.Next()
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+
+	assert.Equal(t, data, vv)
+}
+
 func TestStreamReadWriteMultiChunkWithCompression(t *testing.T) {
 	var err error
 
@@ -126,10 +167,8 @@ func TestStreamReadWriteMultiChunkWithCompression(t *testing.T) {
 	id := uint32(0)
 	w := NewByteWriter(id, pb.Stream_DATA, opts).(*encodingWriter)
 
-	for _, b := range data {
-		if err = w.Write(b); err != nil {
-			t.Fatal(err)
-		}
+	if err = w.WriteBytes(data); err != nil {
+		t.Fatal(err)
 	}
 
 	if err = w.Flush(); err != nil {

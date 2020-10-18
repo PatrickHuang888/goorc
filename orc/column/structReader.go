@@ -28,8 +28,8 @@ func (s structReader) Children() []Reader {
 	return s.children
 }
 
-func (s *structReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error {
-	if kind == pb.Stream_PRESENT {
+func (s *structReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error {
+	if info.GetKind() == pb.Stream_PRESENT {
 		ic, err := s.in.Clone()
 		if err != nil {
 			return err

@@ -30,7 +30,7 @@ type Writer interface {
 	Reset()
 
 	//sum of streams size, used for stripe flushing condition, data size in memory
-	Size() int
+	//Size() int
 }
 
 func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Writer, err error) {
@@ -41,7 +41,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		fallthrough
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//w = newLongV2Writer(schema, opts)
+			w = newLongV2Writer(schema, opts)
 			break
 		}
 		return nil, errors.New("encoding not impl")
@@ -149,7 +149,7 @@ type writer struct {
 	schema *api.TypeDescription
 	stats  *pb.ColumnStatistics
 
-	present stream.Writer
+	present stream.BoolWriter
 
 	children []Writer
 
@@ -162,7 +162,7 @@ type writer struct {
 }
 
 func (w *writer) reset() {
-	w.present.Reset()
+	//w.present.Reset()
 
 	w.indexInRows = 0
 	w.indexEntries = w.indexEntries[:0]

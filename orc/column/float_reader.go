@@ -18,8 +18,8 @@ type doubleReader struct {
 	data *stream.DoubleReader
 }
 
-func (c *doubleReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error {
-	if kind == pb.Stream_PRESENT {
+func (c *doubleReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error {
+	if info.GetKind() == pb.Stream_PRESENT {
 		ic, err:= c.in.Clone()
 		if err!=nil {
 			return err
@@ -28,7 +28,7 @@ func (c *doubleReader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncodin
 		return nil
 	}
 
-	if kind == pb.Stream_DATA {
+	if info.GetKind() == pb.Stream_DATA {
 		ic, err:= c.in.Clone()
 		if err!=nil {
 			return err

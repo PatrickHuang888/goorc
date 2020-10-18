@@ -25,11 +25,11 @@ func (e *BoolRunLength) GetAndClearPositions() []uint64 {
 	return r
 }
 
-// reset except positions
+// Reset except positions
 func (e *BoolRunLength) Reset() {
 	e.offset= -1
 	e.brl.Reset()
-	e.values= e.values[:0]
+	//e.values= e.values[:0]
 }
 
 func (e *BoolRunLength) Encode(v interface{}) (data []byte, err error) {
@@ -44,7 +44,6 @@ func (e *BoolRunLength) Encode(v interface{}) (data []byte, err error) {
 			if e.values[i] {
 				b |= 0x01 << byte(7-i)
 			}
-			i++
 		}
 		if data, err = e.brl.Encode(b); err != nil {
 			return

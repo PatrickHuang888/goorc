@@ -3,6 +3,7 @@ package io
 import (
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 )
@@ -71,7 +72,7 @@ func NewMockFile(bb []byte) *MockFile {
 	return &MockFile{buf: bb}
 }
 func (m *MockFile) Clone() (File, error) {
-	return &MockFile{buf: m.buf}, nil
+	return &MockFile{buf: m.buf, offset: m.offset, waterMark: m.waterMark}, nil
 }
 
 func (m *MockFile) Close() error {
@@ -92,6 +93,7 @@ func (m *MockFile) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.New("offset invalid")
 	}
 	m.offset = int(offset)
+	log.Tracef("mock file seek to %d", offset)
 	return offset, nil
 }
 
@@ -101,6 +103,7 @@ func (m *MockFile) Read(p []byte) (n int, err error) {
 	if m.offset == len(m.buf)-1 || n == 0 {
 		err = io.EOF
 	}
+	log.Tracef("mock file read %d, offset %d, watermark %d", n, m.offset, m.waterMark)
 	return
 }
 
@@ -112,5 +115,6 @@ func (m *MockFile) Write(p []byte) (n int, err error) {
 		err = errors.New("no enough buf in mock file")
 	}
 
+	log.Tracef("mock file write %d, offset %d, watermakr %d", n, m.offset, m.waterMark)
 	return
 }

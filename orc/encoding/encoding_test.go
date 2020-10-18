@@ -657,4 +657,34 @@ func TestBoolRunLength (t *testing.T) {
 		}
 	}
 	assert.Equal(t, values, vs[:100])
+
+	rows := 100
+	bb := make([]bool, rows)
+	for i := 0; i < rows; i++ {
+		bb[i] = true
+	}
+	bb[0] = false
+	bb[45] = false
+	bb[98] = false
+
+	brl.Reset()
+	for _, v := range bb {
+		if data,  err= brl.Encode(v);err!=nil {
+			t.Fatalf("%+v", err)
+		}
+		buf.Write(data)
+	}
+	if data, err = brl.Flush(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	buf.Write(data)
+
+	vs = vs[:0]
+	for buf.Len() != 0 {
+		vs, err = DecodeBools(buf, vs)
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+	assert.Equal(t, bb, vs[:100])
 }

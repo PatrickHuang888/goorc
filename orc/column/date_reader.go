@@ -18,14 +18,14 @@ type dateV2Reader struct {
 	data *stream.IntRLV2Reader
 }
 
-func (c *dateV2Reader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncoding_Kind, startOffset uint64, info *pb.Stream) error {
+func (c *dateV2Reader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error {
 
 	if encoding == pb.ColumnEncoding_DIRECT {
 		err := errors.New("encoding direct not impl")
 		return err
 	}
 
-	if kind == pb.Stream_PRESENT {
+	if info.GetKind() == pb.Stream_PRESENT {
 		ic, err:= c.in.Clone()
 		if err!=nil {
 			return err
@@ -34,7 +34,7 @@ func (c *dateV2Reader) InitStream(kind pb.Stream_Kind, encoding pb.ColumnEncodin
 		return nil
 	}
 
-	if kind == pb.Stream_DATA {
+	if info.GetKind() == pb.Stream_DATA {
 		ic, err:= c.in.Clone()
 		if err!=nil {
 			return err
