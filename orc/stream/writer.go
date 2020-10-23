@@ -10,9 +10,10 @@ import (
 	"io"
 )
 
-type Writer interface {
-	//Reset()
+/*type Writer interface {
+	Reset()
 
+	// Write one value to stream
 	Write(v interface{}) error
 	Flush() error
 
@@ -22,10 +23,10 @@ type Writer interface {
 	GetAndClearPositions() [][]uint64
 
 	Info() *pb.Stream
-	//Size() int
-}
+	Size() int
+}*/
 
-type BoolWriter interface {
+/*type BoolWriter interface {
 	Writer
 	WriteBools(bb []bool) error
 }
@@ -38,20 +39,20 @@ type ByteWriter interface {
 type IntWriter interface {
 	Writer
 	WriteInts(vec []int64) error
-}
+}*/
 
-type encodingWriter struct {
+type Writer struct {
 	*writer
 	encoder encoding.Encoder
 }
 
 // mark position and collect stats
-func (w *encodingWriter) MarkPosition() {
+func (w *Writer) MarkPosition() {
 	w.markPosition()
 	w.encoder.MarkPosition()
 }
 
-func (w encodingWriter) GetAndClearPositions() [][]uint64 {
+func (w Writer) GetAndClearPositions() [][]uint64 {
 	var pp [][]uint64
 	ep := w.encoder.GetAndClearPositions()
 	for i, v := range w.positions {
@@ -63,19 +64,19 @@ func (w encodingWriter) GetAndClearPositions() [][]uint64 {
 }
 
 // info will update after flush
-func (w encodingWriter) Info() *pb.Stream {
+func (w Writer) Info() *pb.Stream {
 	if !w.flushed {
 		panic("not flushed")
 	}
 	return w.info
 }
 
-func (w *encodingWriter) Reset() {
+func (w *Writer) Reset() {
 	w.reset()
 	w.encoder.Reset()
 }
 
-func (w *encodingWriter) Write(v interface{}) error {
+func (w *Writer) Write(v interface{}) error {
 	var err error
 	var data []byte
 
@@ -86,7 +87,7 @@ func (w *encodingWriter) Write(v interface{}) error {
 	return w.write(data)
 }
 
-func (w *encodingWriter) WriteBytes(bb []byte) error  {
+/*func (w *Writer) WriteBytes(bb []byte) error  {
 	for _, v := range bb {
 		if err:=w.Write(v);err!=nil {
 			return err
@@ -102,9 +103,9 @@ func (w *encodingWriter) WriteBools(bb []bool) error  {
 		}
 	}
 	return nil
-}
+}*/
 
-func (w *encodingWriter) Flush() error {
+func (w *Writer) Flush() error {
 	var err error
 	var data []byte
 
@@ -216,30 +217,15 @@ func (w *writer) WriteOut(out io.Writer) (n int64, err error) {
 }
 
 // return compressed data + uncompressed data
-/*func (w *writer) Size() int {
+func (w *writer) Size() int {
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
 		return w.buf.Len()
 	}
 
 	return w.compressedBuf.Len() + w.buf.Len()
-}*/
-
-func NewByteWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) ByteWriter {
-	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
-
-	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
-	buf.Reset()
-
-	var cbuf *bytes.Buffer
-	if opts.CompressionKind != pb.CompressionKind_NONE {
-		cbuf = bytes.NewBuffer(make([]byte, opts.ChunkSize))
-		cbuf.Reset()
-	}
-
-	return &encodingWriter{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, encoding.NewByteEncoder()}
 }
 
-func NewBoolWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) BoolWriter {
+func NewByteWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
 	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
@@ -251,10 +237,10 @@ func NewBoolWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) B
 		cbuf.Reset()
 	}
 
-	return &encodingWriter{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewBoolEncoder()}
+	return &Writer{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, encoding.NewByteEncoder()}
 }
 
-func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions, signed bool) Writer {
+func NewBoolWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
 	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
@@ -266,5 +252,20 @@ func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions
 		cbuf.Reset()
 	}
 
-	return &encodingWriter{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewIntRLV2(signed)}
+	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewBoolEncoder()}
+}
+
+func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions, signed bool) *Writer {
+	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
+
+	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
+	buf.Reset()
+
+	var cbuf *bytes.Buffer
+	if opts.CompressionKind != pb.CompressionKind_NONE {
+		cbuf = bytes.NewBuffer(make([]byte, opts.ChunkSize))
+		cbuf.Reset()
+	}
+
+	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewIntRLV2(signed)}
 }

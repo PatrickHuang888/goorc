@@ -5,6 +5,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/common"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -14,10 +15,7 @@ import (
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
-
 var VERSION = []uint32{0, 12}
-
-
 
 type Writer interface {
 	GetSchema() *api.TypeDescription
@@ -35,7 +33,7 @@ type fileWriter struct {
 }
 
 // current version always write new file, no append
-func NewFileWriter(path string, schema *api.TypeDescription, opts *WriterOptions) (writer Writer, err error) {
+func NewFileWriter(path string, schema *api.TypeDescription, opts *config.WriterOptions) (writer Writer, err error) {
 	// todo: overwrite exist file warning
 	log.Infof("open %stream", path)
 	f, err := os.Create(path)
@@ -56,7 +54,7 @@ func (w *fileWriter) Close() error {
 	return w.close()
 }
 
-func newWriter(schema *api.TypeDescription, opts *WriterOptions, out io.WriteCloser) (w *writer, err error) {
+func newWriter(schema *api.TypeDescription, opts *config.WriterOptions, out io.WriteCloser) (w *writer, err error) {
 	// normalize schema id from 0
 	schemas := schema.normalize()
 
@@ -84,7 +82,7 @@ func newWriter(schema *api.TypeDescription, opts *WriterOptions, out io.WriteClo
 // Encode out by columns
 type writer struct {
 	schemas []*api.TypeDescription
-	opts    *WriterOptions
+	opts    *config.WriterOptions
 
 	offset uint64
 
@@ -103,14 +101,19 @@ type writer struct {
 func (w *writer) Write(batch *api.ColumnVector) error {
 	var err error
 
-	if err = w.stripe.writeColumn(batch); err != nil {
+	if err = w.stripe.write(batch); err != nil {
 		return err
 	}
 
-	if w.stripe.size() >= int(w.opts.StripeSize) {
-		if err = w.flushStripe(); err != nil {
+	// fixme: calculate size after write out batch
+	// todo: running in another goroutine
+	if w.stripe.size() >= w.opts.StripeSize {
+		if err = w.stripe.flushOut(w.out); err != nil {
 			return err
 		}
+
+		w.stripeInfos = append(w.stripeInfos, w.stripe.info)
+		w.stripe.forward()
 	}
 
 	return nil
@@ -120,7 +123,7 @@ func (w *writer) GetSchema() *api.TypeDescription {
 	return w.schemas[0]
 }
 
-func (w *writer) flushStripe() error {
+/*func (w *writer) flushStripe() error {
 	var n int64
 	var nf int
 	var err error
@@ -139,20 +142,26 @@ func (w *writer) flushStripe() error {
 	w.stripe.reset(w.offset)
 
 	return nil
-}
+}*/
 
 func (w *writer) close() error {
+	var err error
+
 	if w.stripe.size() != 0 {
-		if err := w.flushStripe(); err != nil {
+		if err = w.stripe.flushOut(w.out); err != nil {
 			return err
 		}
+		w.stripeInfos = append(w.stripeInfos, w.stripe.info)
 	}
 
 	if err := w.writeFileTail(); err != nil {
 		return err
 	}
 
-	return w.out.Close()
+	if err := w.out.Close(); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 func (w *writer) writeHeader() (uint64, error) {
@@ -226,7 +235,7 @@ func (w *writer) writeFileTail() error {
 	return nil
 }
 
-func newStripeWriter(offset uint64, schemas []*api.TypeDescription, opts *WriterOptions) (stripe *stripeWriter, err error) {
+func newStripeWriter(offset uint64, schemas []*api.TypeDescription, opts *config.WriterOptions) (stripe *stripeWriter, err error) {
 	// prepare streams
 	var writers []column.Writer
 	for _, schema := range schemas {
@@ -251,7 +260,7 @@ func newStripeWriter(offset uint64, schemas []*api.TypeDescription, opts *Writer
 	o := offset
 	info := &pb.StripeInformation{Offset: &o, IndexLength: new(uint64), DataLength: new(uint64), FooterLength: new(uint64),
 		NumberOfRows: new(uint64)}
-	stripe = &stripeWriter{columnWriters: writers, info: info, schemas: schemas, chunkSize: opts.ChunkSize, compressionKind: opts.CompressionKind}
+	stripe = &stripeWriter{columnWriters: writers, info: info, schemas: schemas, opts: opts}
 	return
 }
 
@@ -262,54 +271,82 @@ type stripeWriter struct {
 
 	info *pb.StripeInformation // data in info not update every write,
 
-	writeIndex bool
-
-	compressionKind pb.CompressionKind
-	chunkSize       int
+	opts *config.WriterOptions
 }
 
-// write to memory
-func (stripe *stripeWriter) writeColumn(batch *api.ColumnVector) error {
+func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
+	var err error
+	var count uint64
+
 	writer := stripe.columnWriters[batch.Id]
-	rows, err := writer.Write(batch.Presents, false, batch.Vector)
-	if err != nil {
-		return err
+
+	for i, v := range batch.Vector {
+		// todo: verify null values on schema and batch
+		if err = writer.Write(v); err != nil {
+			return err
+		}
+		for _, child := range batch.Children {
+			childWriter := stripe.columnWriters[child.Id]
+			if stripe.schemas[batch.Id].HasNulls && !v.Null {
+				// child Null ignored ？
+				// and child schema has null will be false
+				// child null value will equal to parent null
+				if err = childWriter.WriteV(child.Vector[i].V); err != nil {
+					return err
+				}
+			}
+		}
+
+		count++
+
+		/*if stripe.size() >= stripe.opts.StripeSize {
+			*stripe.info.NumberOfRows += count
+			count = 0
+
+			// todo: run in another go routine
+			if err = stripe.flushOut(); err != nil {
+				return err
+			}
+
+			stripe.forward()
+		}*/
 	}
 
-	*stripe.info.NumberOfRows += uint64(rows)
+	*stripe.info.NumberOfRows += count
 	return nil
 }
 
 func (stripe stripeWriter) size() int {
 	var n int
-	for _, c := range stripe.columnWriters {
-		n += c.Size()
+	for _, cw := range stripe.columnWriters {
+		n += cw.Size()
 	}
 	return n
 }
 
-func (stripe *stripeWriter) flushOut(out io.Writer) (n int64, err error) {
+func (stripe *stripeWriter) flushOut(out io.Writer) error {
+	var err error
+
 	for _, column := range stripe.columnWriters {
 		if err = column.Flush(); err != nil {
-			return
+			return err
 		}
 	}
 
-	if stripe.writeIndex {
+	if stripe.opts.WriteIndex {
 		for _, column := range stripe.columnWriters {
 			index := column.GetIndex()
 			var indexData []byte
 			if indexData, err = proto.Marshal(index); err != nil {
-				return
+				return err
 			}
 
 			var nd int
 			if nd, err = out.Write(indexData); err != nil {
-				return n, errors.WithStack(err)
+				return errors.WithStack(err)
 			}
 
 			*stripe.info.IndexLength += uint64(nd)
-			n += int64(nd)
 		}
 
 		log.Tracef("flush index of length %d", stripe.info.GetIndexLength())
@@ -318,21 +355,23 @@ func (stripe *stripeWriter) flushOut(out io.Writer) (n int64, err error) {
 	for _, column := range stripe.columnWriters {
 		var ns int64
 		if ns, err = column.WriteOut(out); err != nil {
-			return
+			return err
 		}
-
 		*stripe.info.DataLength += uint64(ns)
-		n += ns
 	}
 
-	return
+	if err = stripe.writeFooter(out); err != nil {
+		return errors.WithStack(err)
+	}
+
+	return nil
 }
 
-func (stripe *stripeWriter) writeFooter(out io.Writer) (n int, err error) {
+func (stripe *stripeWriter) writeFooter(out io.Writer) error {
+	var err error
 	footer := &pb.StripeFooter{}
 
 	for _, column := range stripe.columnWriters {
-		// reassure: need make sure stream length != 0
 		footer.Streams = append(footer.Streams, column.GetStreamInfos()...)
 	}
 
@@ -343,51 +382,32 @@ func (stripe *stripeWriter) writeFooter(out io.Writer) (n int, err error) {
 	var footerBuf []byte
 	footerBuf, err = proto.Marshal(footer)
 	if err != nil {
-		return n, errors.WithStack(err)
+		return errors.WithStack(err)
 	}
 
-	var compressedFooterBuf []byte
-	if compressedFooterBuf, err = compressByteSlice(stripe.compressionKind, stripe.chunkSize, footerBuf); err != nil {
-		return
+	compressedFooterBuf := bytes.NewBuffer(make([]byte, stripe.opts.ChunkSize))
+	compressedFooterBuf.Reset()
+
+	if err = common.CompressingChunks(stripe.opts.CompressionKind, stripe.opts.ChunkSize, compressedFooterBuf, bytes.NewBuffer(footerBuf)); err != nil {
+		return err
 	}
 
-	if n, err = out.Write(compressedFooterBuf); err != nil {
-		return n, errors.WithStack(err)
+	var n int64
+	if n, err = compressedFooterBuf.WriteTo(out); err != nil {
+		return errors.WithStack(err)
 	}
 
 	*stripe.info.FooterLength = uint64(n)
 
 	log.Infof("write out stripe footer %s", footer.String())
-	return
+	return nil
 }
 
-func (stripe *stripeWriter) reset(offset uint64) {
-	o := offset
-	stripe.info = &pb.StripeInformation{Offset: &o, IndexLength: new(uint64), DataLength: new(uint64), FooterLength: new(uint64), NumberOfRows: new(uint64)}
+func (stripe *stripeWriter) forward() {
+	offset := stripe.info.GetOffset() + stripe.info.GetIndexLength() + stripe.info.GetDataLength() + stripe.info.GetFooterLength()
+	stripe.info = &pb.StripeInformation{Offset: &offset, IndexLength: new(uint64), DataLength: new(uint64), FooterLength: new(uint64), NumberOfRows: new(uint64)}
 
 	for _, column := range stripe.columnWriters {
 		column.Reset()
 	}
 }
-
-// used in currentStripe footer, tail footer
-func compressByteSlice(kind pb.CompressionKind, chunkSize int, b []byte) (compressed []byte, err error) {
-	switch kind {
-	case pb.CompressionKind_NONE:
-		compressed = b
-	case pb.CompressionKind_ZLIB:
-		src := bytes.NewBuffer(b)
-		dst := bytes.NewBuffer(make([]byte, len(b)))
-		dst.Reset()
-		if err = common.ZlibCompressing(chunkSize, dst, src); err != nil {
-			return nil, err
-		}
-		return dst.Bytes(), nil
-
-	default:
-		return nil, errors.New("compression not impl")
-	}
-	return
-}
-
-

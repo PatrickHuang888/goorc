@@ -10,7 +10,8 @@ import (
 )
 
 type Writer interface {
-	Write(presents []bool, presentsFromParent bool, vec interface{}) (rows int, err error)
+	WriteNull(null bool) error
+	WriteV(V interface{}) error
 
 	// Flush flush index, streams and update stats when stripe should be written out
 	Flush() error
@@ -21,7 +22,7 @@ type Writer interface {
 	//after flush
 	GetIndex() *pb.RowIndex
 
-	// after flush, used for writing stripe footer
+	// GetStreamInfos get no-non streams, used for writing stripe footer after flush
 	GetStreamInfos() []*pb.Stream
 	// after flush
 	GetStats() *pb.ColumnStatistics
@@ -30,7 +31,7 @@ type Writer interface {
 	Reset()
 
 	//sum of streams size, used for stripe flushing condition, data size in memory
-	//Size() int
+	Size() int
 }
 
 func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Writer, err error) {
@@ -41,7 +42,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		fallthrough
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			w = newLongV2Writer(schema, opts)
+			//w = newLongV2Writer(schema, opts)
 			break
 		}
 		return nil, errors.New("encoding not impl")
@@ -149,12 +150,11 @@ type writer struct {
 	schema *api.TypeDescription
 	stats  *pb.ColumnStatistics
 
-	present stream.BoolWriter
+	present *stream.Writer
 
 	children []Writer
 
-	writeIndex  bool
-	indexStride int
+	opts *config.WriterOptions
 
 	indexInRows int
 	indexStats  *pb.ColumnStatistics
@@ -162,7 +162,7 @@ type writer struct {
 }
 
 func (w *writer) reset() {
-	//w.present.Reset()
+	w.present.Reset()
 
 	w.indexInRows = 0
 	w.indexEntries = w.indexEntries[:0]

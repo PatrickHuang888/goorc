@@ -17,7 +17,7 @@ func init() {
 	log.SetLevel(log.TraceLevel)
 }
 
-func TestLongWithNoPresents(t *testing.T) {
+/*func TestLongWithNoPresents(t *testing.T) {
 	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_LONG}
 	wopts := config.DefaultWriterOptions()
 
@@ -113,7 +113,7 @@ func TestLongColumnRWwithPresents(t *testing.T) {
 	}
 	assert.Equal(t, presents, batch.Presents)
 	assert.Equal(t, values, batch.Vector)
-}
+}*/
 
 /*func TestBoolColumnRWwithoutPresents(t *testing.T) {
 	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
@@ -350,11 +350,12 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	values[98] = 0
 
 	writer := newByteWriter(schema, &wopts).(*byteWriter)
-	n, err := writer.Write(presents, false, values)
-	if err != nil {
-		t.Fatalf("%+v", err)
+	for _, p := range presents {
+		if err:=writer.WriteNull(!p);err!=nil {
+			t.Fatalf("%+v", err)
+		}
 	}
-	assert.Equal(t, rows, n)
+
 
 	if err := writer.Flush();err!=nil {
 		t.Fatalf("%+v", err)

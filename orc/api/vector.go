@@ -3,20 +3,22 @@ package api
 import (
 	"fmt"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 	"time"
 )
 
 type ColumnVector struct {
 	Id       uint32
 	Kind     pb.Type_Kind
-	Presents []bool
-	Vector   interface{}
 
-	// assigned when every next(), that is reader user can know how many rows read after next()
-	// because vector has no type
-	ReadRows int
+	HasNull bool
+	Vector   []Value
+
+	Children []ColumnVector
+}
+
+type Value struct {
+	Null bool
+	V interface{}
 }
 
 type batchInternal struct {
@@ -24,7 +26,7 @@ type batchInternal struct {
 	presentsFromParent bool  // for struct writer
 }
 
-func (cv ColumnVector) check() error {
+/*func (cv ColumnVector) check() error {
 	if cv.Kind == pb.Type_STRUCT && cv.Presents != nil {
 		var presentCounts int
 		for _, p := range cv.Presents {
@@ -51,7 +53,7 @@ func (cv ColumnVector) check() error {
 
 	}
 	return nil
-}
+}*/
 
 // hive 0.13 support 38 digits
 type Decimal64 struct {
