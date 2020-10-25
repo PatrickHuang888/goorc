@@ -287,13 +287,11 @@ func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
 		}
 		for _, child := range batch.Children {
 			childWriter := stripe.columnWriters[child.Id]
-			if stripe.schemas[batch.Id].HasNulls && !v.Null {
-				// child Null ignored ？
-				// and child schema has null will be false
-				// child null value will equal to parent null
-				if err = childWriter.WriteV(child.Vector[i].V); err != nil {
-					return err
-				}
+			// child Null ignored ？
+			// and child schema has null will be false
+			// child null value will equal to parent null
+			if err = childWriter.Write(child.Vector[i]); err != nil {
+				return err
 			}
 		}
 

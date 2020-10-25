@@ -334,28 +334,20 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	wopts := config.DefaultWriterOptions()
 
 	rows := 100
-	values := make([]byte, rows)
+	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
-		values[i] = byte(i)
+		values[i].V = byte(i)
 	}
-	presents := make([]bool, rows)
-	for i := 0; i < rows; i++ {
-		presents[i] = true
-	}
-	presents[0] = false
-	values[0] = 0
-	presents[45] = false
-	values[45] = 0
-	presents[98] = false
-	values[98] = 0
+	values[0].Null = true
+	values[45].Null = true
+	values[98].Null = true
 
 	writer := newByteWriter(schema, &wopts).(*byteWriter)
-	for _, p := range presents {
-		if err:=writer.WriteNull(!p);err!=nil {
+	for _, v := range values {
+		if err:=writer.Write(v);err!=nil {
 			t.Fatalf("%+v", err)
 		}
 	}
-
 
 	if err := writer.Flush();err!=nil {
 		t.Fatalf("%+v", err)
@@ -364,7 +356,7 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	bb := make([]byte, 500)
 	f := orcio.NewMockFile(bb)
 
-	if _, err= writer.WriteOut(f);err!=nil {
+	if _, err:= writer.WriteOut(f);err!=nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -372,16 +364,14 @@ func TestColumnTinyIntWithPresents(t *testing.T) {
 	vector:= schema.CreateReaderBatch(&ropts)
 	reader := NewByteReader(schema, &ropts, f, uint64(rows))
 
-	err = reader.InitStream(writer.present.Info(), schema.Encoding, 0)
-	if err != nil {
+	if err := reader.InitStream(writer.present.Info(), schema.Encoding, 0);err != nil {
 		t.Fatalf("%+v", err)
 	}
-	err= reader.InitStream(writer.data.Info(), schema.Encoding, writer.present.Info().GetLength())
-	if err !=nil {
+	if err:= reader.InitStream(writer.data.Info(), schema.Encoding, writer.present.Info().GetLength());err !=nil {
 		t.Fatalf("%+v", err)
 	}
 
-	if _, err= reader.Next(&vector.Presents, false, &vector.Vector);err!=nil {
+	if _, err:= reader.Next(&vector.Presents, false, &vector.Vector);err!=nil {
 		t.Fatalf("%+v", err)
 	}
 

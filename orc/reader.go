@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -37,7 +38,7 @@ type Reader interface {
 
 
 type reader struct {
-	opts    *ReaderOptions
+	opts    *config.ReaderOptions
 	schemas []*api.TypeDescription
 
 	stripes []*stripeReader
@@ -52,7 +53,7 @@ type reader struct {
 
 
 
-func NewFileReader(path string, opts ReaderOptions) (r Reader, err error) {
+func NewFileReader(path string, opts *config.ReaderOptions) (r Reader, err error) {
 	var f *os.File
 	if f, err = os.Open(path); err != nil {
 		return nil, errors.Wrapf(err, "open file %s error", path)
@@ -68,7 +69,7 @@ func NewFileReader(path string, opts ReaderOptions) (r Reader, err error) {
 	return
 }
 
-func newReader(opts *ReaderOptions, f *os.File) (r *reader, err error) {
+func newReader(opts *config.ReaderOptions, f *os.File) (r *reader, err error) {
 	var tail *pb.FileTail
 	if tail, err = extractFileTail(f); err != nil {
 		return nil, errors.Wrap(err, "read file tail error")
@@ -163,19 +164,21 @@ func (r *reader) Close() error {
 	return r.stripes[r.stripeIndex].Close()
 }
 
-func (r *reader) Next(batch *api.ColumnVector) (err error) {
+func (r *reader) Next(batch *api.ColumnVector) error {
+	var err error
+
 	if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
-		return
+		return err
 	}
 
 	// next stripe
-	if (r.stripeIndex < len(r.stripes)-1) && (batch.ReadRows == 0) {
+	if (r.stripeIndex < len(r.stripes)-1) && (len(batch.Vector) == 0) {
 		r.stripeIndex++
 		if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
-			return
+			return err
 		}
 	}
-	return
+	return err
 }
 
 func (r *reader) Seek(rowNumber uint64) error {
@@ -270,13 +273,24 @@ func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter)
 func (s *stripeReader) Next(batch *api.ColumnVector) error {
 	var err error
 
-	batch.Presents = batch.Presents[:0]
+	batch.Vector = batch.Vector[:0]
 
-	if batch.ReadRows, err = s.columnReaders[batch.Id].Next(&batch.Presents, false, &batch.Vector); err != nil {
+	if err = s.columnReaders[batch.Id].Next(batch.Vector); err != nil {
 		return err
 	}
 
-	log.Debugf("stripe %d column %d has read %d", s.number, batch.Id, batch.ReadRows)
+	for _, v := range batch.Children {
+		v.Vector= v.Vector[:0]
+		if err = s.columnReaders[v.Id].Next(v.Vector);err!=nil {
+			return err
+		}
+
+		if s.schemas[batch.Id].HasNulls {
+
+		}
+	}
+
+	log.Debugf("stripe %d column %d has read %d", s.number, batch.Id, len(batch.Vector))
 	return nil
 }
 

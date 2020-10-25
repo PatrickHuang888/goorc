@@ -16,15 +16,23 @@ type byteWriter struct {
 	data *stream.Writer
 }
 
-func (c *byteWriter) WriteNull(null bool) error {
-	return c.present.Write(!null)
-}
-
-func (c *byteWriter) WriteV(v interface{}) error {
+func (c *byteWriter) Write(value api.Value) error {
 	var err error
+	present:=true
 
-	if err = c.data.Write(v); err != nil {
-		return err
+	if c.schema.HasNulls {
+		if err=c.present.Write(!value.Null);err!=nil {
+			return err
+		}
+		if value.Null {
+			present= false
+		}
+	}
+
+	if present{
+		if err = c.data.Write(value.V); err != nil {
+			return err
+		}
 	}
 
 	if c.opts.WriteIndex {
@@ -217,14 +225,10 @@ func (c *byteReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind
 	return errors.New("stream kind error")
 }
 
-func (c *byteReader) Next(presents *[]bool, pFromParent bool, vec *interface{}) (rows int, err error) {
-	vector := (*vec).([]byte)
-	vector = vector[:0]
+func (c *byteReader) Next(values *[]api.Value) error {
 
-	if !pFromParent {
-		if err = c.nextPresents(presents); err != nil {
-			return
-		}
+	if c.schema.HasNulls {
+		c.present.Next()
 	}
 
 	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {

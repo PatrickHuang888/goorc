@@ -10,10 +10,9 @@ type ColumnVector struct {
 	Id       uint32
 	Kind     pb.Type_Kind
 
-	HasNull bool
 	Vector   []Value
 
-	Children []ColumnVector
+	Children []*ColumnVector
 }
 
 type Value struct {

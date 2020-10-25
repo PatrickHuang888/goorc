@@ -111,72 +111,14 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 }
 
 func (td *TypeDescription) CreateReaderBatch(opts *config.ReaderOptions) *ColumnVector {
+	batch :=&ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
 
-	var vector interface{}
-	switch td.Kind {
-	case pb.Type_BOOLEAN:
-		vector = make([]bool, 0, opts.RowSize)
-
-	case pb.Type_BYTE:
-		vector = make([]byte, 0, opts.RowSize)
-
-	case pb.Type_SHORT:
-		fallthrough
-	case pb.Type_INT:
-		fallthrough
-	case pb.Type_LONG:
-		vector = make([]int64, 0, opts.RowSize)
-
-	case pb.Type_FLOAT:
-		vector = make([]float32, 0, opts.RowSize)
-
-	case pb.Type_DOUBLE:
-		vector = make([]float64, 0, opts.RowSize)
-
-	case pb.Type_DECIMAL:
-		vector = make([]Decimal64, 0, opts.RowSize)
-
-	case pb.Type_DATE:
-		vector = make([]Date, 0, opts.RowSize)
-
-	case pb.Type_TIMESTAMP:
-		vector = make([]Timestamp, 0, opts.RowSize)
-
-	case pb.Type_BINARY:
-		vector = make([][]byte, 0, opts.RowSize)
-
-	case pb.Type_STRING:
-		fallthrough
-	case pb.Type_CHAR:
-		fallthrough
-	case pb.Type_VARCHAR:
-		vector = make([]string, 0, opts.RowSize)
-
-	case pb.Type_STRUCT:
-		var children []*ColumnVector
+	if td.Children!=nil {
 		for _, v := range td.Children {
-			children = append(children, v.CreateReaderBatch(opts))
+			batch.Children = append(batch.Children, v.CreateReaderBatch(opts))
 		}
-		vector = children
-
-	case pb.Type_UNION:
-		//todo:
-		fallthrough
-	case pb.Type_MAP:
-		// todo:
-		fallthrough
-	case pb.Type_LIST:
-		// todo:
-		panic("not impl")
-
-	default:
-		panic("unknown type")
 	}
 
-	batch := &ColumnVector{Id: td.Id, Vector: vector}
-	if td.HasNulls {
-		batch.Presents = make([]bool, 0, opts.RowSize)
-	}
 	return batch
 }
 

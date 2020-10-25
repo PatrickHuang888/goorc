@@ -10,8 +10,7 @@ import (
 )
 
 type Writer interface {
-	WriteNull(null bool) error
-	WriteV(V interface{}) error
+	Write(value api.Value) error
 
 	// Flush flush index, streams and update stats when stripe should be written out
 	Flush() error

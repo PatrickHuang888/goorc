@@ -22,7 +22,7 @@ type Reader interface {
 	InitIndex(startOffset uint64, length uint64, path string) error
 	InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error
 
-	Next(presents *[]bool, pFromParent bool, vec *interface{}) (int, error)
+	Next(values []api.Value) error
 
 	// Seek seek to row number offset to current stripe
 	// if column is struct (or like)  children, and struct has present stream, then
