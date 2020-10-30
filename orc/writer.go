@@ -285,6 +285,7 @@ func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
 		if err = writer.Write(v); err != nil {
 			return err
 		}
+
 		for _, child := range batch.Children {
 			childWriter := stripe.columnWriters[child.Id]
 			// child Null ignored ？

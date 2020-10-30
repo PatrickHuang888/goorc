@@ -61,7 +61,7 @@ func zlibCompressingToChunks(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer
 			if _, err = dst.Write(buf); err != nil {
 				return errors.WithStack(err)
 			}
-			log.Tracef("compressed original, src remains %d, dst len %d", src.Len(), dst.Len())
+			log.Tracef("write a chunk, compressed original, src remains %d, dst len %d", src.Len(), dst.Len())
 
 		} else {
 			header := encChunkHeader(cBuf.Len(), false)
@@ -71,7 +71,7 @@ func zlibCompressingToChunks(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer
 			if _, err = cBuf.WriteTo(dst); err != nil {
 				return errors.WithStack(err)
 			}
-			log.Tracef("compressed zlib, src remaining %d, dst len %d", src.Len(), cBuf.Len())
+			log.Tracef("write a chunk, compressed zlib, src remaining %d, dst len %d", src.Len(), cBuf.Len())
 		}
 	}
 	return nil
@@ -110,7 +110,7 @@ func zlibCompressingLeft(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) er
 		if _, err = dst.Write(data); err != nil {
 			return errors.WithStack(err)
 		}
-		log.Tracef("compressing original, last wrote, dst len %d", dst.Len())
+		log.Tracef("write last chunk, compressing original, dst len %d", dst.Len())
 
 	} else {
 		header := encChunkHeader(cBuf.Len(), false)
@@ -120,7 +120,7 @@ func zlibCompressingLeft(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) er
 		if _, err = cBuf.WriteTo(dst); err != nil {
 			return errors.WithStack(err)
 		}
-		log.Tracef("compressing zlib,  last wrote, dst len %d", dst.Len())
+		log.Tracef("write last chunk, compressing zlib,  dst len %d", dst.Len())
 	}
 
 	return nil

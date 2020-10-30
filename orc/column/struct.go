@@ -7,42 +7,52 @@ import (
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
+	"io"
 )
 
 type structReader struct {
 	*reader
-
-	children []Reader
+	present *stream.BoolReader
+	//children []Reader
 }
 
-func NewStructReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
-	return &structReader{reader: &reader{opts: opts, schema: schema, in:in, numberOfRows: numberOfRows}}
+func NewStructReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+	return &structReader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 
-func (s *structReader) InitChildren(children []Reader) error {
-	s.children = children
-	return nil
-}
-
-func (s structReader) Children() []Reader {
-	return s.children
-}
-
-func (s *structReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error {
+func (c *structReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err := s.in.Clone()
+		ic, err := c.f.Clone()
 		if err != nil {
 			return err
 		}
-		s.present = stream.NewBoolReader(s.opts, info, startOffset, ic)
+		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
+			return err
+		}
+		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
 		return nil
 	}
 
 	return errors.New("struct column no stream other than present")
 }
 
-func (s *structReader) Next(presents *[]bool, pFromParent bool, vec *interface{}) (rows int, err error) {
-	pp := *presents
+func (c *structReader) Next(values []api.Value) error {
+	if err := c.checkInit(); err != nil {
+		return err
+	}
+
+	if c.schema.HasNulls {
+		for i := 0; i < len(values); i++ {
+			p, err := c.present.Next()
+			if err != nil {
+				return err
+			}
+			values[i].Null = !p
+		}
+	}
+	//c.cursor += uint64(len(values))
+
+	/*pp := *presents
 
 	if !pFromParent {
 		if err = s.nextPresents(&pp); err != nil {
@@ -73,22 +83,35 @@ func (s *structReader) Next(presents *[]bool, pFromParent bool, vec *interface{}
 		rows = len(pp)
 	}
 
-	s.cursor += uint64(rows)
+	s.cursor += uint64(rows)*/
 
-	return
+	return nil
 }
 
 func (s *structReader) Seek(rowNumber uint64) error {
+	if err := s.checkInit(); err != nil {
+		return err
+	}
+
 	//todo: seek present
 
-	for _, child := range s.children {
+	/*for _, child := range s.children {
 		if err := child.Seek(rowNumber); err != nil {
 			return err
 		}
+	}*/
+	return nil
+}
+
+func (c structReader) checkInit() error {
+	if c.schema.HasNulls && c.present == nil {
+		return errors.New("stream present not initialized!")
 	}
 	return nil
 }
 
-func (s structReader) Close() {
-	s.present.Close()
+func (c *structReader) Close() {
+	if c.schema.HasNulls {
+		c.present.Close()
+	}
 }

@@ -2,7 +2,6 @@ package encoding
 
 import (
 	"bytes"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
 )
@@ -10,7 +9,7 @@ import (
 const MAX_BYTE_RL = 128
 const MIN_REPEAT_SIZE = 3
 
-type ByteRunLength struct {
+type byteRunLength struct {
 	// fixme: assuming indexStride >= MAX_BYTE_RL
 
 	markedPosition int
@@ -21,13 +20,17 @@ type ByteRunLength struct {
 	buf    *bytes.Buffer
 }
 
-func NewByteEncoder() *ByteRunLength {
-	e := &ByteRunLength{values: make([]byte, MAX_BYTE_RL), buf: &bytes.Buffer{}}
+func (e byteRunLength) BufferedSize() int {
+	return e.buf.Len()
+}
+
+func NewByteEncoder() *byteRunLength {
+	e := &byteRunLength{values: make([]byte, MAX_BYTE_RL), buf: &bytes.Buffer{}, offset: -1}
 	e.Reset()
 	return e
 }
 
-func (e *ByteRunLength) MarkPosition() {
+func (e *byteRunLength) MarkPosition() {
 	if e.offset == -1 {
 		log.Errorf("mark position error, offset -1")
 		return
@@ -35,61 +38,56 @@ func (e *ByteRunLength) MarkPosition() {
 	e.markedPosition = e.offset
 }
 
-func (e *ByteRunLength) GetAndClearPositions() (ps []uint64) {
+func (e *byteRunLength) GetAndClearPositions() (ps []uint64) {
 	ps = e.positions
 	e.positions = e.positions[:0]
 	return
 }
 
-func (e *ByteRunLength) Encode(v interface{}) (data []byte, err error) {
+func (e *byteRunLength) Encode(v interface{}) (err error) {
 	value := v.(byte)
 
 	e.offset++
 	e.values[e.offset] = value
 
 	if e.offset >= MAX_BYTE_RL-1 {
-		return e.Flush()
+		e.encodeBytes(e.buf, e.values[:e.offset+1])
+		e.offset = -1
 	}
 
-	return
+	return nil
 }
 
-func (e *ByteRunLength) Flush() (data []byte, err error) {
+func (e *byteRunLength) Flush() (data []byte, err error) {
 	if e.offset != -1 {
-		if err = e.encodeBytes(e.buf, e.values[:e.offset+1]); err != nil {
-			return
-		}
+		e.encodeBytes(e.buf, e.values[:e.offset+1])
 	}
 	data = e.buf.Bytes()
 	e.Reset()
 	return
 }
 
-func (e *ByteRunLength) Reset() {
+func (e *byteRunLength) Reset() {
 	e.offset = -1
 	e.buf.Reset()
 }
 
-func (e *ByteRunLength) encodeBytes(out *bytes.Buffer, vs []byte) error {
+func (e *byteRunLength) encodeBytes(out *bytes.Buffer, vs []byte){
 
 	for i := 0; i < len(vs); {
 		mark := i
 
 		l := len(vs) - i
-		if l > 128 { // max 128
-			l = 128
+		if l > MAX_BYTE_RL { // max 128
+			l = MAX_BYTE_RL
 		}
 
 		values := vs[i : i+l]
 		repeats := findRepeatsInBytes(values, 3)
 
 		if repeats == nil {
-			if err := out.WriteByte(byte(-l)); err != nil {
-				return errors.WithStack(err)
-			}
-			if _, err := out.Write(values); err != nil {
-				return errors.WithStack(err)
-			}
+			out.WriteByte(byte(-l))
+			out.Write(values)
 
 			i += l
 
@@ -101,39 +99,23 @@ func (e *ByteRunLength) encodeBytes(out *bytes.Buffer, vs []byte) error {
 		}
 
 		if repeats[0].start != 0 {
-			if err := out.WriteByte(byte(-(repeats[0].start))); err != nil {
-				return errors.WithStack(err)
-			}
-			if _, err := out.Write(values[:repeats[0].start]); err != nil {
-				return errors.WithStack(err)
-			}
+			out.WriteByte(byte(-(repeats[0].start)))
+			out.Write(values[:repeats[0].start])
 		}
 		for j := 0; j < len(repeats); j++ {
 
-			if err := out.WriteByte(byte(repeats[j].count - MIN_REPEAT_SIZE)); err != nil {
-				return errors.WithStack(err)
-			}
-			if err := out.WriteByte(values[repeats[j].start]); err != nil {
-				return errors.WithStack(err)
-			}
+			out.WriteByte(byte(repeats[j].count - MIN_REPEAT_SIZE))
+			out.WriteByte(values[repeats[j].start])
 
 			if j+1 < len(repeats) {
-				if err := out.WriteByte(byte(-(repeats[j+1].start - (repeats[j].start + repeats[j].count)))); err != nil {
-					return errors.WithStack(err)
-				}
-				if _, err := out.Write(values[repeats[j].start+repeats[j].count : repeats[j+1].start]); err != nil {
-					return errors.WithStack(err)
-				}
+				out.WriteByte(byte(-(repeats[j+1].start - (repeats[j].start + repeats[j].count))))
+				out.Write(values[repeats[j].start+repeats[j].count : repeats[j+1].start])
 			}
 		}
 		left := repeats[len(repeats)-1].start + repeats[len(repeats)-1].count // first not include in repeat
 		if left < l {
-			if err := out.WriteByte(byte(-(l - left))); err != nil {
-				return errors.WithStack(err)
-			}
-			if _, err := out.Write(values[left:l]); err != nil {
-				return errors.WithStack(err)
-			}
+			out.WriteByte(byte(-(l - left)))
+			out.Write(values[left:l])
 		}
 
 		i += l
@@ -144,7 +126,6 @@ func (e *ByteRunLength) encodeBytes(out *bytes.Buffer, vs []byte) error {
 		}
 	}
 
-	return nil
 }
 
 func DecodeByteRL(in io.ByteReader, values []byte) ([]byte, error) {
@@ -162,7 +143,7 @@ func DecodeByteRL(in io.ByteReader, values []byte) ([]byte, error) {
 			values = append(values, v)
 		}
 	} else { // literals -1 ~ -128
-		l:= -int(int8(control))
+		l := -int(int8(control))
 		for i := 0; i < l; i++ {
 			v, err := in.ReadByte()
 			if err != nil {

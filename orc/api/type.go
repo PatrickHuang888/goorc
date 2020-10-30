@@ -20,7 +20,7 @@ type TypeDescription struct {
 	// maybe changed at nextStripe?
 	Encoding pb.ColumnEncoding_Kind
 
-	HasNulls  bool  // create initial batch presents vector on this when reading
+	HasNulls bool // create initial batch presents vector on this when reading
 }
 
 func (td TypeDescription) String() string {
@@ -32,8 +32,8 @@ func (td TypeDescription) String() string {
 	}
 
 	for i, name := range td.ChildrenNames {
-			sb.WriteString(fmt.Sprintf("child %s: ", name))
-			sb.WriteString(td.Children[i].String())
+		sb.WriteString(fmt.Sprintf("child %s: ", name))
+		sb.WriteString(td.Children[i].String())
 	}
 
 	sb.WriteString(fmt.Sprintf("\n"))
@@ -42,6 +42,7 @@ func (td TypeDescription) String() string {
 }
 
 var nodeId uint32
+
 func doId(node *TypeDescription) error {
 	nodeId++
 	node.Id = nodeId
@@ -66,7 +67,6 @@ func traverse(node *TypeDescription, do action) error {
 	}
 	return nil
 }
-
 
 // set ids, flat the schema tree to slice
 func (td *TypeDescription) normalize() (schemas []*TypeDescription) {
@@ -111,28 +111,26 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 }
 
 func (td *TypeDescription) CreateReaderBatch(opts *config.ReaderOptions) *ColumnVector {
-	batch :=&ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
+	batch := &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opts.RowSize)}
 
-	if td.Children!=nil {
-		for _, v := range td.Children {
-			batch.Children = append(batch.Children, v.CreateReaderBatch(opts))
-		}
+	for _, v := range td.Children {
+		batch.Children = append(batch.Children, v.CreateReaderBatch(opts))
 	}
 
 	return batch
 }
 
 // should normalize first
-func (td TypeDescription) CreateWriterBatch() *ColumnVector {
+func (td TypeDescription) CreateWriterBatch(opts *config.WriterOptions) *ColumnVector {
 	// set id
 	td.normalize()
 
 	if td.Kind == pb.Type_STRUCT {
-		var vector []*ColumnVector
+		var children []*ColumnVector
 		for _, v := range td.Children {
-			vector = append(vector, v.CreateWriterBatch())
+			children = append(children, v.CreateWriterBatch(opts))
 		}
-		return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: vector}
+		return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize), Children: children}
 	}
-	return &ColumnVector{Id: td.Id, Kind: td.Kind}
+	return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
 }

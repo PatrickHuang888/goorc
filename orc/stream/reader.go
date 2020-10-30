@@ -109,7 +109,7 @@ func (r *reader) readAChunk() error {
 	r.readLength += 3
 	chunkLength, original := common.DecChunkHeader(head)
 
-	log.Tracef("read a chunk, stream %s, compressing kind %s, chunkLength %d, original %t",
+	log.Tracef("read a chunk, stream %s, compressing %s, chunkLength %d, original %t",
 		r.info.String(), r.opts.CompressionKind, chunkLength, original)
 
 	if uint64(chunkLength) > r.opts.ChunkSize {

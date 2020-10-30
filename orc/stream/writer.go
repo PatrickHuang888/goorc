@@ -7,6 +7,7 @@ import (
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"io"
 )
 
@@ -76,52 +77,49 @@ func (w *Writer) Reset() {
 	w.encoder.Reset()
 }
 
-func (w *Writer) Write(v interface{}) error {
-	var err error
-	var data []byte
-
-	if data, err = w.encoder.Encode(v); err != nil {
-		return err
+func (w *Writer) Write(v interface{}) (err error) {
+	if err = w.encoder.Encode(v); err != nil {
+		return
 	}
 
-	return w.write(data)
+	if w.encoder.BufferedSize() >= w.opts.EncoderBufferSize {
+		var data []byte
+		if data, err = w.encoder.Flush();err!=nil {
+			return
+		}
+		return w.writeToBuffer(data)
+	}
+	return
 }
 
-/*func (w *Writer) WriteBytes(bb []byte) error  {
-	for _, v := range bb {
-		if err:=w.Write(v);err!=nil {
-			return err
-		}
+// return compressed data + uncompressed data
+func (w *Writer) Size() (size int) {
+	data, _ := w.encoder.Flush()
+	// just write to buf here
+	w.buf.Write(data)
+
+	if w.opts.CompressionKind == pb.CompressionKind_NONE {
+		size = w.buf.Len()
+		return
 	}
-	return nil
+
+	size = w.compressedBuf.Len() + w.buf.Len()
+	return
 }
 
-func (w *encodingWriter) WriteBools(bb []bool) error  {
-	for _, v := range bb {
-		if err:=w.Write(v);err!=nil {
-			return err
-		}
-	}
-	return nil
-}*/
-
-func (w *Writer) Flush() error {
-	var err error
+func (w *Writer) Flush() (err error) {
 	var data []byte
-
-	if data, err = w.encoder.Flush(); err != nil {
+	if data, err = w.encoder.Flush();err!=nil {
+		return
+	}
+	if err := w.writeToBuffer(data); err != nil {
 		return err
 	}
-
-	if err = w.write(data); err != nil {
-		return err
-	}
-
 	return w.flush()
 }
 
 type writer struct {
-	info *pb.Stream
+	info    *pb.Stream
 	flushed bool
 
 	buf           *bytes.Buffer
@@ -132,15 +130,13 @@ type writer struct {
 	positions [][]uint64
 }
 
-// Write write p to stream buf
-func (w *writer) write(p []byte) error {
+// Write write p to stream buf, compressing if buf size larger than chunk size
+func (w *writer) writeToBuffer(p []byte) error {
 	if len(p) == 0 {
 		return nil
 	}
 
-	if _, err := w.buf.Write(p); err != nil {
-		return err
-	}
+	w.buf.Write(p)
 
 	if w.opts.CompressionKind == pb.CompressionKind_NONE || w.buf.Len() < w.opts.ChunkSize {
 		return nil
@@ -157,7 +153,7 @@ func (w *writer) write(p []byte) error {
 
 func (w *writer) reset() {
 	*w.info.Length = 0
-	w.flushed= false
+	w.flushed = false
 
 	w.buf.Reset()
 	w.compressedBuf.Reset()
@@ -186,7 +182,7 @@ func (w writer) empty() bool {
 func (w *writer) flush() error {
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
 		*w.info.Length = uint64(w.buf.Len())
-		w.flushed= true
+		w.flushed = true
 		return nil
 	}
 
@@ -197,32 +193,25 @@ func (w *writer) flush() error {
 		}
 	}
 	*w.info.Length = uint64(w.compressedBuf.Len())
-	w.flushed= true
+	w.flushed = true
 	return nil
 }
 
 // used together with flush
-func (w *writer) WriteOut(out io.Writer) (n int64, err error) {
+func (w *Writer) WriteOut(out io.Writer) (n int64, err error) {
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
 		if n, err = w.buf.WriteTo(out); err != nil {
 			return 0, errors.WithStack(err)
 		}
+		log.Debugf("write out column %d stream %s length %d", w.info.GetColumn(), w.info.GetKind(), n)
 		return
 	}
 
 	if n, err = w.compressedBuf.WriteTo(out); err != nil {
 		return 0, errors.WithStack(err)
 	}
+	log.Debugf("write out column %d stream %s length %d", w.info.GetColumn(), w.info.GetKind(), n)
 	return
-}
-
-// return compressed data + uncompressed data
-func (w *writer) Size() int {
-	if w.opts.CompressionKind == pb.CompressionKind_NONE {
-		return w.buf.Len()
-	}
-
-	return w.compressedBuf.Len() + w.buf.Len()
 }
 
 func NewByteWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {

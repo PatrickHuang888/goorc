@@ -25,7 +25,10 @@ const (
 
 type Encoder interface {
 	// Encode may returns no data due to buffer and algorithm need more v to encoding
-	Encode(v interface{}) (data []byte, err error)
+	Encode(v interface{}) error
+
+	// BufferedSize get encoded data sized buffered, not including no encoded data
+	BufferedSize() int
 
 	// Flush flush remaining data, make sure there is only one position mark in one flush
 	Flush() (data []byte, err error)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"os"
 	"strconv"
@@ -16,7 +17,7 @@ func main() {
 	schema.ChildrenNames= []string{"x", "y"}
 	schema.Children=[]*api.TypeDescription{x, y}
 
-	opts := orc.DefaultWriterOptions()
+	opts := config.DefaultWriterOptions()
 	writer, err := orc.NewWriter("my-file-w.orc", schema, opts)
 	if err != nil {
 		fmt.Printf("create writer error %+v", err)

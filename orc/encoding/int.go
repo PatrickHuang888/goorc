@@ -11,7 +11,7 @@ import (
 )
 
 func NewIntRLV2(signed bool) *IntRL2 {
-	return &IntRL2{signed: signed, buf: &bytes.Buffer{}}
+	return &IntRL2{values: make([]uint64, MAX_INT_RL), signed: signed, buf: &bytes.Buffer{}, offset: -1}
 }
 
 // int run length encoding v2
@@ -334,24 +334,31 @@ func (e *IntRL2) writeLeftBits(out *bytes.Buffer) error {
 
 const MAX_INT_RL = 512
 
-func (e *IntRL2) Encode(v interface{}) (data []byte, err error) {
+func (e *IntRL2) Encode(v interface{}) (err error) {
 	value := v.(uint64)
 
 	e.offset++
 	e.values[e.offset] = value
 
 	if e.offset >= MAX_INT_RL-1 {
-		return e.Flush()
+		if err = e.write(e.buf, e.values[:e.offset+1]); err != nil {
+			return
+		}
+		e.offset= -1
 	}
 
 	return
+}
+
+func (d *IntRL2) BufferedSize() int {
+	return d.buf.Len()
 }
 
 func (e *IntRL2) GetAndClearPositions() []uint64 {
 	r := e.positions
 	e.positions = e.positions[:0]
 	e.markedPosition = -1
-	e.offset = 0
+	e.offset = -1
 	return r
 }
 
@@ -363,7 +370,7 @@ func (e *IntRL2) Reset() {
 
 	e.positions = e.positions[:0]
 	e.markedPosition = -1
-	e.offset = 0
+	e.offset = -1
 }
 
 func (e *IntRL2) MarkPosition() {

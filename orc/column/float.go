@@ -9,19 +9,20 @@ import (
 	"github.com/pkg/errors"
 )
 
-func NewDoubleReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
-	return &doubleReader{reader: &reader{schema: schema, opts: opts, in:in, numberOfRows: numberOfRows}}
+func NewDoubleReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+	return &doubleReader{reader: &reader{schema: schema, opts: opts, f: f}}
 }
 
 type doubleReader struct {
 	*reader
+	present *stream.BoolReader
 	data *stream.DoubleReader
 }
 
-func (c *doubleReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error {
+func (c *doubleReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err:= c.in.Clone()
-		if err!=nil {
+		ic, err := c.f.Clone()
+		if err != nil {
 			return err
 		}
 		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
@@ -29,8 +30,8 @@ func (c *doubleReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Ki
 	}
 
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err:= c.in.Clone()
-		if err!=nil {
+		ic, err := c.f.Clone()
+		if err != nil {
 			return err
 		}
 		c.data = stream.NewDoubleReader(c.opts, info, startOffset, ic)
@@ -40,8 +41,8 @@ func (c *doubleReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Ki
 	return errors.New("stream kind error")
 }
 
-func (c *doubleReader) Next(presents *[]bool, pFromParent bool, vec *interface{}) (rows int, err error) {
-	vector := (*vec).([]float64)
+func (c *doubleReader) Next(values []api.Value) error {
+	/*vector := (*vec).([]float64)
 	vector = vector[:0]
 
 	if !pFromParent {
@@ -65,8 +66,8 @@ func (c *doubleReader) Next(presents *[]bool, pFromParent bool, vec *interface{}
 	}
 
 	*vec = vector
-	rows = len(vector)
-	return
+	rows = len(vector)*/
+	return nil
 }
 
 func (c *doubleReader) seek(indexEntry *pb.RowIndexEntry) error {
@@ -111,26 +112,16 @@ func (c *doubleReader) Seek(rowNumber uint64) error {
 		return err
 	}
 
-	c.cursor = stride * c.opts.IndexStride
-
-	var pp []bool
-	if c.present != nil {
-		pp = make([]bool, strideOffset)
-	}
-	vv := make([]int64, strideOffset)
-	var vec *interface{}
-	*vec = vv
-
-	if _, err := c.Next(&pp, false, vec); err != nil {
+	vec := make([]api.Value, 0, strideOffset)
+	if err := c.Next(vec); err != nil {
 		return err
 	}
 
-	c.cursor += strideOffset
 	return nil
 }
 
 func (c *doubleReader) Close() {
-	if c.present != nil {
+	if c.schema.HasNulls {
 		c.present.Close()
 	}
 	c.data.Close()

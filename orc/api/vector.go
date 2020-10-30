@@ -20,6 +20,15 @@ type Value struct {
 	V interface{}
 }
 
+type ByteValue struct {
+	Null bool
+	V byte
+}
+
+func ValueToByteValue(bv *ByteValue, v *Value)  {
+
+}
+
 type batchInternal struct {
 	*ColumnVector
 	presentsFromParent bool  // for struct writer

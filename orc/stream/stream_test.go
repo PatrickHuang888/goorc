@@ -14,7 +14,7 @@ func init() {
 	log.SetLevel(log.TraceLevel)
 }
 
-func TestStreamReadWriteNoCompression(t *testing.T) {
+func TestNoCompression(t *testing.T) {
 	var err error
 
 	num := 200
@@ -61,7 +61,7 @@ func TestStreamReadWriteNoCompression(t *testing.T) {
 	assert.Equal(t, data, vs)
 }
 
-func TestStreamReadWriteWithCompression(t *testing.T) {
+func TestCompression(t *testing.T) {
 	var err error
 
 	buf := &bytes.Buffer{}
@@ -110,7 +110,7 @@ func TestStreamReadWriteWithCompression(t *testing.T) {
 	assert.Equal(t, data, vv)
 }
 
-func TestBoolStreamReadWriteWithCompression(t *testing.T) {
+func TestBoolWithCompression(t *testing.T) {
 	var err error
 
 	rows := 100
@@ -156,7 +156,7 @@ func TestBoolStreamReadWriteWithCompression(t *testing.T) {
 	assert.Equal(t, data, vv)
 }
 
-func TestStreamReadWriteMultiChunkWithCompression(t *testing.T) {
+func TestMultiChunkWithCompression(t *testing.T) {
 	var err error
 
 	buf := &bytes.Buffer{}

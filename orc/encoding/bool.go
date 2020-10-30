@@ -4,35 +4,39 @@ import "io"
 
 const MAX_BOOL_RL = 8
 
-type BoolRunLength struct {
-	brl    *ByteRunLength
-	offset int
-	values []bool
+type boolRunLength struct {
+	brl       *byteRunLength
+	offset    int
+	values    []bool
 	positions []uint64
 }
 
-func NewBoolEncoder() *BoolRunLength {
-	return &BoolRunLength{offset: -1, values: make([]bool, MAX_BOOL_RL), brl: NewByteEncoder()}
+func (e *boolRunLength) BufferedSize() int {
+	return e.brl.BufferedSize()
 }
 
-func (e *BoolRunLength) MarkPosition() {
-	e.positions= append(e.positions, uint64(e.offset+1))
+func NewBoolEncoder() *boolRunLength {
+	return &boolRunLength{offset: -1, values: make([]bool, MAX_BOOL_RL), brl: NewByteEncoder()}
 }
 
-func (e *BoolRunLength) GetAndClearPositions() []uint64 {
-	r:= e.positions
-	e.positions= e.positions[:0]
+func (e *boolRunLength) MarkPosition() {
+	e.positions = append(e.positions, uint64(e.offset+1))
+}
+
+func (e *boolRunLength) GetAndClearPositions() []uint64 {
+	r := e.positions
+	e.positions = e.positions[:0]
 	return r
 }
 
 // Reset except positions
-func (e *BoolRunLength) Reset() {
-	e.offset= -1
+func (e *boolRunLength) Reset() {
+	e.offset = -1
 	e.brl.Reset()
 	//e.values= e.values[:0]
 }
 
-func (e *BoolRunLength) Encode(v interface{}) (data []byte, err error) {
+func (e *boolRunLength) Encode(v interface{}) (err error) {
 	value := v.(bool)
 
 	e.offset++
@@ -45,7 +49,7 @@ func (e *BoolRunLength) Encode(v interface{}) (data []byte, err error) {
 				b |= 0x01 << byte(7-i)
 			}
 		}
-		if data, err = e.brl.Encode(b); err != nil {
+		if err = e.brl.Encode(b); err != nil {
 			return
 		}
 		e.offset = -1
@@ -55,7 +59,7 @@ func (e *BoolRunLength) Encode(v interface{}) (data []byte, err error) {
 	return
 }
 
-func (e *BoolRunLength) Flush() (data []byte, err error) {
+func (e *boolRunLength) Flush() (data []byte, err error) {
 	if e.offset != -1 {
 		var b byte
 		for i := 0; i <= e.offset; i++ {
@@ -63,21 +67,16 @@ func (e *BoolRunLength) Flush() (data []byte, err error) {
 				b |= 0x01 << byte(7-i)
 			}
 		}
-		if data, err = e.brl.Encode(b); err != nil {
+		if err = e.brl.Encode(b); err != nil {
 			return
 		}
 		e.offset = -1
 	}
 
-	var dd []byte
-	if dd, err = e.brl.Flush(); err != nil {
+	if data, err = e.brl.Flush(); err != nil {
 		return
 	}
-	if data == nil {
-		data = dd
-	} else {
-		data = append(data, dd...)
-	}
+	e.Reset()
 	return
 }
 
@@ -97,6 +96,3 @@ func DecodeBools(in io.ByteReader, vs []bool) ([]bool, error) {
 	}
 	return vs, err
 }
-
-
-

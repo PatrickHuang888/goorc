@@ -13,26 +13,39 @@ import (
 
 type byteWriter struct {
 	*writer
-	data *stream.Writer
+	present *stream.Writer
+	data    *stream.Writer
 }
 
-func (c *byteWriter) Write(value api.Value) error {
+func (c *byteWriter) Write(values []api.Value) error {
+	for _, v := range values {
+		if err := c.write(v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *byteWriter) write(value api.Value) error {
 	var err error
-	present:=true
+	hasValue := true
 
 	if c.schema.HasNulls {
-		if err=c.present.Write(!value.Null);err!=nil {
+		if err = c.present.Write(!value.Null); err != nil {
 			return err
 		}
 		if value.Null {
-			present= false
+			hasValue = false
 		}
 	}
 
-	if present{
+	if hasValue {
 		if err = c.data.Write(value.V); err != nil {
 			return err
 		}
+
+		*c.stats.BinaryStatistics.Sum++
+		*c.stats.NumberOfValues++
 	}
 
 	if c.opts.WriteIndex {
@@ -45,8 +58,6 @@ func (c *byteWriter) Write(value api.Value) error {
 		*c.indexStats.NumberOfValues++
 	}
 
-	*c.stats.BinaryStatistics.Sum++
-	*c.stats.NumberOfValues++
 	return nil
 }
 
@@ -56,56 +67,11 @@ func (c *byteWriter) Size() int {
 
 func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
-	base := &writer{schema: schema, present: stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts), stats: stats}
+	base := &writer{schema: schema, opts: opts, stats: stats}
+	present := stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
 	data := stream.NewByteWriter(schema.Id, pb.Stream_DATA, opts)
-	return &byteWriter{base, data}
+	return &byteWriter{base, present, data}
 }
-
-/*func (c *byteWriter) Write(presents []bool, presentsFromParent bool, vec interface{}) (rows int, err error) {
-	vector := vec.([]byte)
-	rows = len(vector)
-
-	if len(presents) == 0 {
-		for _, v := range vector {
-			if err = c.writeValue(v); err != nil {
-				return
-			}
-			if c.writeIndex {
-				c.doIndex()
-			}
-		}
-		return
-	}
-
-	if len(presents) != len(vector) {
-		return 0, errors.New("presents error")
-	}
-
-	if !presentsFromParent {
-		*c.stats.HasNull = true
-	}
-
-	for i, p := range presents {
-
-		if !presentsFromParent {
-			if err = c.present.Write(p); err != nil {
-				return
-			}
-		}
-
-		if p {
-			if err = c.writeValue(vector[i]); err != nil {
-				return
-			}
-		}
-
-		if c.writeIndex {
-			c.doIndex()
-		}
-	}
-
-	return
-}*/
 
 func (c *byteWriter) doIndex() {
 	c.indexInRows++
@@ -134,6 +100,7 @@ func (c *byteWriter) Flush() error {
 
 	*c.stats.BytesOnDisk += c.present.Info().GetLength()
 	*c.stats.BytesOnDisk += c.data.Info().GetLength()
+
 	return nil
 }
 
@@ -152,6 +119,7 @@ func (c *byteWriter) GetStats() *pb.ColumnStatistics {
 
 func (c *byteWriter) Reset() {
 	c.reset()
+	c.present.Reset()
 	c.data.Reset()
 }
 
@@ -193,17 +161,17 @@ func (c *byteWriter) GetIndex() *pb.RowIndex {
 
 type byteReader struct {
 	*reader
-	data *stream.ByteReader
+	present *stream.BoolReader
+	data    *stream.ByteReader
 }
 
-func NewByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
-	return &byteReader{reader: &reader{opts: opts, schema: schema, in: in, numberOfRows: numberOfRows}}
+func NewByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+	return &byteReader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 
-// create a input for every stream
-func (c *byteReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error {
+func (c *byteReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err := c.in.Clone()
+		ic, err := c.f.Clone()
 		if err != nil {
 			return err
 		}
@@ -213,7 +181,7 @@ func (c *byteReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind
 	}
 
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err := c.in.Clone()
+		ic, err := c.f.Clone()
 		if err != nil {
 			return err
 		}
@@ -225,36 +193,42 @@ func (c *byteReader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind
 	return errors.New("stream kind error")
 }
 
-func (c *byteReader) Next(values *[]api.Value) error {
+func (c *byteReader) Next(values []api.Value) error {
+	if err := c.checkInit(); err != nil {
+		return err
+	}
 
 	if c.schema.HasNulls {
-		c.present.Next()
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-		if len(*presents) == 0 || (len(*presents) != 0 && (*presents)[i]) {
-			var v byte
-			v, err = c.data.Next()
+		for i := 0; i < len(values); i++ {
+			p, err := c.present.Next()
 			if err != nil {
-				return
+				return err
 			}
-			vector = append(vector, v)
-		} else {
-			vector = append(vector, 0)
+			values[i].Null = !p
 		}
-
-		c.cursor++
 	}
 
-	rows = len(vector)
-	*vec = vector
-	return
+	for i := 0; i < len(values); i++ {
+		hasValue := true
+		if c.schema.HasNulls && values[i].Null {
+			hasValue = false
+		}
+		if hasValue {
+			v, err := c.data.Next()
+			if err != nil {
+				return err
+			}
+			values[i].V = v
+		}
+	}
+
+	return nil
 }
 
 func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
 	pos := indexEntry.GetPositions()
 
-	if c.present == nil {
+	if !c.schema.HasNulls {
 		if c.opts.CompressionKind == pb.CompressionKind_NONE {
 			return c.data.Seek(pos[0], 0, pos[1])
 		}
@@ -293,26 +267,27 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 		return err
 	}
 
-	c.cursor = stride * c.opts.IndexStride
-
-	var pp []bool
-	if c.present != nil {
-		pp = make([]bool, strideOffset)
-	}
-
-	vv := make([]byte, strideOffset)
-	var v *interface{}
-	*v = vv
-
-	if _, err := c.Next(&pp, false, v); err != nil {
+	vec := make([]api.Value, 0, strideOffset)
+	if err := c.Next(vec); err != nil {
 		return err
 	}
 
-	c.cursor += strideOffset
 	return nil
 }
 
 func (c *byteReader) Close() {
-	c.present.Close()
+	if c.schema.HasNulls {
+		c.present.Close()
+	}
 	c.data.Close()
+}
+
+func (c byteReader) checkInit() error {
+	if c.data == nil {
+		return errors.New("stream data not initialized!")
+	}
+	if c.schema.HasNulls && c.present == nil {
+		return errors.New("stream present not initialized!")
+	}
+	return nil
 }

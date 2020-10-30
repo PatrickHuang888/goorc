@@ -9,24 +9,25 @@ import (
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
-func NewDateV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File, numberOfRows uint64) Reader {
-	return &dateV2Reader{reader: &reader{schema: schema, opts: opts, in:in, numberOfRows: numberOfRows}}
+func NewDateV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+	return &dateV2Reader{reader: &reader{schema: schema, opts: opts, f:f}}
 }
 
 type dateV2Reader struct {
 	*reader
+	present *stream.BoolReader
 	data *stream.IntRLV2Reader
 }
 
-func (c *dateV2Reader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Kind, startOffset uint64) error {
+func (c *dateV2Reader) InitStream(info *pb.Stream,  startOffset uint64) error {
 
-	if encoding == pb.ColumnEncoding_DIRECT {
+	if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
 		err := errors.New("encoding direct not impl")
 		return err
 	}
 
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err:= c.in.Clone()
+		ic, err:= c.f.Clone()
 		if err!=nil {
 			return err
 		}
@@ -35,7 +36,7 @@ func (c *dateV2Reader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Ki
 	}
 
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err:= c.in.Clone()
+		ic, err:= c.f.Clone()
 		if err!=nil {
 			return err
 		}
@@ -46,8 +47,8 @@ func (c *dateV2Reader) InitStream(info *pb.Stream, encoding pb.ColumnEncoding_Ki
 	return errors.New("stream unknown")
 }
 
-func (c *dateV2Reader) Next(presents *[]bool, pFromParent bool, vec *interface{}) (rows int, err error) {
-	vector := (*vec).([]api.Date)
+func (c *dateV2Reader) Next(values []api.Value) error {
+	/*vector := (*vec).([]api.Date)
 	vector = vector[:0]
 
 	if !pFromParent {
@@ -73,8 +74,8 @@ func (c *dateV2Reader) Next(presents *[]bool, pFromParent bool, vec *interface{}
 	}
 
 	*vec = vector
-	rows = len(vector)
-	return
+	rows = len(vector)*/
+	return nil
 }
 
 func (c *dateV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
@@ -121,7 +122,7 @@ func (c *dateV2Reader) Seek(rowNumber uint64) error {
 		return err
 	}
 
-	c.cursor = stride * c.opts.IndexStride
+	//c.cursor = stride * c.opts.IndexStride
 
 	for i := 0; i < int(offsetInStride); i++ {
 		if c.present != nil {
@@ -132,7 +133,7 @@ func (c *dateV2Reader) Seek(rowNumber uint64) error {
 		if _, err := c.data.NextInt64(); err != nil {
 			return err
 		}
-		c.cursor++
+		//c.cursor++
 	}
 	return nil
 }

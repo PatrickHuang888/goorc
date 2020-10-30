@@ -7,6 +7,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -36,7 +37,6 @@ type Reader interface {
 	GetStatistics() []*pb.ColumnStatistics
 }
 
-
 type reader struct {
 	opts    *config.ReaderOptions
 	schemas []*api.TypeDescription
@@ -45,13 +45,11 @@ type reader struct {
 
 	stripeIndex int
 
-	path string
+	f orcio.File
 
 	numberOfRows uint64
 	stats        []*pb.ColumnStatistics
 }
-
-
 
 func NewFileReader(path string, opts *config.ReaderOptions) (r Reader, err error) {
 	var f *os.File
@@ -69,7 +67,7 @@ func NewFileReader(path string, opts *config.ReaderOptions) (r Reader, err error
 	return
 }
 
-func newReader(opts *config.ReaderOptions, f *os.File) (r *reader, err error) {
+func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) {
 	var tail *pb.FileTail
 	if tail, err = extractFileTail(f); err != nil {
 		return nil, errors.Wrap(err, "read file tail error")
@@ -91,7 +89,7 @@ func newReader(opts *config.ReaderOptions, f *os.File) (r *reader, err error) {
 		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
 	}
 
-	r = &reader{path: f.Name(), opts: opts, schemas: schemas, numberOfRows: tail.GetFooter().GetNumberOfRows(),
+	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: tail.GetFooter().GetNumberOfRows(),
 		stats: tail.Footer.GetStatistics()}
 
 	r.initStripes(f, tail.Footer.GetStripes())
@@ -107,7 +105,7 @@ func (r *reader) NumberOfRows() uint64 {
 	return r.numberOfRows
 }
 
-func (r *reader) initStripes(f *os.File, infos []*pb.StripeInformation) error {
+func (r *reader) initStripes(f orcio.File, infos []*pb.StripeInformation) error {
 	var err error
 
 	for i, stripeInfo := range infos {
@@ -146,7 +144,7 @@ func (r *reader) initStripes(f *os.File, infos []*pb.StripeInformation) error {
 		log.Debugf("extracted stripe footer %d: %s", i, footer.String())
 
 		var sr *stripeReader
-		if sr, err = newStripeReader(f.Name(), r.schemas, r.opts, i, stripeInfo, footer); err != nil {
+		if sr, err = newStripeReader(f, r.schemas, r.opts, i, stripeInfo, footer); err != nil {
 			return err
 		}
 
@@ -197,21 +195,22 @@ func (r *reader) Seek(rowNumber uint64) error {
 }
 
 type stripeReader struct {
-	//in io.ReadSeeker
-	path string
+	f orcio.File
+	//path string
 
 	schemas []*api.TypeDescription
-	opts    *ReaderOptions
+	opts    *config.ReaderOptions
 
 	columnReaders []column.Reader
 
 	number int
 
 	numberOfRows uint64
+	cursor       uint64
 }
 
-func newStripeReader(path string, schemas []*api.TypeDescription, opts *ReaderOptions, idx int, info *pb.StripeInformation, footer *pb.StripeFooter) (reader *stripeReader, err error) {
-	reader = &stripeReader{path: path, schemas: schemas, opts: opts, number: idx}
+func newStripeReader(f orcio.File, schemas []*api.TypeDescription, opts *config.ReaderOptions, idx int, info *pb.StripeInformation, footer *pb.StripeFooter) (reader *stripeReader, err error) {
+	reader = &stripeReader{f: f, schemas: schemas, opts: opts, number: idx}
 	err = reader.init(info, footer)
 	return
 }
@@ -225,13 +224,14 @@ func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter)
 	// id==i
 	for i, schema := range s.schemas {
 		schema.Encoding = footer.GetColumns()[schema.Id].GetKind()
-		if s.columnReaders[i], err = column.NewReader(schema, s.opts, s.path, info.GetNumberOfRows()); err != nil {
+
+		if s.columnReaders[i], err = column.NewReader(schema, s.opts, s.f); err != nil {
 			return err
 		}
 	}
 
 	// build tree
-	for _, schema := range s.schemas {
+	/*for _, schema := range s.schemas {
 		if schema.Kind == pb.Type_STRUCT {
 			var crs []column.Reader
 			for _, childSchema := range schema.Children {
@@ -239,7 +239,7 @@ func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter)
 			}
 			s.columnReaders[schema.Id].InitChildren(crs)
 		}
-	}
+	}*/
 
 	// init streams
 	// streams has sequence
@@ -250,17 +250,16 @@ func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter)
 		id := streamInfo.GetColumn()
 		streamKind := streamInfo.GetKind()
 		length := streamInfo.GetLength()
-		encoding := footer.GetColumns()[id].GetKind()
 
 		if streamKind == pb.Stream_ROW_INDEX {
-			if err := s.columnReaders[id].InitIndex(indexStart, length, s.path); err != nil {
+			if err := s.columnReaders[id].InitIndex(indexStart, length); err != nil {
 				return err
 			}
 			indexStart += length
 			continue
 		}
 
-		if err := s.columnReaders[id].InitStream(streamKind, encoding, dataStart, streamInfo, s.path); err != nil {
+		if err := s.columnReaders[id].InitStream(streamInfo, dataStart); err != nil {
 			return err
 		}
 		dataStart += length
@@ -271,24 +270,25 @@ func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter)
 
 // a stripe is typically  ~200MB
 func (s *stripeReader) Next(batch *api.ColumnVector) error {
-	var err error
+	page := len(batch.Vector)
+	if int(s.numberOfRows-s.cursor) < len(batch.Vector) {
+		page = int(s.numberOfRows - s.cursor)
 
-	batch.Vector = batch.Vector[:0]
+	}
+	batch.Vector = batch.Vector[:page]
 
-	if err = s.columnReaders[batch.Id].Next(batch.Vector); err != nil {
+	if err := s.columnReaders[batch.Id].Next(batch.Vector); err != nil {
 		return err
 	}
 
 	for _, v := range batch.Children {
-		v.Vector= v.Vector[:0]
-		if err = s.columnReaders[v.Id].Next(v.Vector);err!=nil {
+		v.Vector = v.Vector[:page]
+		if err := s.columnReaders[v.Id].Next(v.Vector); err != nil {
 			return err
 		}
-
-		if s.schemas[batch.Id].HasNulls {
-
-		}
 	}
+
+	s.cursor += uint64(page)
 
 	log.Debugf("stripe %d column %d has read %d", s.number, batch.Id, len(batch.Vector))
 	return nil
@@ -695,13 +695,12 @@ func preOrderWalkSchema(node *api.TypeDescription) (types []*pb.Type) {
 	return
 }
 
-func extractFileTail(f *os.File) (tail *pb.FileTail, err error) {
-	fs, err := f.Stat()
+func extractFileTail(f orcio.File) (tail *pb.FileTail, err error) {
+	size, err := f.Size()
 	if err != nil {
 		return nil, err
 	}
 
-	size := fs.Size()
 	if size == 0 {
 		// Hive often creates empty files (including ORC) and has an
 		// optimization to create a 0 byte file as an empty ORC file.

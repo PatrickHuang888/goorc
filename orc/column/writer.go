@@ -3,19 +3,19 @@ package column
 import (
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
-	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	"io"
 )
 
 type Writer interface {
-	Write(value api.Value) error
+	Write(values []api.Value) error
 
-	// Flush flush index, streams and update stats when stripe should be written out
+	// Flush flush stream(index, data) and update ColumnStats.BytesOnDisk when before stripe written out
 	Flush() error
 
-	// flush first then write out, because maybe there is index to write first
+	// WriteOut to writer, should flush first, because index will be got after flush and
+	// write out before data. n written total data length
 	WriteOut(out io.Writer) (n int64, err error)
 
 	//after flush
@@ -26,7 +26,7 @@ type Writer interface {
 	// after flush
 	GetStats() *pb.ColumnStatistics
 
-	// for stripe reset
+	// Reset for column writer reset after stripe write out
 	Reset()
 
 	//sum of streams size, used for stripe flushing condition, data size in memory
@@ -147,21 +147,21 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 
 type writer struct {
 	schema *api.TypeDescription
+	opts *config.WriterOptions
+
 	stats  *pb.ColumnStatistics
 
-	present *stream.Writer
-
 	children []Writer
-
-	opts *config.WriterOptions
 
 	indexInRows int
 	indexStats  *pb.ColumnStatistics
 	indexEntries     []*pb.RowIndexEntry
+
+	flushed bool
 }
 
 func (w *writer) reset() {
-	w.present.Reset()
+	w.flushed= false
 
 	w.indexInRows = 0
 	w.indexEntries = w.indexEntries[:0]
