@@ -7,7 +7,6 @@ import (
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 	"io"
 )
 
@@ -17,21 +16,20 @@ type byteWriter struct {
 	data    *stream.Writer
 }
 
-func (c *byteWriter) Write(values []api.Value) error {
+func (c *byteWriter) Writes(values []api.Value) error {
 	for _, v := range values {
-		if err := c.write(v); err != nil {
+		if err := c.Write(v); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *byteWriter) write(value api.Value) error {
-	var err error
+func (c *byteWriter) Write(value api.Value) error {
 	hasValue := true
 
 	if c.schema.HasNulls {
-		if err = c.present.Write(!value.Null); err != nil {
+		if err := c.present.Write(!value.Null); err != nil {
 			return err
 		}
 		if value.Null {
@@ -40,22 +38,36 @@ func (c *byteWriter) write(value api.Value) error {
 	}
 
 	if hasValue {
-		if err = c.data.Write(value.V); err != nil {
+		if err := c.data.Write(value.V); err != nil {
 			return err
 		}
 
 		*c.stats.BinaryStatistics.Sum++
 		*c.stats.NumberOfValues++
-	}
 
-	if c.opts.WriteIndex {
-		c.doIndex()
+		if c.opts.WriteIndex {
+			c.indexInRows++
 
-		if c.indexStats.BinaryStatistics == nil {
-			c.indexStats.BinaryStatistics = &pb.BinaryStatistics{Sum: new(int64)}
+			if c.indexInRows >= c.opts.IndexStride {
+
+				c.present.MarkPosition()
+				c.data.MarkPosition()
+
+				if c.index == nil {
+					c.index = &pb.RowIndex{}
+				}
+				c.index.Entry = append(c.index.Entry, &pb.RowIndexEntry{Statistics: c.indexStats})
+				c.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+				// java impl does not write index bytesondisk statistic
+				c.indexInRows = 0
+			}
+
+			if c.indexStats.BinaryStatistics == nil {
+				c.indexStats.BinaryStatistics = &pb.BinaryStatistics{Sum: new(int64)}
+			}
+			*c.indexStats.BinaryStatistics.Sum++
+			*c.indexStats.NumberOfValues++
 		}
-		*c.indexStats.BinaryStatistics.Sum++
-		*c.indexStats.NumberOfValues++
 	}
 
 	return nil
@@ -73,48 +85,42 @@ func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writ
 	return &byteWriter{base, present, data}
 }
 
-func (c *byteWriter) doIndex() {
-	c.indexInRows++
-
-	if c.indexInRows >= c.opts.IndexStride {
-		c.present.MarkPosition()
-		c.data.MarkPosition()
-
-		entry := &pb.RowIndexEntry{Statistics: c.indexStats}
-		c.indexEntries = append(c.indexEntries, entry)
-		c.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
-
-		c.indexInRows = 0
-	}
-}
-
 func (c *byteWriter) Flush() error {
-	var err error
-
-	if err = c.present.Flush(); err != nil {
+	if err := c.present.Flush(); err != nil {
 		return err
 	}
-	if err = c.data.Flush(); err != nil {
+	if err := c.data.Flush(); err != nil {
 		return err
 	}
 
-	*c.stats.BytesOnDisk += c.present.Info().GetLength()
+	*c.stats.BytesOnDisk = c.present.Info().GetLength()
 	*c.stats.BytesOnDisk += c.data.Info().GetLength()
+
+	if c.opts.WriteIndex {
+
+		*c.indexStats.BytesOnDisk = c.stats.GetBytesOnDisk() - c.indexStats.GetBytesOnDisk()
+
+		pp := c.present.GetPositions()
+		dp := c.data.GetPositions()
+
+		/*if len(c.index.Entry) != len(pp) || len(c.indexEntries) != len(dp) {
+			log.Errorf("index entry and position error")
+			return nil
+		}*/
+
+		e :=c.index.Entry[len(c.index.Entry)-1]
+			e.Positions = append(e.Positions, pp...)
+			e.Positions = append(e.Positions, dp...)
+	}
 
 	return nil
 }
 
 func (c *byteWriter) GetStreamInfos() []*pb.Stream {
-	var ss []*pb.Stream
-	if c.present.Info().GetLength() != 0 {
-		ss = append(ss, c.present.Info())
+	if c.schema.HasNulls {
+		return []*pb.Stream{c.present.Info(), c.data.Info()}
 	}
-	ss = append(ss, c.data.Info())
-	return ss
-}
-
-func (c *byteWriter) GetStats() *pb.ColumnStatistics {
-	return c.stats
+	return []*pb.Stream{c.data.Info()}
 }
 
 func (c *byteWriter) Reset() {
@@ -133,30 +139,6 @@ func (c *byteWriter) WriteOut(out io.Writer) (n int64, err error) {
 	}
 	n = np + nd
 	return
-}
-
-// after flush
-func (c *byteWriter) GetIndex() *pb.RowIndex {
-	if c.opts.WriteIndex {
-		index := &pb.RowIndex{}
-
-		pp := c.present.GetAndClearPositions()
-		dp := c.data.GetAndClearPositions()
-
-		if len(c.indexEntries) != len(pp) || len(c.indexEntries) != len(dp) {
-			log.Errorf("index entry and position error")
-			return nil
-		}
-
-		for i, e := range c.indexEntries {
-			e.Positions = append(e.Positions, pp[i]...)
-			e.Positions = append(e.Positions, dp[i]...)
-		}
-		index.Entry = c.indexEntries
-		return index
-	}
-
-	return nil
 }
 
 type byteReader struct {
@@ -226,6 +208,10 @@ func (c *byteReader) Next(values []api.Value) error {
 }
 
 func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
+	if err := c.checkInit(); err != nil {
+		return err
+	}
+
 	pos := indexEntry.GetPositions()
 
 	if !c.schema.HasNulls {

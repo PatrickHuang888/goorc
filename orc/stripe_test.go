@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/column"
+	"github.com/patrickhuang888/goorc/orc/config"
 	"testing"
 	"time"
 
@@ -11,16 +12,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var dummyOut = &column.bufSeeker{&bytes.Buffer{}}
 
-func TestStripeStructBasic(t *testing.T) {
+/*func TestStripeStructBasic(t *testing.T) {
 
 	schema := &api.TypeDescription{Kind: pb.Type_STRUCT}
 	x := &api.TypeDescription{Kind: pb.Type_DECIMAL, Encoding: pb.ColumnEncoding_DIRECT_V2}
 	schema.ChildrenNames = []string{"x"}
 	schema.Children = []*api.TypeDescription{x}
 
-	wopts := DefaultWriterOptions()
+	wopts := config.DefaultWriterOptions()
 	writer, err := newStripeWriter(0, schema, wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -70,13 +70,13 @@ func TestStripeStructBasic(t *testing.T) {
 		assert.Equal(t, 10*int64(i-1), values[i].Precision)
 	}
 	assert.Equal(t, -2000, int(values[18].Precision))
-}
+}*/
 
 func TestStripeBasic(t *testing.T) {
 	schema := &api.TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding: pb.ColumnEncoding_DIRECT_V2}
-	//schemas := schema.normalize()
-	wopts := DefaultWriterOptions()
-	writer, err := newStripeWriter(0, schema, wopts)
+	schemas := schema.normalize()
+	wopts := config.DefaultWriterOptions()
+	writer, err := newStripeWriter(0, schemas, &wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}

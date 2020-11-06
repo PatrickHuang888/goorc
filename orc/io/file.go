@@ -11,12 +11,17 @@ import (
 type File interface {
 	io.ReadSeeker
 	io.Closer
+	Write(p []byte) (n int, err error)
 	Size() (int64, error)
 	Clone() (File, error)
 }
 
 type fileFile struct {
 	f *os.File
+}
+
+func (fr fileFile) Write(p []byte) (n int, err error) {
+	panic("implement me")
 }
 
 func (fr fileFile) Clone() (File, error) {

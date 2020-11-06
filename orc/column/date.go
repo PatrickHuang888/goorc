@@ -7,19 +7,21 @@ import (
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
+	log "github.com/sirupsen/logrus"
+	"io"
 )
 
 func NewDateV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &dateV2Reader{reader: &reader{schema: schema, opts: opts, f:f}}
+	return &dateV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
 }
 
 type dateV2Reader struct {
 	*reader
 	present *stream.BoolReader
-	data *stream.IntRLV2Reader
+	data    *stream.IntRLV2Reader
 }
 
-func (c *dateV2Reader) InitStream(info *pb.Stream,  startOffset uint64) error {
+func (c *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 
 	if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
 		err := errors.New("encoding direct not impl")
@@ -27,17 +29,17 @@ func (c *dateV2Reader) InitStream(info *pb.Stream,  startOffset uint64) error {
 	}
 
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err:= c.f.Clone()
-		if err!=nil {
+		ic, err := c.f.Clone()
+		if err != nil {
 			return err
 		}
-		c.present= stream.NewBoolReader(c.opts, info, startOffset, ic)
+		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
 		return nil
 	}
 
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err:= c.f.Clone()
-		if err!=nil {
+		ic, err := c.f.Clone()
+		if err != nil {
 			return err
 		}
 		c.data = stream.NewRLV2Reader(c.opts, info, startOffset, true, ic)
@@ -143,4 +145,154 @@ func (c *dateV2Reader) Close() {
 		c.present.Close()
 	}
 	c.data.Close()
+}
+
+type timestampWriter struct {
+	*writer
+	present   *stream.Writer
+	data      *stream.Writer
+	secondary *stream.Writer
+}
+
+func (t *timestampWriter) Writes(values []api.Value) error {
+
+}
+
+func (t *timestampWriter) Write(value api.Value) error {
+	hasValue := true
+
+	if t.schema.HasNulls {
+		if err := t.present.Write(!value.Null); err != nil {
+			return err
+		}
+		if value.Null {
+			hasValue = false
+		}
+	}
+
+	if hasValue {
+		time := value.V.(api.Timestamp)
+		if err := t.data.Write(time.Seconds); err != nil {
+			return err
+		}
+		if err := t.secondary.Write(time.Nanos); err != nil {
+			return err
+		}
+
+		*t.stats.NumberOfValues++
+
+		if t.opts.WriteIndex {
+			t.indexInRows++
+
+			if t.indexInRows >= t.opts.IndexStride {
+
+				entry := &pb.RowIndexEntry{Statistics: t.indexStats}
+				t.indexEntries = append(t.indexEntries, entry)
+				t.indexStats = &pb.ColumnStatistics{
+					TimestampStatistics: &pb.TimestampStatistics{Maximum: new(int64), Minimum: new(int64), MaximumUtc: new(int64), MinimumUtc: new(int64)},
+					NumberOfValues:      new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+				if t.schema.HasNulls {
+					*t.indexStats.HasNull = true
+				}
+				t.indexInRows = 0
+			}
+
+			if t.indexStats.TimestampStatistics == nil {
+				t.indexStats.TimestampStatistics = &pb.TimestampStatistics{Maximum: new(int64), Minimum: new(int64), MaximumUtc: new(int64), MinimumUtc: new(int64)}
+			}
+
+			if time.GetMilliSeconds() > t.indexStats.TimestampStatistics.GetMaximum() {
+				*t.indexStats.TimestampStatistics.Maximum = time.GetMilliSeconds()
+			}
+			if time.GetMilliSecondsUtc() > t.indexStats.TimestampStatistics.GetMaximumUtc() {
+				*t.indexStats.TimestampStatistics.MaximumUtc = time.GetMilliSecondsUtc()
+			}
+			if t.indexStats.TimestampStatistics.GetMinimum() < time.GetMilliSeconds() {
+				*t.indexStats.TimestampStatistics.Minimum = time.GetMilliSeconds()
+			}
+			if t.indexStats.TimestampStatistics.GetMaximumUtc() < time.GetMilliSecondsUtc() {
+				*t.indexStats.TimestampStatistics.MinimumUtc = time.GetMilliSecondsUtc()
+			}
+			*t.indexStats.NumberOfValues++
+		}
+	}
+
+	return nil
+}
+
+func (t *timestampWriter) Flush() error {
+	if err := t.present.Flush(); err != nil {
+		return err
+	}
+	if err := t.data.Flush(); err != nil {
+		return err
+	}
+	if err := t.secondary.Flush(); err != nil {
+		return err
+	}
+
+	*t.stats.BytesOnDisk += t.present.Info().GetLength()
+	*t.stats.BytesOnDisk += t.data.Info().GetLength()
+	*t.stats.BytesOnDisk += t.secondary.Info().GetLength()
+
+	if t.opts.WriteIndex {
+		if t.index == nil {
+			t.index = &pb.RowIndex{}
+		}
+
+		pp := t.present.GetAndClearPositions()
+		dp := t.data.GetAndClearPositions()
+		sp := t.secondary.GetAndClearPositions()
+
+		if len(t.indexEntries) != len(pp) || len(t.indexEntries) != len(dp) || len(t.indexEntries) != len(sp) {
+			log.Errorf("index entry and position error")
+			return nil
+		}
+
+		for i, e := range t.indexEntries {
+			e.Positions = append(e.Positions, pp[i]...)
+			e.Positions = append(e.Positions, dp[i]...)
+			e.Positions = append(e.Positions, sp[i]...)
+		}
+		t.index.Entry = t.indexEntries
+	}
+
+	return nil
+}
+
+func (t *timestampWriter) WriteOut(out io.Writer) (n int64, err error) {
+	var np, nd, ns int64
+	if np, err = t.present.WriteOut(out); err != nil {
+		return
+	}
+	if nd, err = t.data.WriteOut(out); err != nil {
+		return
+	}
+	if ns, err = t.secondary.WriteOut(out); err != nil {
+		return
+	}
+	n = np + nd + ns
+	return
+}
+
+func (t timestampWriter) GetStreamInfos() []*pb.Stream {
+	if t.schema.HasNulls {
+		return []*pb.Stream{t.present.Info(), t.data.Info(), t.secondary.Info()}
+	}
+	return []*pb.Stream{t.data.Info(), t.secondary.Info()}
+}
+
+func (t *timestampWriter) Reset() {
+	t.writer.reset()
+	t.present.Reset()
+	t.data.Reset()
+	t.secondary.Reset()
+}
+
+func (t timestampWriter) Size() int {
+	return t.present.Size() + t.data.Size() + t.secondary.Size()
+}
+
+func newTimestampV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+
 }

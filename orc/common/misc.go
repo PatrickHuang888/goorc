@@ -9,6 +9,7 @@ import (
 	"io"
 )
 
+// compressing to chunks, but not all src remaining
 func CompressingChunks(kind pb.CompressionKind, chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error {
 	switch kind {
 	case pb.CompressionKind_NONE:
@@ -28,7 +29,6 @@ func CompressingChunks(kind pb.CompressionKind, chunkSize int, dst *bytes.Buffer
 	return nil
 }
 
-// compressing to chunks, but not all src remaining
 func zlibCompressingToChunks(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error {
 	buf := make([]byte, chunkSize)
 

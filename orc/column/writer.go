@@ -9,9 +9,11 @@ import (
 )
 
 type Writer interface {
-	Write(values []api.Value) error
+	Writes(values []api.Value) error
+	Write(value api.Value) error
 
-	// Flush flush stream(index, data) and update ColumnStats.BytesOnDisk when before stripe written out
+	// Flush flush stream(index, data) when write out stripe(reach stripe size), reach index stride or close file
+	// update ColumnStats.BytesOnDisk and index before stripe written out
 	Flush() error
 
 	// WriteOut to writer, should flush first, because index will be got after flush and
@@ -41,7 +43,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		fallthrough
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//w = newLongV2Writer(schema, opts)
+			w = newIntV2Writer(schema, opts)
 			break
 		}
 		return nil, errors.New("encoding not impl")
@@ -104,7 +106,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 
 	case pb.Type_TIMESTAMP:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//writer = newTimestampDirectV2Writer(schema, opts)
+			w = newTimestampV2Writer(schema, opts)
 			break
 		}
 		return nil, errors.New("encoding not impl")
@@ -155,7 +157,7 @@ type writer struct {
 
 	indexInRows int
 	indexStats  *pb.ColumnStatistics
-	indexEntries     []*pb.RowIndexEntry
+	index *pb.RowIndex
 
 	flushed bool
 }
@@ -164,11 +166,21 @@ func (w *writer) reset() {
 	w.flushed= false
 
 	w.indexInRows = 0
-	w.indexEntries = w.indexEntries[:0]
+	w.index.Reset()
 	w.indexStats.Reset()
 	w.indexStats.HasNull = new(bool)
 	w.indexStats.NumberOfValues = new(uint64)
 	w.indexStats.BytesOnDisk = new(uint64)
 
+
 	// stats will not reset, it's for whole writer
 }
+
+func (w writer) GetIndex() *pb.RowIndex {
+	return w.index
+}
+
+func (w writer) GetStats() *pb.ColumnStatistics {
+	return w.stats
+}
+

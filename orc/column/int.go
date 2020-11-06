@@ -26,16 +26,16 @@ type intWriter struct {
 	data    *stream.Writer
 }
 
-func (w *intWriter) Write(values []api.Value) error {
+func (w *intWriter) Writes(values []api.Value) error {
 	for _, v := range values {
-		if err := w.write(v); err != nil {
+		if err := w.Write(v); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (w *intWriter) write(value api.Value) error {
+func (w *intWriter) Write(value api.Value) error {
 	if w.schema.HasNulls {
 		if err := w.present.Write(!value.Null); err != nil {
 			return err

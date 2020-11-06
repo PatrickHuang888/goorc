@@ -29,7 +29,7 @@ func TestIntV2NoPresents(t *testing.T) {
 
 	wopts := config.DefaultWriterOptions()
 	writer := newIntV2Writer(schema, &wopts).(*intWriter)
-	if err = writer.Write(values); err != nil {
+	if err = writer.Writes(values); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestIntV2ColumnWithPresents(t *testing.T) {
 	values[102].V = nil
 
 	writer := newIntV2Writer(schema, &wopts).(*intWriter)
-	if err := writer.Write(values); err != nil {
+	if err := writer.Writes(values); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -342,7 +342,7 @@ func TestByteWithPresents(t *testing.T) {
 	values[98].Null = true
 
 	writer := newByteWriter(schema, &wopts).(*byteWriter)
-	if err := writer.Write(values); err != nil {
+	if err := writer.Writes(values); err != nil {
 		t.Fatalf("%+v", err)
 	}
 

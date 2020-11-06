@@ -51,7 +51,7 @@ type reader struct {
 	stats        []*pb.ColumnStatistics
 }
 
-func NewFileReader(path string, opts *config.ReaderOptions) (r Reader, err error) {
+func NewFileReader(path string, opts config.ReaderOptions) (r Reader, err error) {
 	var f *os.File
 	if f, err = os.Open(path); err != nil {
 		return nil, errors.Wrapf(err, "open file %s error", path)
@@ -194,123 +194,6 @@ func (r *reader) Seek(rowNumber uint64) error {
 	return errors.New("no row found")
 }
 
-type stripeReader struct {
-	f orcio.File
-	//path string
-
-	schemas []*api.TypeDescription
-	opts    *config.ReaderOptions
-
-	columnReaders []column.Reader
-
-	number int
-
-	numberOfRows uint64
-	cursor       uint64
-}
-
-func newStripeReader(f orcio.File, schemas []*api.TypeDescription, opts *config.ReaderOptions, idx int, info *pb.StripeInformation, footer *pb.StripeFooter) (reader *stripeReader, err error) {
-	reader = &stripeReader{f: f, schemas: schemas, opts: opts, number: idx}
-	err = reader.init(info, footer)
-	return
-}
-
-// stripe {index{},column{[present],data,[length]},footer}
-func (s *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter) error {
-	var err error
-
-	//prepare column reader
-	s.columnReaders = make([]column.Reader, len(s.schemas))
-	// id==i
-	for i, schema := range s.schemas {
-		schema.Encoding = footer.GetColumns()[schema.Id].GetKind()
-
-		if s.columnReaders[i], err = column.NewReader(schema, s.opts, s.f); err != nil {
-			return err
-		}
-	}
-
-	// build tree
-	/*for _, schema := range s.schemas {
-		if schema.Kind == pb.Type_STRUCT {
-			var crs []column.Reader
-			for _, childSchema := range schema.Children {
-				crs = append(crs, s.columnReaders[childSchema.Id])
-			}
-			s.columnReaders[schema.Id].InitChildren(crs)
-		}
-	}*/
-
-	// init streams
-	// streams has sequence
-	indexStart := info.GetOffset()
-	dataStart := indexStart + info.GetIndexLength()
-
-	for _, streamInfo := range footer.GetStreams() {
-		id := streamInfo.GetColumn()
-		streamKind := streamInfo.GetKind()
-		length := streamInfo.GetLength()
-
-		if streamKind == pb.Stream_ROW_INDEX {
-			if err := s.columnReaders[id].InitIndex(indexStart, length); err != nil {
-				return err
-			}
-			indexStart += length
-			continue
-		}
-
-		if err := s.columnReaders[id].InitStream(streamInfo, dataStart); err != nil {
-			return err
-		}
-		dataStart += length
-	}
-
-	return nil
-}
-
-// a stripe is typically  ~200MB
-func (s *stripeReader) Next(batch *api.ColumnVector) error {
-	page := len(batch.Vector)
-	if int(s.numberOfRows-s.cursor) < len(batch.Vector) {
-		page = int(s.numberOfRows - s.cursor)
-
-	}
-	batch.Vector = batch.Vector[:page]
-
-	if err := s.columnReaders[batch.Id].Next(batch.Vector); err != nil {
-		return err
-	}
-
-	for _, v := range batch.Children {
-		v.Vector = v.Vector[:page]
-		if err := s.columnReaders[v.Id].Next(v.Vector); err != nil {
-			return err
-		}
-	}
-
-	s.cursor += uint64(page)
-
-	log.Debugf("stripe %d column %d has read %d", s.number, batch.Id, len(batch.Vector))
-	return nil
-}
-
-// locate rows in this stripe
-func (s *stripeReader) Seek(rowNumber uint64) error {
-	// rethink: all column seek to row ?
-	for _, r := range s.columnReaders {
-		if err := r.Seek(rowNumber); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *stripeReader) Close() error {
-	for _, r := range s.columnReaders {
-		r.Close()
-	}
-	return nil
-}
 
 /*
 type timestampV2Reader struct {
