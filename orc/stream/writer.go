@@ -11,37 +11,6 @@ import (
 	"io"
 )
 
-/*type Writer interface {
-	Reset()
-
-	// Write one value to stream
-	Write(v interface{}) error
-	Flush() error
-
-	WriteOut(out io.Writer) (n int64, err error)
-
-	MarkPosition()
-	GetAndClearPositions() [][]uint64
-
-	Info() *pb.Stream
-	Size() int
-}*/
-
-/*type BoolWriter interface {
-	Writer
-	WriteBools(bb []bool) error
-}
-
-type ByteWriter interface {
-	Writer
-	WriteBytes(bb []byte) error
-}
-
-type IntWriter interface {
-	Writer
-	WriteInts(vec []int64) error
-}*/
-
 type Writer struct {
 	*writer
 	encoder encoding.Encoder
@@ -53,14 +22,14 @@ func (w *Writer) MarkPosition() {
 	w.encoder.MarkPosition()
 }
 
-func (w Writer) GetPosition() []uint64 {
+func (w Writer) GetPositions() [][]uint64 {
 	if !w.opts.WriteIndex {
-		return []uint64{}
+		return [][]uint64{}
 	}
 
-	var pp []uint64
+	var pp [][]uint64
 	pp = append(pp, w.positions...)
-	pp = append(pp, w.encoder.getPosition())
+	pp = append(pp, w.encoder.GetPositions()...)
 
 	w.positions = w.positions[:0]
 	return pp
@@ -86,7 +55,14 @@ func (w *Writer) Write(v interface{}) (err error) {
 		if err != nil {
 			return
 		}
-		return w.write(data)
+		if err := w.write(data); err != nil {
+			return err
+		}
+		if w.opts.CompressionKind == pb.CompressionKind_NONE {
+			*w.info.Length = uint64(w.buf.Len())
+		} else {
+			*w.info.Length = uint64(w.compressedBuf.Len())
+		}
 	}
 	return
 }
@@ -95,6 +71,7 @@ func (w *Writer) Write(v interface{}) (err error) {
 func (w *Writer) Size() (size int) {
 	data, _ := w.encoder.Flush()
 	// just write to buf here, no compressing
+	// fix: direct operating on w.buf
 	w.buf.Write(data)
 
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
@@ -106,15 +83,17 @@ func (w *Writer) Size() (size int) {
 	return
 }
 
+// Flush flush remaining data in encoder then compressing left encoded data
+// will be the last operation before writeout
 func (w *Writer) Flush() error {
 	data, err := w.encoder.Flush()
 	if err != nil {
 		return err
 	}
-
 	if err := w.write(data); err != nil {
 		return err
 	}
+
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
 		*w.info.Length = uint64(w.buf.Len())
 	} else {
@@ -134,7 +113,7 @@ type writer struct {
 
 	opts *config.WriterOptions
 
-	positions []uint64
+	positions [][]uint64
 }
 
 // Write write p to stream buf, compressing if buf size larger than chunk size
@@ -146,7 +125,6 @@ func (w *writer) write(p []byte) error {
 	w.buf.Write(p)
 
 	if w.opts.CompressionKind == pb.CompressionKind_NONE || w.buf.Len() < w.opts.ChunkSize {
-		*w.info.Length = uint64(w.buf.Len())
 		return nil
 	}
 
@@ -171,10 +149,10 @@ func (w *writer) reset() {
 
 func (w *writer) markPosition() {
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
-		w.positions = append(w.positions, uint64(w.buf.Len()))
+		w.positions = append(w.positions, []uint64{uint64(w.buf.Len())})
 		return
 	}
-	w.positions = append(w.positions, uint64(w.compressedBuf.Len()), uint64(w.buf.Len()))
+	w.positions = append(w.positions, []uint64{uint64(w.compressedBuf.Len()), uint64(w.buf.Len())})
 }
 
 /*func (w writer) empty() bool {

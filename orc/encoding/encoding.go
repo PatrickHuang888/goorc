@@ -36,7 +36,7 @@ type Encoder interface {
 	MarkPosition()
 
 	// GetPositions get positions marked previously after stream flush, then clear
-	GetAndClearPositions() []uint64
+	GetPositions() [][]uint64
 
 	Reset()
 }

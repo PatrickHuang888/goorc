@@ -38,10 +38,10 @@ func (e *byteRunLength) MarkPosition() {
 	e.markedPosition = e.offset
 }
 
-func (e *byteRunLength) GetAndClearPositions() (ps []uint64) {
-	ps = e.positions
-	e.positions = e.positions[:0]
-	return
+func (e *byteRunLength) GetPositions() []uint64 {
+	ps := e.positions
+	e.positions = nil
+	return ps
 }
 
 func (e *byteRunLength) Encode(v interface{}) (err error) {
@@ -85,12 +85,11 @@ func (e *byteRunLength) encodeBytes(out *bytes.Buffer, vs []byte){
 		values := vs[i : i+l]
 		repeats := findRepeatsInBytes(values, 3)
 
-		if repeats == nil {
+		if repeats == nil {  // direct, no repeats
 			out.WriteByte(byte(-l))
 			out.Write(values)
 
 			i += l
-
 			if e.markedPosition != -1 && i >= e.markedPosition {
 				e.positions = append(e.positions, uint64(e.markedPosition-mark+1))
 				e.markedPosition = -1
@@ -99,11 +98,11 @@ func (e *byteRunLength) encodeBytes(out *bytes.Buffer, vs []byte){
 		}
 
 		if repeats[0].start != 0 {
-			out.WriteByte(byte(-(repeats[0].start)))
+			out.WriteByte(byte(-(repeats[0].start))
 			out.Write(values[:repeats[0].start])
 		}
-		for j := 0; j < len(repeats); j++ {
 
+		for j := 0; j < len(repeats); j++ {
 			out.WriteByte(byte(repeats[j].count - MIN_REPEAT_SIZE))
 			out.WriteByte(values[repeats[j].start])
 
