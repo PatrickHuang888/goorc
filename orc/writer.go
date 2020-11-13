@@ -1,7 +1,6 @@
 package orc
 
 import (
-	"github.com/golang/protobuf/proto"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/pkg/errors"
@@ -51,27 +50,30 @@ func (w *fileWriter) Close() error {
 	return w.close()
 }
 
-func newWriter(schema *api.TypeDescription, opts *config.WriterOptions, out io.WriteCloser) (w *writer, err error) {
+func newWriter(schema *api.TypeDescription, opts *config.WriterOptions, out io.WriteCloser) (*writer, error) {
 	// normalize schema id from 0
-	schemas := schema.normalize()
+	schemas, err := schema.Normalize()
+	if err!=nil {
+		return nil, err
+	}
 
-	w = &writer{opts: opts, out: out, schemas: schemas}
+	w := &writer{opts: opts, out: out, schemas: schemas}
 
 	var h uint64
 	if h, err = w.writeHeader(); err != nil {
-		return
+		return nil, err
 	}
 
 	w.offset = h
-	if w.stripe, err = newStripeWriter(w.offset, schemas, w.opts); err != nil {
-		return
-	}
+	/*if w.stripe, err = newStripeWriter(w.offset, schemas, w.opts); err != nil {
+		return nil, err
+	}*/
 
 	for _, cw := range w.stripe.columnWriters {
 		w.columnStats = append(w.columnStats, cw.GetStats())
 	}
 
-	return
+	return w, nil
 }
 
 // cannot used concurrently, not synchronized
@@ -117,9 +119,9 @@ func (w *writer) close() error {
 		w.stripeInfos = append(w.stripeInfos, w.stripe.info)
 	}
 
-	if err := w.writeFileTail(); err != nil {
+	/*if err := w.writeFileTail(); err != nil {
 		return err
-	}
+	}*/
 
 	if err := w.out.Close(); err != nil {
 		return errors.WithStack(err)
@@ -138,7 +140,7 @@ func (w *writer) writeHeader() (uint64, error) {
 var HEADER_LENGTH = uint64(3)
 var MAGIC = "ORC"
 
-func (w *writer) writeFileTail() error {
+/*func (w *writer) writeFileTail() error {
 	var err error
 	// Encode footer
 	// todo: rowsinstride
@@ -197,3 +199,4 @@ func (w *writer) writeFileTail() error {
 
 	return nil
 }
+*/

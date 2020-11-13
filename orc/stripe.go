@@ -11,6 +11,7 @@ import (
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"io"
 )
 
 type stripeWriter struct {
@@ -25,10 +26,12 @@ type stripeWriter struct {
 
 	opts *config.WriterOptions
 
-	out orcio.File
+	out io.Writer
 }
 
 func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
+	// todo: verify hasnull
+
 	col := stripe.columnWriters[batch.Id]
 
 	count := uint64(0)
@@ -36,6 +39,7 @@ func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
 		if err := col.Write(v); err != nil {
 			return err
 		}
+
 		for _, child := range batch.Children {
 			childCol := stripe.columnWriters[child.Id]
 			if err := childCol.Write(child.Vector[i]); err != nil {
@@ -46,11 +50,13 @@ func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
 		if stripe.size() >= stripe.opts.StripeSize {
 			*stripe.info.NumberOfRows += count
 			count = 0
+
 			// todo: run in another go routine
 			if err := stripe.roll(); err != nil {
 				return err
 			}
 		}
+
 		count++
 	}
 	*stripe.info.NumberOfRows += count
@@ -131,7 +137,7 @@ func (stripe *stripeWriter) writeFooter() error {
 	compressedFooterBuf := bytes.NewBuffer(make([]byte, stripe.opts.ChunkSize))
 	compressedFooterBuf.Reset()
 
-	if err = common.CompressingChunks(stripe.opts.CompressionKind, stripe.opts.ChunkSize, compressedFooterBuf, bytes.NewBuffer(footerBuf)); err != nil {
+	if err = common.CompressingAllInChunks(stripe.opts.CompressionKind, stripe.opts.ChunkSize, compressedFooterBuf, bytes.NewBuffer(footerBuf)); err != nil {
 		return err
 	}
 
@@ -155,7 +161,7 @@ func (stripe *stripeWriter) forward() {
 	}
 }
 
-func newStripeWriter(offset uint64, schemas []*api.TypeDescription, opts *config.WriterOptions) (stripe *stripeWriter, err error) {
+func newStripeWriter(out io.Writer, offset uint64, schemas []*api.TypeDescription, opts *config.WriterOptions) (stripe *stripeWriter, err error) {
 	// prepare streams
 	var writers []column.Writer
 	for _, schema := range schemas {
@@ -180,7 +186,7 @@ func newStripeWriter(offset uint64, schemas []*api.TypeDescription, opts *config
 	o := offset
 	info := &pb.StripeInformation{Offset: &o, IndexLength: new(uint64), DataLength: new(uint64), FooterLength: new(uint64),
 		NumberOfRows: new(uint64)}
-	stripe = &stripeWriter{columnWriters: writers, info: info, schemas: schemas, opts: opts}
+	stripe = &stripeWriter{out: out, columnWriters: writers, info: info, schemas: schemas, opts: opts}
 	return
 }
 
@@ -198,10 +204,40 @@ type stripeReader struct {
 	cursor       uint64
 }
 
-func newStripeReader(f orcio.File, schemas []*api.TypeDescription, opts *config.ReaderOptions, idx int, info *pb.StripeInformation, footer *pb.StripeFooter) (reader *stripeReader, err error) {
-	reader = &stripeReader{f: f, schemas: schemas, opts: opts, index: idx}
-	err = reader.init(info, footer)
-	return
+func newStripeReader(f orcio.File, schemas []*api.TypeDescription, opts *config.ReaderOptions, idx int, info *pb.StripeInformation) (*stripeReader, error) {
+	reader := &stripeReader{f: f, schemas: schemas, opts: opts, index: idx, numberOfRows: info.GetNumberOfRows()}
+	footer, err := reader.readFooter(info)
+	if err != nil {
+		return nil, err
+	}
+	if err := reader.init(info, footer); err != nil {
+		return nil, err
+	}
+	return reader, nil
+}
+
+func (stripe *stripeReader) readFooter(info *pb.StripeInformation) (*pb.StripeFooter, error) {
+	if _, err := stripe.f.Seek(int64(info.GetOffset()+info.GetIndexLength()+info.GetDataLength()), io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	footerBuf := make([]byte, info.GetFooterLength())
+	if _, err := io.ReadFull(stripe.f, footerBuf); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if stripe.opts.CompressionKind != pb.CompressionKind_NONE {
+		fb := &bytes.Buffer{}
+		if err := common.DecompressBuffer(stripe.opts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
+			return nil, err
+		}
+		footerBuf = fb.Bytes()
+	}
+	footer := &pb.StripeFooter{}
+	if err := proto.Unmarshal(footerBuf, footer); err != nil {
+		return nil, err
+	}
+	log.Debugf("extracted stripe footer %d: %s", stripe.index, footer.String())
+	return footer, nil
 }
 
 // stripe {index{},column{[present],data,[length]},footer}
@@ -254,15 +290,16 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 
 // a stripe is typically  ~200MB
 func (stripe *stripeReader) Next(batch *api.ColumnVector) error {
-	if stripe.cursor+1>=stripe.numberOfRows {
-		batch.Vector= batch.Vector[:0]
+	// ended
+	if stripe.cursor+1 >= stripe.numberOfRows {
+		batch.Vector = batch.Vector[:0]
 		for _, v := range batch.Children {
 			v.Vector = v.Vector[:0]
 		}
 		return nil
 	}
 
-	page:= len(batch.Vector)
+	page := len(batch.Vector)
 	if int(stripe.numberOfRows-stripe.cursor) < len(batch.Vector) {
 		page = int(stripe.numberOfRows - stripe.cursor)
 		batch.Vector = batch.Vector[:page]

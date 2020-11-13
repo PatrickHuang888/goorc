@@ -1,4 +1,4 @@
-package orc
+package common
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -11,7 +11,8 @@ func TestEncHeader(t *testing.T)  {
 	enc:= encChunkHeader(l, false)
 	assert.Equal(t, result, enc)
 
-	r, org:= decChunkHeader(enc)
+	r, org:= DecChunkHeader(enc)
 	assert.Equal(t, l, r)
 	assert.Equal(t, false, org)
 }
+

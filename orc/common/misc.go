@@ -9,7 +9,14 @@ import (
 	"io"
 )
 
-// compressing to chunks, but not all src remaining
+func CompressingAllInChunks(kind pb.CompressionKind, chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error {
+	if err:= CompressingChunks(kind, chunkSize, dst, src);err!=nil {
+		return err
+	}
+	return CompressingLeft(kind, chunkSize, dst, src)
+}
+
+// compressing src to chunks, except last data less than a chunk
 func CompressingChunks(kind pb.CompressionKind, chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error {
 	switch kind {
 	case pb.CompressionKind_NONE:
@@ -84,25 +91,26 @@ func zlibCompressingLeft(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) er
 
 	data := src.Bytes()
 
-	buf := bytes.NewBuffer(make([]byte, chunkSize))
-	buf.Reset()
-	if _, err := src.WriteTo(buf); err != nil {
+	tmpBuf := bytes.NewBuffer(make([]byte, chunkSize))
+	tmpBuf.Reset()
+	if _, err := src.WriteTo(tmpBuf); err != nil {
 		return errors.WithStack(err)
 	}
 
-	cBuf := bytes.NewBuffer(make([]byte, chunkSize))
-	compressor, err := flate.NewWriter(cBuf, -1)
+	tmpCBuf := bytes.NewBuffer(make([]byte, chunkSize))
+	tmpCBuf.Reset()
+	compressor, err := flate.NewWriter(tmpCBuf, -1)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	if _, err := buf.WriteTo(compressor); err != nil {
+	if _, err := tmpBuf.WriteTo(compressor); err != nil {
 		return errors.WithStack(err)
 	}
 	if err = compressor.Close(); err != nil {
 		return errors.WithStack(err)
 	}
 
-	if cBuf.Len() > len(data) { // original
+	if tmpCBuf.Len() > len(data) { // original
 		header := encChunkHeader(len(data), true)
 		if _, err = dst.Write(header); err != nil {
 			return errors.WithStack(err)
@@ -111,13 +119,12 @@ func zlibCompressingLeft(chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) er
 			return errors.WithStack(err)
 		}
 		log.Tracef("write last chunk, compressing original, dst len %d", dst.Len())
-
 	} else {
-		header := encChunkHeader(cBuf.Len(), false)
+		header := encChunkHeader(tmpCBuf.Len(), false)
 		if _, err = dst.Write(header); err != nil {
 			return errors.WithStack(err)
 		}
-		if _, err = cBuf.WriteTo(dst); err != nil {
+		if _, err = tmpCBuf.WriteTo(dst); err != nil {
 			return errors.WithStack(err)
 		}
 		log.Tracef("write last chunk, compressing zlib,  dst len %d", dst.Len())

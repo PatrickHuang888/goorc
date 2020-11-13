@@ -23,9 +23,9 @@ func (e *boolRunLength) MarkPosition() {
 	e.positions = append(e.positions, uint64(e.offset+1))
 }
 
-func (e *boolRunLength) GetAndClearPositions() []uint64 {
+func (e *boolRunLength) PopPositions() []uint64 {
 	r := e.positions
-	e.positions = e.positions[:0]
+	e.positions = nil
 	return r
 }
 
@@ -33,7 +33,6 @@ func (e *boolRunLength) GetAndClearPositions() []uint64 {
 func (e *boolRunLength) Reset() {
 	e.offset = -1
 	e.brl.Reset()
-	//e.values= e.values[:0]
 }
 
 func (e *boolRunLength) Encode(v interface{}) (err error) {

@@ -31,12 +31,13 @@ type Encoder interface {
 	BufferedSize() int
 
 	// Flush flush remaining data, make sure there is only one position mark in one flush
+	// data should be used immediately, it's from encoder's buffer, maybe changed next encode
 	Flush() (data []byte, err error)
 
 	MarkPosition()
 
 	// GetPositions get positions marked previously after stream flush, then clear
-	GetPositions() [][]uint64
+	PopPositions() []uint64
 
 	Reset()
 }
@@ -146,13 +147,6 @@ func (irl *intRunLengthV1) Encode(out *bytes.Buffer) error {
 	return nil
 }*/
 
-func DecodeBytes(in BufferedReader, byteLength int) (value []byte, err error) {
-	value = make([]byte, byteLength)
-	if _, err = io.ReadFull(in, value); err != nil {
-		return value, err
-	}
-	return
-}
 
 // string contents, decoding need length decoder
 type BytesContent struct {

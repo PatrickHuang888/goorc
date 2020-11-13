@@ -1,17 +1,19 @@
 package orc
 
 import (
-	"bytes"
+	"fmt"
 	"github.com/patrickhuang888/goorc/orc/api"
-	"github.com/patrickhuang888/goorc/orc/column"
 	"github.com/patrickhuang888/goorc/orc/config"
-	"testing"
-	"time"
-
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
+func init() {
+	log.SetLevel(log.TraceLevel)
+}
 
 /*func TestStripeStructBasic(t *testing.T) {
 
@@ -73,70 +75,107 @@ import (
 }*/
 
 func TestStripeBasic(t *testing.T) {
-	schema := &api.TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding: pb.ColumnEncoding_DIRECT_V2}
-	schemas := schema.normalize()
+	//schema := api.TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding: pb.ColumnEncoding_DIRECT_V2}
+	schema := api.TypeDescription{Kind: pb.Type_BYTE, Encoding: pb.ColumnEncoding_DIRECT}
+	schemas, err := schema.Normalize()
+	assert.Nil(t, err)
+
+	buf := make([]byte, 500)
+	f := orcio.NewMockFile(buf)
+
 	wopts := config.DefaultWriterOptions()
-	writer, err := newStripeWriter(0, schemas, &wopts)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	batch := schema.CreateWriterBatch(wopts)
+	batch := api.CreateWriterBatch(schema, wopts)
 
-	var vector []api.Timestamp
-	layout := "2006-01-01 00:00:00.999999999"
+	rows := 104
+
+	values := make([]api.Value, rows)
+	for i := 0; i < rows; i++ {
+		values[i].V = byte(i)
+	}
+	/*layout := "2006-01-01 00:00:00.999999999"
 	v1, _ := time.Parse(layout, "2037-01-01 00:00:00.000999")
-	vector = append(vector, api.GetTimestamp(v1))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v1)})
 	v2, _ := time.Parse(layout, "2003-01-01 00:00:00.000000222")
-	vector = append(vector, api.GetTimestamp(v2))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v2)})
 	v3, _ := time.Parse(layout, "1999-01-01 00:00:00.999999999")
-	vector = append(vector, api.GetTimestamp(v3))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v3)})
 	v4, _ := time.Parse(layout, "1995-01-01 00:00:00.688888888")
-	vector = append(vector, api.GetTimestamp(v4))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v4)})
 	v5, _ := time.Parse(layout, "2002-01-01 00:00:00.1")
-	vector = append(vector, api.GetTimestamp(v5))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v5)})
 	v6, _ := time.Parse(layout, "2010-03-02 00:00:00.000009001")
-	vector = append(vector, api.GetTimestamp(v6))
-	t7, _ := time.Parse(layout, "2005-01-01 00:00:00.000002229")
-	vector = append(vector, api.GetTimestamp(t7))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v6)})
+	v7, _ := time.Parse(layout, "2005-01-01 00:00:00.000002229")
+	vector = append(vector, api.Value{V:api.GetTimestamp(v7)})
 	v8, _ := time.Parse(layout, "2006-01-01 00:00:00.900203003")
-	vector = append(vector, api.GetTimestamp(v8))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v8)})
 	v9, _ := time.Parse(layout, "2003-01-01 00:00:00.800000007")
-	vector = append(vector, api.GetTimestamp(v9))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v9)})
 	v10, _ := time.Parse(layout, "1996-08-02 00:00:00.723100809")
-	vector = append(vector, api.GetTimestamp(v10))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v10)})
 	v11, _ := time.Parse(layout, "1998-11-02 00:00:00.857340643")
-	vector = append(vector, api.GetTimestamp(v11))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v11)})
 	v12, _ := time.Parse(layout, "2008-10-02 00:00:00")
-	vector = append(vector, api.GetTimestamp(v12))
+	vector = append(vector, api.Value{V:api.GetTimestamp(v12)})*/
 
-	batch.Vector = vector
+	batch.Vector = values
 
-	if err := writer.writeColumn(batch); err != nil {
+	writer, err := newStripeWriter(f, 0, schemas, &wopts)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.write(&batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.flushOut(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	dummyOut.Reset()
-	if err := writer.writeout(dummyOut); err != nil {
-		t.Fatalf("%+v", err)
-	}
-	footer, err := writer.writeFooter(dummyOut)
+	ropts := config.DefaultReaderOptions()
+	reader, err := newStripeReader(f, schemas, &ropts, 0, writer.info)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	ropts := DefaultReaderOptions()
-	sr, err := newStripeReader(dummyOut, schema.normalize(), ropts, 0, writer.info, footer)
+	readBatch := api.CreateReaderBatch(schema, ropts)
+
+	if err := reader.Next(&readBatch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	assert.Equal(t, values, readBatch.Vector)
+}
+
+func TestMultipleStripes(t *testing.T) {
+	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2, HasNulls: false}
+	schemas, err := schema.Normalize()
+	assert.Nil(t, err)
+
+	wopts := config.DefaultWriterOptions()
+	wopts.CompressionKind = pb.CompressionKind_ZLIB
+	wopts.StripeSize = 50_000
+	batch := api.CreateWriterBatch(schema, wopts)
+
+	rows := 600
+	values := make([]api.Value, rows)
+	for i := 0; i < rows; i++ {
+		values[i].V = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
+	}
+	batch.Vector = values
+
+	buf := make([]byte, 2_000_000)
+	f := orcio.NewMockFile(buf)
+
+	writer, err := newStripeWriter(f, 0, schemas, &wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-
-	rbatch := schema.CreateReaderBatch(ropts)
-
-	if err := sr.next(rbatch); err != nil {
+	if err := writer.write(&batch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.flushOut(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	values := rbatch.Vector.([]api.Timestamp)
-	assert.Equal(t, 12, len(values))
-	assert.Equal(t, vector, values)
+
 }

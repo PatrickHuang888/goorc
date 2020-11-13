@@ -109,7 +109,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		fallthrough
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return newIntV2Reader(schema, opts, in), nil
+			return &intV2Reader{reader:&reader{f:in, schema: schema, opts: opts}}, nil
 		}
 		return nil, errors.New("not impl")
 
@@ -124,7 +124,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 
 	case pb.Type_STRING:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//s.columnReaders[schema.Id] = &stringDirectV2Reader{treeReader: c}
+			return newStringDirectV2Reader(opts, schema, in), nil
 			break
 		}
 		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
@@ -143,7 +143,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("tinyint column encoding error")
 		}
-		return NewByteReader(schema, opts, in), nil
+		return &byteReader{reader:&reader{f:in, schema: schema, opts: opts}}, nil
 
 	case pb.Type_BINARY:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {

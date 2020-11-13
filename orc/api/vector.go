@@ -12,7 +12,7 @@ type ColumnVector struct {
 
 	Vector   []Value
 
-	Children []*ColumnVector
+	Children []ColumnVector
 }
 
 type Value struct {

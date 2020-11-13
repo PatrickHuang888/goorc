@@ -217,144 +217,144 @@ func TestFindBytesRepeats(t *testing.T) {
 	}
 }*/
 
-/*func TestIntRunLengthV2_Delta(t *testing.T) {
+func TestIntRunLengthV2_Delta(t *testing.T) {
 	var err error
-	irl := &IntRL2{}
-	irl.Signed = false
+	irl := NewIntRLV2(false)
 
 	uvs := []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
 	bs := []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}
-	var uvalues []uint64
 	buf := bytes.NewBuffer(bs)
 
-	uvalues, err = irl.Decode(buf, uvalues)
+	vector, err := irl.Decode(buf)
 	if err != nil {
 		t.Fatal(err)
 	}
+	uvalues:= vector.([]uint64)
 	assert.Equal(t, 10, len(uvalues))
 	assert.EqualValues(t, uvs, uvalues)
 
 	buf.Reset()
-	err = irl.Encode(buf, uvs)
-	assert.Nil(t, err)
-	assert.Equal(t, bs, buf.Bytes())
+	for _, v :=range uvs {
+		if err = irl.Encode(v);err!=nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+	data, err:=irl.Flush()
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, bs, data)
 
 	vs := []int64{-2, -3, -5, -7, -11, -13, -17, -19, -23, -29}
-	irl.Signed = true
-	uvs = uvs[:0]
+	irl.signed = true
+	irl.Reset()
 	for _, v := range vs {
-		uvs = append(uvs, Zigzag(v))
+		err = irl.Encode(v)
+		assert.Nil(t, err)
 	}
-
-	buf.Reset()
-	err = irl.Encode(buf, uvs)
-	assert.Nil(t, err)
-
-	var values []int64
-	uvs = uvs[:0]
-	uvs, err = irl.Decode(buf, uvs)
-	for _, v := range uvs {
-		values = append(values, UnZigzag(v))
+	data, err=irl.Flush()
+	if err!=nil {
+		t.Fatalf("%+v", err)
 	}
+	irl.Reset()
+	vector, err = irl.Decode(bytes.NewBuffer(data))
 	assert.Nil(t, err)
-	assert.Equal(t, vs, values)
+	assert.Equal(t, vs, vector.([]int64))
 
 	// fixed delta 0
 	vs = []int64{-2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2}
-	irl.Signed = true
-
-	uvs = uvs[:0]
+	irl.signed = true
+	irl.Reset()
 	for _, v := range vs {
-		uvs = append(uvs, Zigzag(v))
+		err = irl.Encode(v)
+		assert.Nil(t, err)
 	}
-	buf.Reset()
-	err = irl.Encode(buf, uvs)
+	data, err =irl.Flush()
 	assert.Nil(t, err)
-
-	uvs = uvs[:0]
-	uvs, err = irl.Decode(buf, uvs)
+	irl.Reset()
+	vector, err = irl.Decode(bytes.NewBuffer(data))
 	assert.Nil(t, err)
-	values = values[:0]
-	for _, v := range uvs {
-		values = append(values, UnZigzag(v))
-	}
-	assert.Equal(t, vs, values)
+	assert.Equal(t, vs, vector.([]int64))
 
 	// over 512 numbers with uint
 	uvs = uvs[:0]
 	for i := 0; i < 1000; i++ {
 		uvs = append(uvs, uint64(i))
 	}
-	irl.Signed = false
-
-	buf.Reset()
-	err = irl.Encode(buf, uvs)
-	assert.Nil(t, err)
-
-	uvs = uvs[:0]
-	for buf.Len() != 0 {
-		uvs, err = irl.Decode(buf, uvs)
+	irl.signed=false
+	irl.Reset()
+	for _, v := range uvs {
+		err = irl.Encode(v)
 		assert.Nil(t, err)
 	}
-	assert.Equal(t, 1000, len(uvs))
-	assert.Equal(t, uint64(0), uvs[0])
-	assert.Equal(t, uint64(999), uvs[999])
+	data, err= irl.Flush()
+	assert.Nil(t, err)
+	irl.Reset()
+	uvalues= uvalues[:0]
+	buf = bytes.NewBuffer(data)
+	for  {
+		vector, err = irl.Decode(buf)
+		assert.Nil(t, err)
+		if len(vector.([]uint64))==0 {
+			break
+		}else {
+			uvalues= append(uvalues, vector.([]uint64)...)
+		}
+	}
+	assert.Equal(t, uvs, uvalues)
 
 	// number over 512 with int
-	uvs = uvs[:0]
+	vs = vs[:0]
 	for i := 0; i < 1500; i++ {
-		uvs = append(uvs, Zigzag(int64(1000-i)))
+		vs = append(vs, int64(1000-i))
 	}
-	irl.Signed = true
-
-	buf.Reset()
-	err = irl.Encode(buf, uvs)
-	assert.Nil(t, err)
-
-	uvs = uvs[:0]
-	for buf.Len() != 0 {
-		uvs, err = irl.Decode(buf, uvs)
+	irl.signed = true
+	irl.Reset()
+	for _, v:= range vs {
+		err = irl.Encode(v)
 		assert.Nil(t, err)
 	}
-	vs = vs[:0]
-	for _, v := range uvs {
-		vs = append(vs, UnZigzag(v))
+	data, err= irl.Flush()
+	assert.Nil(t, err)
+
+	var values []int64
+	buf = bytes.NewBuffer(data)
+	irl.Reset()
+	for  {
+		vector, err = irl.Decode(buf)
+		assert.Nil(t, err)
+		if len(vector.([]int64))==0 {
+			break
+		}else {
+			values= append(values, vector.([]int64)...)
+		}
 	}
-	assert.Equal(t, 1500, len(vs))
-	assert.Equal(t, int64(1000), vs[0])
-	assert.Equal(t, int64(-499), vs[1499])
-}*/
+	assert.Equal(t, vs, values)
+}
 
 func TestIntRunLengthV2Direct(t *testing.T) {
-	buf := &bytes.Buffer{}
 	irl := NewIntRLV2(false)
 
 	//uint
 	uvs := []uint64{23713, 57005, 43806, 48879}
 	encoded := []byte{0x5e, 0x03, 0x5c, 0xa1, 0xde, 0xad, 0xab, 0x1e, 0xbe, 0xef}
-
-	var data []byte
-	var err error
-
 	for _, v := range uvs {
-		if err= irl.Encode(v);err!=nil {
+		if err:= irl.Encode(v);err!=nil {
 			t.Fatalf("%+v", err)
 		}
 	}
-	if data, err= irl.Flush();err!=nil {
+	data, err:= irl.Flush()
+	if err!=nil {
 		t.Fatalf("%+v", err)
 	}
-	buf.Write(data)
-
-	assert.Equal(t, encoded, buf.Bytes())
-
-	var uvalues []uint64
-	uvalues, err = irl.Decode(buf, uvalues)
-	assert.Equal(t, uvs, uvalues)
+	assert.Equal(t, encoded, data)
+	irl.Reset()
+	vector, err := irl.Decode(bytes.NewBuffer(data))
+	assert.Nil(t, err)
+	assert.Equal(t, uvs, vector.([]uint64))
 
 	uvs = []uint64{999, 900203003, 688888888, 857340643}
-	buf.Reset()
-
+	irl.Reset()
 	for _, v := range uvs {
 		if err = irl.Encode(v);err!=nil {
 			t.Fatalf("%+v", err)
@@ -362,89 +362,76 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	}
 	data, err= irl.Flush()
 	assert.Nil(t, err)
-	buf.Write(data)
-
-	uvalues = uvalues[:0]
-	uvalues, err = irl.Decode(buf, uvalues)
+	vector, err = irl.Decode(bytes.NewBuffer(data))
 	assert.Nil(t, err)
-	assert.Equal(t, uvs, uvalues)
+	assert.Equal(t, uvs, vector.([]uint64))
 
-	uvalues = []uint64{6, 7, 8} // width 4
-	buf.Reset()
-	if err := irl.writeDirect(buf, false, uvalues); err != nil {
-		t.Fatalf("%+v", err)
-	}
-	uvs = uvs[:0]
-	uvs, err = irl.Decode(buf, uvs)
-	assert.Nil(t, err)
-	assert.Equal(t, uvalues, uvs)
-
-	// int
-	irl.signed = true
-	values := []int64{1, 1, 2, 2, 2, 2, 2} // width 2
-	uvs = uvs[:0]
-	for _, v := range values {
-		uvs = append(uvs, Zigzag(v))
-	}
-	buf.Reset()
-	if err := irl.writeDirect(buf, true, uvs); err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	uvs = uvs[:0]
-	uvs, err = irl.Decode(buf, uvs)
-	assert.Nil(t, err)
-	var vs []int64
-	for _, v := range uvs {
-		vs = append(vs, UnZigzag(v))
-	}
-	assert.Equal(t, values, vs)
-
-	values = []int64{6, 7, 8} // width 8 because zigzag
-	uvs = uvs[:0]
-	for _, v := range values {
-		uvs = append(uvs, Zigzag(v))
-	}
-	buf.Reset()
+	uvs = []uint64{6, 7, 8} // width 4
+	irl.Reset()
+	buf:= &bytes.Buffer{}
 	if err := irl.writeDirect(buf, false, uvs); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	uvs = uvs[:0]
-	uvs, err = irl.Decode(buf, uvs)
+	irl.Reset()
+	vector, err = irl.Decode(buf)
 	assert.Nil(t, err)
-	vs = vs[:0]
-	for _, v := range uvs {
-		vs = append(vs, UnZigzag(v))
+	assert.Equal(t, uvs, vector.([]uint64))
+
+	// int
+	irl.signed = true
+	values := []int64{1, 1, 2, 2, 2, 2, 2} // width 2 -> aligned to 4
+	uvs = uvs[:0]
+	for _, v := range values {
+		uvs = append(uvs, Zigzag(v))
 	}
-	assert.Equal(t, values, vs)
+	buf.Reset()
+	irl.Reset()
+	if err := irl.writeDirect(buf, true, uvs); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	irl.Reset()
+	vector, err = irl.Decode(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, values, vector.([]int64))
+
+	values = []int64{6, 7, 8} // width 5 after zigzag ?
+	uvs = uvs[:0]
+	for _, v := range values {
+		uvs = append(uvs, Zigzag(v))
+	}
+	buf.Reset()
+	irl.Reset()
+	if err := irl.writeDirect(buf, false, uvs); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	vector, err = irl.Decode(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, values, vector.([]int64))
 
 	// test width 16
-	uvalue:=0x5ff
+	uvalue:=uint64(0x5ff)
 	irl.signed= false
 	buf.Reset()
-	err=irl.Encode(uint64(uvalue))
+	err=irl.Encode(uvalue)
 	assert.Nil(t, err)
 	data, err=irl.Flush()
 	assert.Nil(t, err)
-	buf.Write(data)
-
-	uvs= uvs[:0]
-	uvs, err=irl.Decode(buf, uvs)
+	vector, err=irl.Decode(bytes.NewBuffer(data))
 	assert.Nil(t, err)
-	assert.Equal(t, []uint64{uint64(uvalue)}, uvs)
+	assert.Equal(t, []uint64{uvalue}, vector.([]uint64))
 
 	// test width 11
-	uvalues= []uint64{0b100_0000_0001, 0b100_0000_0011}
+	uvs= []uint64{0b100_0000_0001, 0b100_0000_0011}
 	irl.signed=false
 	buf.Reset()
-	if err := irl.writeDirect(buf, false, uvalues); err != nil {
+	irl.Reset()
+	if err := irl.writeDirect(buf, false, uvs); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	uvs= uvs[:0]
-	if uvs, err = irl.Decode(buf, uvs); err != nil {
+	if vector, err = irl.Decode(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, uvalues, uvs)
+	assert.Equal(t, uvs, vector.([]uint64))
 }
 
 /*func TestIntRunLengthV2Patch(t *testing.T) {

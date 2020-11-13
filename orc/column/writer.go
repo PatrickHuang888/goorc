@@ -3,17 +3,18 @@ package column
 import (
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
+	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	"io"
 )
 
 type Writer interface {
-	Writes(values []api.Value) error
 	Write(value api.Value) error
 
 	// Flush flush stream(index, data) when write out stripe(reach stripe size), reach index stride or close file
 	// update ColumnStats.BytesOnDisk and index before stripe written out
+	// flush once before write out to store
 	Flush() error
 
 	// WriteOut to writer, should flush first, because index will be got after flush and
@@ -59,7 +60,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		fallthrough
 	case pb.Type_STRING:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//writer = newStringDirectV2Writer(schema, opts)
+			w = newStringDirectV2Writer(schema, opts)
 			break
 		}
 
@@ -146,32 +147,38 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 	return
 }
 
-
 type writer struct {
 	schema *api.TypeDescription
-	opts *config.WriterOptions
+	opts   *config.WriterOptions
 
-	stats  *pb.ColumnStatistics
+	stats *pb.ColumnStatistics
+
+	present *stream.Writer
 
 	children []Writer
 
 	indexInRows int
 	indexStats  *pb.ColumnStatistics
-	index *pb.RowIndex
+	index       *pb.RowIndex
 
 	flushed bool
 }
 
 func (w *writer) reset() {
-	w.flushed= false
+	w.flushed = false
 
-	w.indexInRows = 0
-	w.index.Reset()
-	w.indexStats.Reset()
-	w.indexStats.HasNull = new(bool)
-	w.indexStats.NumberOfValues = new(uint64)
-	w.indexStats.BytesOnDisk = new(uint64)
+	if w.schema.HasNulls {
+		w.present.Reset()
+	}
 
+	if w.opts.WriteIndex {
+		w.indexInRows = 0
+		w.index.Reset()
+		w.indexStats.Reset()
+		w.indexStats.HasNull = new(bool)
+		w.indexStats.NumberOfValues = new(uint64)
+		w.indexStats.BytesOnDisk = new(uint64)
+	}
 
 	// stats will not reset, it's for whole writer
 }

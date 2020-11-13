@@ -30,12 +30,23 @@ type IntRL2 struct {
 	buf    *bytes.Buffer
 }
 
-// decoding buffer all to u/literals
-func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
+// decode 1 'block' values, not all data in input bufferedReader
+// if d.singed return []int64, else return []uint64
+// if EOF empty slices
+func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
+	var values []uint64
+
 	// header from MSB to LSB
 	firstByte, err := in.ReadByte()
 	if err != nil {
-		return values, err
+		if err==io.EOF {
+			if d.signed {
+				return []int64{}, nil
+			}else {
+				return []uint64{}, nil
+			}
+		}
+		return nil, err
 	}
 
 	sub := firstByte >> 6
@@ -51,7 +62,7 @@ func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 			i--
 			b, err := in.ReadByte()
 			if err != nil {
-				return values, errors.WithStack(err)
+				return nil, errors.WithStack(err)
 			}
 			v |= uint64(b) << (8 * i)
 		}
@@ -63,13 +74,13 @@ func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 	case Encoding_DIRECT: // numbers encoding in big-endian
 		b1, err := in.ReadByte()
 		if err != nil {
-			return values, errors.WithStack(err)
+			return nil, errors.WithStack(err)
 		}
 		header := uint16(firstByte)<<8 | uint16(b1) // 2 byte header
 		w := (header >> 9) & 0x1F                   // width 5bits, bit 3 to 8
 		width, err := widthDecoding(byte(w), false)
 		if err != nil {
-			return values, errors.WithStack(err)
+			return nil, err
 		}
 		length := int(header&0x1FF + 1)
 		log.Tracef("decoding: int rl v2 Direct width %d length %d", width, length)
@@ -78,7 +89,7 @@ func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 		for i := 0; i < length; i++ {
 			v, err := d.readBits(in, int(width))
 			if err != nil {
-				return values, err
+				return nil, err
 			}
 			values = append(values, v)
 		}
@@ -86,11 +97,11 @@ func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 	case Encoding_PATCHED_BASE:
 		// rethink: according to base value is a signed smallest value, patch should always signed?
 		if !d.signed {
-			return values, errors.New("decoding: int rl v2 patch signed setting should not false")
+			return nil, errors.New("decoding: int rl v2 patch signed setting should not false")
 		}
 
-		if values, err = d.readPatched(in, firstByte, values); err != nil {
-			return values, err
+		if values, err = d.readPatched(in, firstByte); err != nil {
+			return nil, err
 		}
 
 	case Encoding_DELTA:
@@ -99,11 +110,11 @@ func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 		header[0] = firstByte
 		header[1], err = in.ReadByte()
 		if err != nil {
-			return values, errors.WithStack(err)
+			return nil, errors.WithStack(err)
 		}
 		width, err := widthDecoding(header[0]>>1&0x1f, true)
 		if err != nil {
-			return values, errors.WithStack(err)
+			return nil, err
 		}
 		length := int(header[0])&0x01<<8 | int(header[1]) + 1
 
@@ -114,20 +125,20 @@ func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 		if d.signed {
 			base, err = binary.ReadVarint(in)
 			if err != nil {
-				return values, errors.WithStack(err)
+				return nil, errors.WithStack(err)
 			}
 			ubase = Zigzag(base)
 		} else {
 			ubase, err = binary.ReadUvarint(in)
 			if err != nil {
-				return values, errors.WithStack(err)
+				return nil, errors.WithStack(err)
 			}
 		}
 		values = append(values, ubase)
 
 		deltaBase, err := binary.ReadVarint(in)
 		if err != nil {
-			return values, errors.WithStack(err)
+			return nil, errors.WithStack(err)
 		}
 
 		if d.signed {
@@ -156,7 +167,7 @@ func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 			} else {
 				delta, err := d.readBits(in, int(width))
 				if err != nil {
-					return values, err
+					return nil, err
 				}
 				if d.signed {
 					prev := UnZigzag(values[len(values)-1])
@@ -177,17 +188,27 @@ func (d *IntRL2) Decode(in BufferedReader, values []uint64) ([]uint64, error) {
 		}
 
 	default:
-		return values, errors.Errorf("decoding: int rl v2 encoding sub %d not recognized", sub)
+		return nil, errors.Errorf("decoding: int rl v2 encoding sub %d not recognized", sub)
 	}
 
-	return values, nil
+	if d.signed {
+		var vs []int64
+		for _, v := range values {
+			vs = append(vs, UnZigzag(v))
+		}
+		return vs, nil
+	} else {
+		return values, nil
+	}
 }
 
-func (d *IntRL2) readPatched(in BufferedReader, firstByte byte, values []uint64) ([]uint64, error) {
+func (d *IntRL2) readPatched(in BufferedReader, firstByte byte) ([]uint64, error) {
+	var values []uint64
+
 	mark := len(values)
 	header := make([]byte, 4) // 4 byte header
 	if _, err := io.ReadFull(in, header[1:4]); err != nil {
-		return values, errors.WithStack(err)
+		return nil, errors.WithStack(err)
 	}
 	header[0] = firstByte
 
@@ -195,28 +216,28 @@ func (d *IntRL2) readPatched(in BufferedReader, firstByte byte, values []uint64)
 	w := header[0] >> 1 & 0x1f
 	width, err := widthDecoding(w, false) // 5 bits W
 	if err != nil {
-		return values, err
+		return nil, err
 	}
 	length := uint16(header[0])&0x01<<8 | uint16(header[1]) + 1 // 9 bits length, value 1 to 512
 	bw := uint16(header[2])>>5&0x07 + 1                         // 3 bits base value width(BW), value 1 to 8 bytes
 	pw, err := widthDecoding(header[2]&0x1f, false)             // 5 bits patch width(PW), value on table
 	if err != nil {
-		return values, err
+		return nil, err
 	}
 	pgw := uint16(header[3])>>5&0x07 + 1 // 3 bits patch gap width(PGW), value 1 to 8 bits
 	if (int(pw) + int(pgw)) >= 64 {
-		return values, errors.New("decoding: int rl v2, patchWidth+gapWidth must less or equal to 64")
+		return nil, errors.New("decoding: int rl v2, patchWidth+gapWidth must less or equal to 64")
 	}
 	pll := header[3] & 0x1f // 5bits patch list length, value 0 to 31
 
 	baseBytes := make([]byte, bw)
 	if _, err = io.ReadFull(in, baseBytes); err != nil {
-		return values, errors.WithStack(err)
+		return nil, errors.WithStack(err)
 	}
 	// base value big endian with msb of negative mark
 	var base int64
 	if bw == 0 {
-		return values, errors.New("decoding: int rl v2 Patch baseWidth 0 not impl")
+		return nil, errors.New("decoding: int rl v2 Patch baseWidth 0 not impl")
 	}
 	neg := (baseBytes[0] >> 7) == 0x01
 	baseBytes[0] = baseBytes[0] & 0x7f // remove msb
@@ -238,7 +259,7 @@ func (d *IntRL2) readPatched(in BufferedReader, firstByte byte, values []uint64)
 	for i := 0; i < int(length); i++ {
 		delta, err := d.readBits(in, int(width))
 		if err != nil {
-			return values, err
+			return nil, err
 		}
 		// rethink: cast int64
 		values = append(values, Zigzag(base+int64(delta)))
@@ -249,7 +270,7 @@ func (d *IntRL2) readPatched(in BufferedReader, firstByte byte, values []uint64)
 	for i := 0; i < int(pll); i++ {
 		pp, err := d.readBits(in, int(pgw)+int(pw))
 		if err != nil {
-			return values, err
+			return nil, err
 		}
 
 		patchGap := int(pp >> pw)
@@ -334,29 +355,42 @@ func (e *IntRL2) writeLeftBits(out *bytes.Buffer) error {
 
 const MAX_INT_RL = 512
 
-func (e *IntRL2) Encode(v interface{}) (err error) {
-	value := v.(uint64)
+func (e *IntRL2) Encode(v interface{}) error {
+	var value uint64
+	if e.signed {
+		vt, ok := v.(int64)
+		if !ok {
+			return errors.New("int signed encoder encode int64 value")
+		}
+		value = Zigzag(vt)
+	} else {
+		vt, ok := v.(uint64)
+		if !ok {
+			return errors.New("int un-singed encoder encode uint64 value")
+		}
+		value = vt
+	}
 
 	e.offset++
 	e.values[e.offset] = value
 
 	if e.offset >= MAX_INT_RL-1 {
-		if err = e.write(e.buf, e.values[:e.offset+1]); err != nil {
-			return
+		if err := e.write(e.buf, e.values[:e.offset+1]); err != nil {
+			return err
 		}
-		e.offset= -1
+		e.offset = -1
 	}
 
-	return
+	return nil
 }
 
 func (d *IntRL2) BufferedSize() int {
 	return d.buf.Len()
 }
 
-func (e *IntRL2) GetAndClearPositions() []uint64 {
+func (e *IntRL2) PopPositions() []uint64 {
 	r := e.positions
-	e.positions = e.positions[:0]
+	e.positions = nil
 	e.markedPosition = -1
 	e.offset = -1
 	return r
@@ -366,9 +400,10 @@ func (e *IntRL2) Reset() {
 	e.bitsLeft = 0
 	e.lastByte = 0
 	e.buf.Reset()
-	e.values = e.values[:0]
 
-	e.positions = e.positions[:0]
+	if e.positions != nil {
+		e.positions = e.positions[:0]
+	}
 	e.markedPosition = -1
 	e.offset = -1
 }
@@ -385,8 +420,6 @@ func (e *IntRL2) Flush() (data []byte, err error) {
 	}
 
 	data = e.buf.Bytes()
-	e.buf.Reset()
-	e.offset = -1
 	return
 }
 

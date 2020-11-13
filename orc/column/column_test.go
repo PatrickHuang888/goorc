@@ -1,6 +1,7 @@
 package column
 
 import (
+	"fmt"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
@@ -19,7 +20,6 @@ func TestIntV2NoPresents(t *testing.T) {
 	var err error
 	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_LONG}
 	schema.Encoding = pb.ColumnEncoding_DIRECT_V2
-	schema.HasNulls = false
 
 	rows := 100
 	values := make([]api.Value, rows)
@@ -263,76 +263,57 @@ func TestDoubleColumnWithPresents(t *testing.T) {
 	}
 	assert.Equal(t, presents, batch.Presents)
 	assert.Equal(t, values, batch.Vector)
-}
-
-func TestColumnStringDirectV2WithPresents(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: true}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
-
-	rows := 100
-	values := make([]string, rows)
-	for i := 0; i < rows; i++ {
-		values[i] = fmt.Sprintf("string %d", i)
-	}
-	presents := make([]bool, rows)
-	for i := 0; i < rows; i++ {
-		presents[i] = true
-	}
-	presents[0] = false
-	values[0] = ""
-	presents[45] = false
-	values[45] = ""
-	presents[98] = false
-	values[98] = ""
-
-	batch.Presents = presents
-	batch.Vector = values
-
-	writer := newStringDirectV2Writer(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, rows, n)
-
-	ropts := orc.DefaultReaderOptions()
-	batch = schema.CreateReaderBatch(ropts)
-	presentBs := &bufSeeker{writer.present.buf}
-	pKind := pb.Stream_PRESENT
-	pLength_ := uint64(writer.present.buf.Len())
-	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
-
-	dataBs := &bufSeeker{writer.data.buf}
-	dKind := pb.Stream_DATA
-	dLength := uint64(writer.data.buf.Len())
-	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := orc.newStringContentsStreamReader(ropts, dInfo, 0, dataBs)
-
-	lengthBs := &bufSeeker{writer.length.buf}
-	lKind := pb.Stream_LENGTH
-	lLength := uint64(writer.length.buf.Len())
-	lInfo := &pb.Stream{Column: &schema.Id, Kind: &lKind, Length: &lLength}
-	length := orc.newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
-
-	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &orc.stringDirectV2Reader{treeReader: cr, data: data, length: length}
-	err = reader.next(batch)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, presents, batch.Presents[:100])
-	assert.Equal(t, values, batch.Vector)
 }*/
 
+func TestStringDirectV2(t *testing.T) {
+	rows := 100
+	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: false}
+
+	wopts := config.DefaultWriterOptions()
+	schema.Encoding = pb.ColumnEncoding_DIRECT_V2
+	writer := newStringDirectV2Writer(&schema, &wopts).(*stringDirectV2Writer)
+
+	var values []api.Value
+	var value api.Value
+	for i := 0; i < rows; i++ {
+		value.V = fmt.Sprintf("string %d", i)
+		if err := writer.Write(value); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		values = append(values, value)
+	}
+
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	bb := make([]byte, 10240)
+	f := orcio.NewMockFile(bb)
+
+	if _, err := writer.WriteOut(f); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	ropts := config.DefaultReaderOptions()
+	reader := newStringDirectV2Reader(&ropts, &schema, f)
+	err := reader.InitStream(writer.data.Info(), 0)
+	assert.Nil(t, err)
+	err = reader.InitStream(writer.length.Info(), writer.data.Info().GetLength())
+	assert.Nil(t, err)
+
+	vector := make([]api.Value, rows)
+	if err := reader.Next(vector); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	assert.Equal(t, values, vector)
+}
+
 func TestByteWithPresents(t *testing.T) {
+	rows := 100
 	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_BYTE, HasNulls: true}
 	schema.Encoding = pb.ColumnEncoding_DIRECT
 
-	wopts := config.DefaultWriterOptions()
-
-	rows := 100
 	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
 		values[i].V = byte(i)
@@ -340,10 +321,12 @@ func TestByteWithPresents(t *testing.T) {
 	values[0].Null = true
 	values[45].Null = true
 	values[98].Null = true
-
+	wopts := config.DefaultWriterOptions()
 	writer := newByteWriter(schema, &wopts).(*byteWriter)
-	if err := writer.Writes(values); err != nil {
-		t.Fatalf("%+v", err)
+	for _, v := range values {
+		if err := writer.Write(v); err != nil {
+			t.Fatalf("%+v", err)
+		}
 	}
 
 	if err := writer.Flush(); err != nil {
@@ -358,7 +341,7 @@ func TestByteWithPresents(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	reader := NewByteReader(schema, &ropts, f)
+	reader := newByteReader(schema, &ropts, f)
 
 	if err := reader.InitStream(writer.present.Info(), 0); err != nil {
 		t.Fatalf("%+v", err)

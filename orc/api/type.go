@@ -69,11 +69,10 @@ func traverse(node *TypeDescription, do action) error {
 }
 
 // set ids, flat the schema tree to slice
-func (td *TypeDescription) normalize() (schemas []*TypeDescription) {
+func (td *TypeDescription) Normalize() (schemas []*TypeDescription, err error) {
 	var id uint32
-	if err := walkSchema(&schemas, td, id); err != nil {
-		fmt.Printf("%v+", err)
-		return nil
+	if err = walkSchema(&schemas, td, id); err != nil {
+		return
 	}
 	return
 }
@@ -110,27 +109,30 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 	return t
 }
 
-func (td *TypeDescription) CreateReaderBatch(opts *config.ReaderOptions) *ColumnVector {
-	batch := &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opts.RowSize)}
-
+func CreateReaderBatch(td TypeDescription, opts config.ReaderOptions) ColumnVector {
+	batch := ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opts.RowSize)}
 	for _, v := range td.Children {
-		batch.Children = append(batch.Children, v.CreateReaderBatch(opts))
+		batch.Children = append(batch.Children, CreateReaderBatch(*v, opts))
 	}
-
 	return batch
 }
 
 // should normalize first
-func (td TypeDescription) CreateWriterBatch(opts *config.WriterOptions) *ColumnVector {
+func CreateWriterBatch(td TypeDescription, opts config.WriterOptions) ColumnVector {
 	// set id
-	td.normalize()
+	td.Normalize()
 
 	if td.Kind == pb.Type_STRUCT {
-		var children []*ColumnVector
+		var children []ColumnVector
 		for _, v := range td.Children {
-			children = append(children, v.CreateWriterBatch(opts))
+			children = append(children, CreateWriterBatch(*v, opts))
 		}
-		return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize), Children: children}
+		// fix this
+		//return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize), Children: children}
+		return ColumnVector{Id: td.Id, Kind: td.Kind, Children: children}
 	}
-	return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
+
+	// fix this
+	//return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
+	return ColumnVector{Id: td.Id, Kind: td.Kind}
 }

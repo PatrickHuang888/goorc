@@ -14,16 +14,19 @@ import (
 func newIntV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
 		IntStatistics: &pb.IntegerStatistics{Minimum: new(int64), Maximum: new(int64), Sum: new(int64)}}
-	present := stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	var present *stream.Writer
+	if schema.HasNulls {
+		*stats.HasNull = true
+		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	}
+	base := &writer{schema: schema, stats: stats, present: present}
 	data := stream.NewIntRLV2Writer(schema.Id, pb.Stream_DATA, opts, true)
-	base := &writer{schema: schema, stats: stats}
-	return &intWriter{base, present, data}
+	return &intWriter{base, data}
 }
 
 type intWriter struct {
 	*writer
-	present *stream.Writer
-	data    *stream.Writer
+	data *stream.Writer
 }
 
 func (w *intWriter) Writes(values []api.Value) error {
@@ -77,16 +80,16 @@ func (w intWriter) Size() int {
 func (w intWriter) Flush() error {
 	w.flushed = true
 
-	if err := w.present.Flush(); err != nil {
-		return err
+	if w.schema.HasNulls {
+		if err := w.present.Flush(); err != nil {
+			return err
+		}
+		*w.stats.BytesOnDisk = w.present.Info().GetLength()
 	}
 	if err := w.data.Flush(); err != nil {
 		return err
 	}
-
-	*w.stats.BytesOnDisk += w.present.Info().GetLength()
 	*w.stats.BytesOnDisk += w.data.Info().GetLength()
-
 	return nil
 }
 
@@ -97,8 +100,10 @@ func (w *intWriter) WriteOut(out io.Writer) (n int64, err error) {
 	}
 
 	var pn, dn int64
-	if pn, err = w.present.WriteOut(out); err != nil {
-		return
+	if w.schema.HasNulls {
+		if pn, err = w.present.WriteOut(out); err != nil {
+			return
+		}
 	}
 	if dn, err = w.data.WriteOut(out); err != nil {
 		return
@@ -168,7 +173,7 @@ func (c *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
 			return err
 		}
-		c.data = stream.NewRLV2Reader(c.opts, info, startOffset, true, ic)
+		c.data = stream.NewIntRLV2Reader(c.opts, info, startOffset, true, ic)
 		return nil
 	}
 	return errors.New("stream unknown")

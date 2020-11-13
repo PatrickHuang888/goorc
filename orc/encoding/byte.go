@@ -26,7 +26,6 @@ func (e byteRunLength) BufferedSize() int {
 
 func NewByteEncoder() *byteRunLength {
 	e := &byteRunLength{values: make([]byte, MAX_BYTE_RL), buf: &bytes.Buffer{}, offset: -1}
-	e.Reset()
 	return e
 }
 
@@ -38,13 +37,13 @@ func (e *byteRunLength) MarkPosition() {
 	e.markedPosition = e.offset
 }
 
-func (e *byteRunLength) GetPositions() []uint64 {
+func (e *byteRunLength) PopPositions() []uint64 {
 	ps := e.positions
 	e.positions = nil
 	return ps
 }
 
-func (e *byteRunLength) Encode(v interface{}) (err error) {
+func (e *byteRunLength) Encode(v interface{}) error {
 	value := v.(byte)
 
 	e.offset++
@@ -54,7 +53,6 @@ func (e *byteRunLength) Encode(v interface{}) (err error) {
 		e.encodeBytes(e.buf, e.values[:e.offset+1])
 		e.offset = -1
 	}
-
 	return nil
 }
 
@@ -98,7 +96,7 @@ func (e *byteRunLength) encodeBytes(out *bytes.Buffer, vs []byte){
 		}
 
 		if repeats[0].start != 0 {
-			out.WriteByte(byte(-(repeats[0].start))
+			out.WriteByte(byte(-(repeats[0].start)))
 			out.Write(values[:repeats[0].start])
 		}
 

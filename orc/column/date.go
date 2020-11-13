@@ -42,7 +42,7 @@ func (c *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 		if err != nil {
 			return err
 		}
-		c.data = stream.NewRLV2Reader(c.opts, info, startOffset, true, ic)
+		c.data = stream.NewIntRLV2Reader(c.opts, info, startOffset, true, ic)
 		return err
 	}
 
@@ -155,7 +155,7 @@ type timestampWriter struct {
 }
 
 func (t *timestampWriter) Writes(values []api.Value) error {
-
+	return nil
 }
 
 func (t *timestampWriter) Write(value api.Value) error {
@@ -175,7 +175,7 @@ func (t *timestampWriter) Write(value api.Value) error {
 		if err := t.data.Write(time.Seconds); err != nil {
 			return err
 		}
-		if err := t.secondary.Write(time.Nanos); err != nil {
+		if err := t.secondary.Write(uint64(time.Nanos)); err != nil {
 			return err
 		}
 
@@ -187,10 +187,10 @@ func (t *timestampWriter) Write(value api.Value) error {
 			if t.indexInRows >= t.opts.IndexStride {
 
 				entry := &pb.RowIndexEntry{Statistics: t.indexStats}
-				t.indexEntries = append(t.indexEntries, entry)
+				t.index.Entry = append(t.index.Entry, entry)
 				t.indexStats = &pb.ColumnStatistics{
 					TimestampStatistics: &pb.TimestampStatistics{Maximum: new(int64), Minimum: new(int64), MaximumUtc: new(int64), MinimumUtc: new(int64)},
-					NumberOfValues:      new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+					NumberOfValues:      new(uint64), HasNull: new(bool)}
 				if t.schema.HasNulls {
 					*t.indexStats.HasNull = true
 				}
@@ -231,7 +231,9 @@ func (t *timestampWriter) Flush() error {
 		return err
 	}
 
-	*t.stats.BytesOnDisk += t.present.Info().GetLength()
+	if t.schema.HasNulls {
+		*t.stats.BytesOnDisk = t.present.Info().GetLength()
+	}
 	*t.stats.BytesOnDisk += t.data.Info().GetLength()
 	*t.stats.BytesOnDisk += t.secondary.Info().GetLength()
 
@@ -240,21 +242,20 @@ func (t *timestampWriter) Flush() error {
 			t.index = &pb.RowIndex{}
 		}
 
-		pp := t.present.GetAndClearPositions()
-		dp := t.data.GetAndClearPositions()
-		sp := t.secondary.GetAndClearPositions()
+		pp := t.present.GetPositions()
+		dp := t.data.GetPositions()
+		sp := t.secondary.GetPositions()
 
-		if len(t.indexEntries) != len(pp) || len(t.indexEntries) != len(dp) || len(t.indexEntries) != len(sp) {
+		if len(t.index.Entry) != len(pp) || len(t.index.Entry) != len(dp) || len(t.index.Entry) != len(sp) {
 			log.Errorf("index entry and position error")
 			return nil
 		}
 
-		for i, e := range t.indexEntries {
+		for i, e := range t.index.Entry {
 			e.Positions = append(e.Positions, pp[i]...)
 			e.Positions = append(e.Positions, dp[i]...)
 			e.Positions = append(e.Positions, sp[i]...)
 		}
-		t.index.Entry = t.indexEntries
 	}
 
 	return nil
@@ -284,7 +285,7 @@ func (t timestampWriter) GetStreamInfos() []*pb.Stream {
 
 func (t *timestampWriter) Reset() {
 	t.writer.reset()
-	t.present.Reset()
+
 	t.data.Reset()
 	t.secondary.Reset()
 }
@@ -294,5 +295,14 @@ func (t timestampWriter) Size() int {
 }
 
 func newTimestampV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
-
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
+		TimestampStatistics: &pb.TimestampStatistics{Minimum: new(int64), MinimumUtc: new(int64), Maximum: new(int64), MaximumUtc: new(int64)}}
+	var present *stream.Writer
+	if schema.HasNulls {
+		*stats.HasNull= true
+		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	}
+	data := stream.NewIntRLV2Writer(schema.Id, pb.Stream_DATA, opts, true)
+	secondary := stream.NewIntRLV2Writer(schema.Id, pb.Stream_SECONDARY, opts, false)
+	return &timestampWriter{&writer{schema: schema, opts: opts, stats: stats}, present, data, secondary}
 }

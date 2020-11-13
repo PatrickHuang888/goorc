@@ -12,17 +12,7 @@ import (
 
 type byteWriter struct {
 	*writer
-	present *stream.Writer
-	data    *stream.Writer
-}
-
-func (c *byteWriter) Writes(values []api.Value) error {
-	for _, v := range values {
-		if err := c.Write(v); err != nil {
-			return err
-		}
-	}
-	return nil
+	data *stream.Writer
 }
 
 func (c *byteWriter) Write(value api.Value) error {
@@ -49,7 +39,6 @@ func (c *byteWriter) Write(value api.Value) error {
 			c.indexInRows++
 
 			if c.indexInRows >= c.opts.IndexStride {
-
 				c.present.MarkPosition()
 				c.data.MarkPosition()
 
@@ -57,14 +46,15 @@ func (c *byteWriter) Write(value api.Value) error {
 					c.index = &pb.RowIndex{}
 				}
 				c.index.Entry = append(c.index.Entry, &pb.RowIndexEntry{Statistics: c.indexStats})
+				// new stats
 				c.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
-				// java impl does not write index bytesondisk statistic
+				if c.schema.HasNulls {
+					*c.indexStats.HasNull = true
+				}
+				// does not write index statistic bytes on disk, java impl either
 				c.indexInRows = 0
 			}
 
-			if c.indexStats.BinaryStatistics == nil {
-				c.indexStats.BinaryStatistics = &pb.BinaryStatistics{Sum: new(int64)}
-			}
 			*c.indexStats.BinaryStatistics.Sum++
 			*c.indexStats.NumberOfValues++
 		}
@@ -74,43 +64,59 @@ func (c *byteWriter) Write(value api.Value) error {
 }
 
 func (c *byteWriter) Size() int {
-	return c.present.Size() + c.data.Size()
+	if c.schema.HasNulls {
+		return c.present.Size() + c.data.Size()
+	}
+	return c.data.Size()
 }
 
 func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
-	base := &writer{schema: schema, opts: opts, stats: stats}
-	present := stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	var present *stream.Writer
+	if schema.HasNulls {
+		*stats.HasNull = true
+		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	}
+	base := &writer{schema: schema, opts: opts, stats: stats, present: present}
 	data := stream.NewByteWriter(schema.Id, pb.Stream_DATA, opts)
-	return &byteWriter{base, present, data}
+	return &byteWriter{base, data}
 }
 
 func (c *byteWriter) Flush() error {
-	if err := c.present.Flush(); err != nil {
-		return err
+	c.flushed = true
+
+	if c.schema.HasNulls {
+		if err := c.present.Flush(); err != nil {
+			return err
+		}
 	}
 	if err := c.data.Flush(); err != nil {
 		return err
 	}
 
-	*c.stats.BytesOnDisk = c.present.Info().GetLength()
+	if c.schema.HasNulls {
+		*c.stats.BytesOnDisk = c.present.Info().GetLength()
+	}
 	*c.stats.BytesOnDisk += c.data.Info().GetLength()
 
 	if c.opts.WriteIndex {
+		var pp [][]uint64
+		if c.schema.HasNulls {
+			pp = c.present.GetPositions()
+			if len(c.index.Entry) != len(pp) {
+				return errors.New("index entry and position error")
+			}
+		}
 
-		*c.indexStats.BytesOnDisk = c.stats.GetBytesOnDisk() - c.indexStats.GetBytesOnDisk()
-
-		pp := c.present.GetPositions()
 		dp := c.data.GetPositions()
+		if len(c.index.Entry) != len(dp) {
+			return errors.New("index entry and position error")
+		}
 
-		/*if len(c.index.Entry) != len(pp) || len(c.indexEntries) != len(dp) {
-			log.Errorf("index entry and position error")
-			return nil
-		}*/
-
-		e :=c.index.Entry[len(c.index.Entry)-1]
-			e.Positions = append(e.Positions, pp...)
-			e.Positions = append(e.Positions, dp...)
+		for i, e := range c.index.Entry {
+			e.Positions = append(e.Positions, pp[i]...)
+			e.Positions = append(e.Positions, dp[i]...)
+		}
 	}
 
 	return nil
@@ -125,14 +131,20 @@ func (c *byteWriter) GetStreamInfos() []*pb.Stream {
 
 func (c *byteWriter) Reset() {
 	c.reset()
-	c.present.Reset()
 	c.data.Reset()
 }
 
 func (c *byteWriter) WriteOut(out io.Writer) (n int64, err error) {
-	var np, nd int64
-	if np, err = c.present.WriteOut(out); err != nil {
+	if !c.flushed {
+		err = errors.New("not flushed!")
 		return
+	}
+
+	var np, nd int64
+	if c.schema.HasNulls {
+		if np, err = c.present.WriteOut(out); err != nil {
+			return
+		}
 	}
 	if nd, err = c.data.WriteOut(out); err != nil {
 		return
@@ -147,12 +159,15 @@ type byteReader struct {
 	data    *stream.ByteReader
 }
 
-func NewByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+func newByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
 	return &byteReader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 
 func (c *byteReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	if info.GetKind() == pb.Stream_PRESENT {
+		if !c.schema.HasNulls {
+			return errors.New("column schema has no nulls")
+		}
 		ic, err := c.f.Clone()
 		if err != nil {
 			return err
@@ -190,6 +205,7 @@ func (c *byteReader) Next(values []api.Value) error {
 		}
 	}
 
+	// will not beyond number of rows
 	for i := 0; i < len(values); i++ {
 		hasValue := true
 		if c.schema.HasNulls && values[i].Null {

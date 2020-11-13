@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/pkg/errors"
@@ -13,7 +14,6 @@ import (
 	"io"
 	"os"
 
-	"github.com/patrickhuang888/goorc/orc/column"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -59,7 +59,7 @@ func NewFileReader(path string, opts config.ReaderOptions) (r Reader, err error)
 	defer f.Close()
 	log.Infof("open file %s", path)
 
-	r, err = newReader(&opts, f)
+	//r, err = newReader(&opts, f)
 	if err != nil {
 		return
 	}
@@ -132,7 +132,7 @@ func (r *reader) initStripes(f orcio.File, infos []*pb.StripeInformation) error 
 		}
 		if r.opts.CompressionKind != pb.CompressionKind_NONE {
 			fb := &bytes.Buffer{}
-			if err = decompressBuffer(r.opts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
+			if err = common.DecompressBuffer(r.opts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
 				return err
 			}
 			footerBuf = fb.Bytes()
@@ -144,9 +144,9 @@ func (r *reader) initStripes(f orcio.File, infos []*pb.StripeInformation) error 
 		log.Debugf("extracted stripe footer %d: %s", i, footer.String())
 
 		var sr *stripeReader
-		if sr, err = newStripeReader(f, r.schemas, r.opts, i, stripeInfo, footer); err != nil {
+		/*if sr, err = newStripeReader(f, r.schemas, r.opts, i, stripeInfo, footer); err != nil {
 			return err
-		}
+		}*/
 
 		r.stripes = append(r.stripes, sr)
 	}
@@ -637,7 +637,7 @@ func extractFileTail(f orcio.File) (tail *pb.FileTail, err error) {
 	if ps.GetCompression() != pb.CompressionKind_NONE {
 		fb := bytes.NewBuffer(make([]byte, ps.GetCompressionBlockSize()))
 		fb.Reset()
-		if err := decompressBuffer(ps.GetCompression(), fb, bytes.NewBuffer(footerBuf)); err != nil {
+		if err := common.DecompressBuffer(ps.GetCompression(), fb, bytes.NewBuffer(footerBuf)); err != nil {
 			return nil, errors.WithStack(err)
 		}
 		footerBuf = fb.Bytes()

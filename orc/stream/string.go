@@ -2,7 +2,6 @@ package stream
 
 import (
 	"bytes"
-	"errors"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/orc/io"
@@ -14,19 +13,17 @@ type StringContentsReader struct {
 }
 
 func NewStringContentsReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *StringContentsReader {
-	return &StringContentsReader{stream: &reader{info: info, buf: &bytes.Buffer{}, in: in, start: start}}
+	return &StringContentsReader{stream: &reader{opts:opts, info: info, buf: &bytes.Buffer{}, in: in, start: start}}
 }
 
 func (r *StringContentsReader) NextBytes(len uint64) (v []byte, err error) {
-	v, err = encoding.DecodeBytes(r.stream, int(len))
-	return
+	return encoding.DecodeBytes(r.stream, int(len))
 }
 
-func (r *StringContentsReader) NextString(len uint64) (v string, err error) {
-	var bb []byte
-	bb, err = r.NextBytes(len)
+func (r *StringContentsReader) NextString(len uint64) (string, error) {
+	bb, err := r.NextBytes(len)
 	if err != nil {
-		return
+		return "", err
 	}
 	return string(bb), err
 }
@@ -51,16 +48,12 @@ func (r *StringContentsReader) getAllString(byteLengths []uint64) (vs []string, 
 	return
 }
 
-func (r *StringContentsReader) Seek(chunkOffset uint64, uncompressionOffset uint64, decodingPos uint64, lens []uint64) error {
-	if len(lens) != int(decodingPos) {
-		return errors.New("seek string length error")
-	}
-
+func (r *StringContentsReader) Seek(chunkOffset uint64, uncompressionOffset uint64, lens []uint64) error {
 	if err := r.stream.seek(chunkOffset, uncompressionOffset); err != nil {
 		return err
 	}
 
-	for i := 0; i < int(decodingPos); i++ {
+	for i := 0; i < len(lens); i++ {
 		if _, err := r.NextString(lens[i]); err != nil {
 			return err
 		}
