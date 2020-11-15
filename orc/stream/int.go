@@ -6,14 +6,17 @@ import (
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
 type IntRLV2Reader struct {
 	stream *reader
 
-	values []uint64
-	pos    int
+	signed  bool
+	values  []int64
+	uvalues []uint64
+	pos     int
 
 	decoder *encoding.IntRL2
 }
@@ -22,41 +25,60 @@ func NewIntRLV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64,
 	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}, decoder: encoding.NewIntRLV2(signed)}
 }
 
-func (r *IntRLV2Reader) NextInt64() (v int64, err error) {
-	var uv uint64
-	uv, err = r.NextUInt()
-	if err != nil {
-		return
+func (r *IntRLV2Reader) NextInt64() (int64, error) {
+	if !r.signed {
+		return 0, errors.New("should be un-singed int")
 	}
-	v = encoding.UnZigzag(uv)
-	return
-}
 
-func (r *IntRLV2Reader) NextUInt() (v uint64, err error) {
 	if r.pos >= len(r.values) {
 		r.pos = 0
-		r.values = r.values[:0]
-
-		if r.values, err = r.decoder.Decode(r.stream, r.values); err != nil {
-			return
+		vector, err := r.decoder.Decode(r.stream)
+		if err != nil {
+			return 0, err
 		}
-
+		r.values = vector.([]int64)
 		log.Tracef("stream long read column %d has read %d values", r.stream.info.GetColumn(), len(r.values))
 	}
 
-	v = r.values[r.pos]
+	v := r.values[r.pos]
 	r.pos++
-	return
+	return v, nil
+}
+
+func (r *IntRLV2Reader) NextUInt64() (uint64, error) {
+	if r.signed {
+		return 0, errors.New("should be signed int")
+	}
+
+	if r.pos >= len(r.values) {
+		r.pos = 0
+		vector, err := r.decoder.Decode(r.stream)
+		if err != nil {
+			return 0, err
+		}
+		r.uvalues = vector.([]uint64)
+		log.Tracef("stream long read column %d has read %d values", r.stream.info.GetColumn(), len(r.values))
+	}
+
+	v := r.uvalues[r.pos]
+	r.pos++
+	return v, nil
 }
 
 // for small data like dict index, ignore stream.signed
-func (r *IntRLV2Reader) GetAllUInts() (vs []uint64, err error) {
-	for !r.stream.finished() {
-		if vs, err = r.decoder.Decode(r.stream, vs); err != nil {
-			return
-		}
+func (r *IntRLV2Reader) GetAllUInts() ([]uint64, error) {
+	if r.signed {
+		return nil, errors.New("should be signed")
 	}
-	return
+
+	for !r.stream.finished() {
+		vector, err := r.decoder.Decode(r.stream)
+		if err != nil {
+			return nil, err
+		}
+		r.uvalues = append(r.uvalues, vector.([]uint64)...)
+	}
+	return r.uvalues, nil
 }
 
 func (r *IntRLV2Reader) Finished() bool {
@@ -68,8 +90,14 @@ func (r *IntRLV2Reader) Seek(chunkOffset, uncompressedOffset, pos uint64) error 
 		return err
 	}
 	for i := 0; i < int(pos); i++ {
-		if _, err := r.NextUInt(); err != nil {
-			return err
+		if r.signed {
+			if _, err := r.NextInt64();err!=nil {
+				return err
+			}
+		}else {
+			if _, err := r.NextUInt64(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
