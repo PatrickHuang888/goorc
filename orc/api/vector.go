@@ -7,31 +7,54 @@ import (
 )
 
 type ColumnVector struct {
-	Id       uint32
-	Kind     pb.Type_Kind
+	Id   uint32
+	Kind pb.Type_Kind
 
-	Vector   []Value
+	Vector []Value
 
 	Children []ColumnVector
 }
 
+func (batch ColumnVector) Len() int {
+	if batch.Kind != pb.Type_STRUCT {
+		return len(batch.Vector)
+	}
+	// todo: struct/list/...
+	return 0
+}
+
+func (batch ColumnVector) Cap() int  {
+	if batch.Kind != pb.Type_STRUCT {
+		return cap(batch.Vector)
+	}
+	// todo:
+	return 0
+}
+
+func (batch *ColumnVector) Reset()  {
+	batch.Vector = batch.Vector[:0]
+	for _, v := range batch.Children {
+		v.Vector = v.Vector[:0]
+	}
+}
+
 type Value struct {
 	Null bool
-	V interface{}
+	V    interface{}
 }
 
 type ByteValue struct {
 	Null bool
-	V byte
+	V    byte
 }
 
-func ValueToByteValue(bv *ByteValue, v *Value)  {
+func ValueToByteValue(bv *ByteValue, v *Value) {
 
 }
 
 type batchInternal struct {
 	*ColumnVector
-	presentsFromParent bool  // for struct writer
+	presentsFromParent bool // for struct writer
 }
 
 /*func (cv ColumnVector) check() error {
@@ -73,7 +96,7 @@ func (d Decimal64) String() string {
 	return fmt.Sprintf("precision %d, scale %d", d.Precision, d.Scale)
 }
 
-func (d Decimal64) Float64() float64  {
+func (d Decimal64) Float64() float64 {
 	return float64(d.Precision) * float64(10*d.Scale)
 }
 
@@ -121,19 +144,19 @@ type Timestamp struct {
 }
 
 func (ts Timestamp) Time(loc *time.Location) time.Time {
-	if loc==nil {
-		loc= time.UTC
+	if loc == nil {
+		loc = time.UTC
 	}
 	base := time.Date(2015, time.January, 1, 0, 0, 0, 0, loc).Unix()
 	return time.Unix(base+ts.Seconds, int64(ts.Nanos)).In(loc)
 }
 
-func (ts Timestamp) GetMilliSeconds() int64  {
+func (ts Timestamp) GetMilliSeconds() int64 {
 	// todo:
 	return 0
 }
 
-func (ts Timestamp) GetMilliSecondsUtc() int64  {
+func (ts Timestamp) GetMilliSecondsUtc() int64 {
 	// todo:
 	return 0
 }

@@ -41,7 +41,7 @@ func (c *doubleReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("stream kind error")
 }
 
-func (c *doubleReader) Next(values []api.Value) error {
+func (c *doubleReader) Next() (value api.Value, err error) {
 	/*vector := (*vec).([]float64)
 	vector = vector[:0]
 
@@ -67,7 +67,7 @@ func (c *doubleReader) Next(values []api.Value) error {
 
 	*vec = vector
 	rows = len(vector)*/
-	return nil
+	return
 }
 
 func (c *doubleReader) seek(indexEntry *pb.RowIndexEntry) error {
@@ -112,11 +112,11 @@ func (c *doubleReader) Seek(rowNumber uint64) error {
 		return err
 	}
 
-	vec := make([]api.Value, 0, strideOffset)
-	if err := c.Next(vec); err != nil {
-		return err
+	for i:=0;  i<int(strideOffset); i++ {
+		if _, err := c.Next(); err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 

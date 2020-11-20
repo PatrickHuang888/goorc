@@ -17,15 +17,14 @@ type byteRunLength struct {
 
 	offset int
 	values []byte
-	buf    *bytes.Buffer
 }
 
-func (e byteRunLength) BufferedSize() int {
+/*func (e byteRunLength) BufferedSize() int {
 	return e.buf.Len()
-}
+}*/
 
 func NewByteEncoder() *byteRunLength {
-	e := &byteRunLength{values: make([]byte, MAX_BYTE_RL), buf: &bytes.Buffer{}, offset: -1}
+	e := &byteRunLength{values: make([]byte, MAX_BYTE_RL), offset: -1}
 	return e
 }
 
@@ -43,31 +42,29 @@ func (e *byteRunLength) PopPositions() []uint64 {
 	return ps
 }
 
-func (e *byteRunLength) Encode(v interface{}) error {
+func (e *byteRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	value := v.(byte)
 
 	e.offset++
 	e.values[e.offset] = value
 
 	if e.offset >= MAX_BYTE_RL-1 {
-		e.encodeBytes(e.buf, e.values[:e.offset+1])
+		e.encodeBytes(out, e.values[:e.offset+1])
 		e.offset = -1
 	}
 	return nil
 }
 
-func (e *byteRunLength) Flush() (data []byte, err error) {
+func (e *byteRunLength) Flush(out *bytes.Buffer) error {
 	if e.offset != -1 {
-		e.encodeBytes(e.buf, e.values[:e.offset+1])
+		e.encodeBytes(out, e.values[:e.offset+1])
 	}
-	data = e.buf.Bytes()
 	e.Reset()
-	return
+	return nil
 }
 
 func (e *byteRunLength) Reset() {
 	e.offset = -1
-	e.buf.Reset()
 }
 
 func (e *byteRunLength) encodeBytes(out *bytes.Buffer, vs []byte){

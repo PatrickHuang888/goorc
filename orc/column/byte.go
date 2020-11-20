@@ -190,37 +190,30 @@ func (c *byteReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("stream kind error")
 }
 
-func (c *byteReader) Next(values []api.Value) error {
-	if err := c.checkInit(); err != nil {
-		return err
+func (c *byteReader) Next() (value api.Value, err error) {
+	if err = c.checkInit(); err != nil {
+		return
 	}
 
 	if c.schema.HasNulls {
-		for i := 0; i < len(values); i++ {
-			p, err := c.present.Next()
-			if err != nil {
-				return err
-			}
-			values[i].Null = !p
+		var p bool
+		if p, err = c.present.Next();err != nil {
+			return
 		}
+		value.Null= !p
 	}
 
-	// will not beyond number of rows
-	for i := 0; i < len(values); i++ {
-		hasValue := true
-		if c.schema.HasNulls && values[i].Null {
-			hasValue = false
-		}
-		if hasValue {
-			v, err := c.data.Next()
-			if err != nil {
-				return err
-			}
-			values[i].V = v
+	hasValue := true
+	if c.schema.HasNulls && value.Null {
+		hasValue = false
+	}
+	if hasValue {
+		value.V, err = c.data.Next()
+		if err != nil {
+			return
 		}
 	}
-
-	return nil
+	return
 }
 
 func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
@@ -269,11 +262,11 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 		return err
 	}
 
-	vec := make([]api.Value, 0, strideOffset)
-	if err := c.Next(vec); err != nil {
-		return err
+	for i := 0; i < int(strideOffset); i++ {
+		if _, err := c.Next(); err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 

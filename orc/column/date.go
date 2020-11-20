@@ -33,6 +33,9 @@ func (c *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 		if err != nil {
 			return err
 		}
+		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
+			return err
+		}
 		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
 		return nil
 	}
@@ -42,6 +45,9 @@ func (c *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 		if err != nil {
 			return err
 		}
+		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
+			return err
+		}
 		c.data = stream.NewIntRLV2Reader(c.opts, info, startOffset, true, ic)
 		return err
 	}
@@ -49,7 +55,7 @@ func (c *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("stream unknown")
 }
 
-func (c *dateV2Reader) Next(values []api.Value) error {
+func (c *dateV2Reader) Next() (value api.Value, err error) {
 	/*vector := (*vec).([]api.Date)
 	vector = vector[:0]
 
@@ -77,7 +83,7 @@ func (c *dateV2Reader) Next(values []api.Value) error {
 
 	*vec = vector
 	rows = len(vector)*/
-	return nil
+	return
 }
 
 func (c *dateV2Reader) seek(indexEntry *pb.RowIndexEntry) error {

@@ -18,7 +18,7 @@ type Reader interface {
 	InitIndex(startOffset uint64, length uint64) error
 	InitStream(info *pb.Stream, startOffset uint64) error
 
-	Next(values []api.Value) error
+	Next() (value api.Value, err error)
 
 	// Seek seek to row number offset to current stripe
 	// if column is struct (or like)  children, and struct has present stream, then

@@ -5,14 +5,10 @@ import (
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func init() {
-	log.SetLevel(log.TraceLevel)
-}
 
 func TestNoCompression(t *testing.T) {
 	var err error

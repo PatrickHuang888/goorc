@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
+	"github.com/patrickhuang888/goorc/orc/encoding"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -14,6 +15,7 @@ import (
 
 func init() {
 	log.SetLevel(log.TraceLevel)
+	encoding.SetLogLevel(log.TraceLevel)
 }
 
 func TestIntV2NoPresents(t *testing.T) {
@@ -50,8 +52,10 @@ func TestIntV2NoPresents(t *testing.T) {
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)
-	if err := reader.Next(vector); err != nil {
-		t.Fatalf("%+v", err)
+	for i:=0; i<rows;i++ {
+		if vector[i], err = reader.Next(); err != nil {
+			t.Fatalf("%+v", err)
+		}
 	}
 	assert.Equal(t, values, vector)
 }
@@ -107,8 +111,10 @@ func TestIntV2ColumnWithPresents(t *testing.T) {
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)
-	if err = reader.Next(vector); err != nil {
-		t.Fatalf("%+v", err)
+	for i:=0; i<rows;i++ {
+		if vector[i], err = reader.Next(); err != nil {
+			t.Fatalf("%+v", err)
+		}
 	}
 
 	assert.Equal(t, values, vector)
@@ -302,8 +308,10 @@ func TestStringDirectV2(t *testing.T) {
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)
-	if err := reader.Next(vector); err != nil {
-		t.Fatalf("%+v", err)
+	for i:=0; i<rows;i++ {
+		if vector[i], err = reader.Next(); err != nil {
+			t.Fatalf("%+v", err)
+		}
 	}
 
 	assert.Equal(t, values, vector)
@@ -351,8 +359,11 @@ func TestByteWithPresents(t *testing.T) {
 	}
 
 	vector := make([]api.Value, rows)
-	if err := reader.Next(vector); err != nil {
-		t.Fatalf("%+v", err)
+	for i:=0; i<rows; i++ {
+		var err error
+		if vector[i], err = reader.Next(); err != nil {
+			t.Fatalf("%+v", err)
+		}
 	}
 
 	assert.Equal(t, true, vector[0].Null)

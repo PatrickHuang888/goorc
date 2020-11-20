@@ -29,7 +29,7 @@ func (w Writer) GetPositions() [][]uint64 {
 
 	pp := w.positions
 	eps := w.encoder.PopPositions()
-	if len(pp)!=len(eps) {
+	if len(pp) != len(eps) {
 		panic("stream chunk positions number != encoder positions number")
 	}
 	for i := 0; i < len(pp); i++ {
@@ -50,63 +50,54 @@ func (w *Writer) Reset() {
 }
 
 func (w *Writer) Write(v interface{}) error {
-	if err := w.encoder.Encode(v); err != nil {
+	mark := w.buf.Len()
+	if err := w.encoder.Encode(v, w.buf); err != nil {
 		return err
 	}
+	w.count++
 
-	if w.encoder.BufferedSize() >= w.opts.EncoderBufferSize {
-		data, err := w.encoder.Flush()
-		if err != nil {
+	if w.buf.Len()-mark > 0 && w.opts.CompressionKind != pb.CompressionKind_NONE && w.buf.Len() > w.opts.ChunkSize{
+		if err := common.CompressingChunks(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
 			return err
 		}
-		if err := w.write(data); err != nil {
-			return err
-		}
-
-		if w.opts.CompressionKind == pb.CompressionKind_NONE {
-			*w.info.Length = uint64(w.buf.Len())
-		} else {
-			*w.info.Length = uint64(w.compressedBuf.Len())
-		}
+		logger.Debugf("stream writer column %d kind %s has written %d values, buffer over chunksize, do compressing...",
+			w.info.GetColumn(), w.info.GetKind().String(), w.count)
+		w.count= 0
 	}
 	return nil
 }
 
 // return compressed data + uncompressed data
 func (w *Writer) Size() (size int) {
-	data, _ := w.encoder.Flush()
-	// just write to buf here, no compressing
-	// fix: direct operating on w.buf
-	w.buf.Write(data)
+	// not include encoder not flushed values
 
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
 		size = w.buf.Len()
 		return
 	}
-
 	size = w.compressedBuf.Len() + w.buf.Len()
 	return
 }
 
 // Flush flush remaining data in encoder then compressing left encoded data
 // will be the last operation before writeout
+// update stream info.length
 func (w *Writer) Flush() error {
-	data, err := w.encoder.Flush()
-	if err != nil {
+	if err := w.encoder.Flush(w.buf); err != nil {
 		return err
 	}
-	if err := w.write(data); err != nil {
-		return err
-	}
-
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
 		*w.info.Length = uint64(w.buf.Len())
 	} else {
-		if err := common.CompressingLeft(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
-			return err
+		if w.buf.Len() > 0 {
+			logger.Debugf("stream writer column %d kind %s flush compressing %d values", w.info.GetColumn(), w.info.GetKind().String(), w.count)
+			if err := common.CompressingAllInChunks(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
+				return err
+			}
 		}
 		*w.info.Length = uint64(w.compressedBuf.Len())
 	}
+
 	return nil
 }
 
@@ -119,10 +110,12 @@ type writer struct {
 	opts *config.WriterOptions
 
 	positions [][]uint64
+
+	count int
 }
 
 // Write write p to stream buf, compressing if buf size larger than chunk size
-func (w *writer) write(p []byte) error {
+/*func (w *writer) write(p []byte) error {
 	if len(p) == 0 {
 		return nil
 	}
@@ -141,7 +134,7 @@ func (w *writer) write(p []byte) error {
 	// compacting compressed buf
 	w.buf = bytes.NewBuffer(w.buf.Bytes())
 	return nil
-}
+}*/
 
 func (w *writer) reset() {
 	*w.info.Length = 0
@@ -239,7 +232,7 @@ func NewStringContentsWriter(id uint32, kind pb.Stream_Kind, opts *config.Writer
 		cbuf.Reset()
 	}
 
-	return &Writer{&writer{buf:buf, compressedBuf: cbuf, info: info, opts:opts}, encoding.NewStringContentsEncoder()}
+	return &Writer{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, encoding.NewStringContentsEncoder()}
 }
 
 func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions, signed bool) *Writer {

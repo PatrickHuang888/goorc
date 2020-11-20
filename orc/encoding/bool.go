@@ -1,6 +1,9 @@
 package encoding
 
-import "io"
+import (
+	"bytes"
+	"io"
+)
 
 const MAX_BOOL_RL = 8
 
@@ -11,9 +14,9 @@ type boolRunLength struct {
 	positions []uint64
 }
 
-func (e *boolRunLength) BufferedSize() int {
+/*func (e *boolRunLength) BufferedSize() int {
 	return e.brl.BufferedSize()
-}
+}*/
 
 func NewBoolEncoder() *boolRunLength {
 	return &boolRunLength{offset: -1, values: make([]bool, MAX_BOOL_RL), brl: NewByteEncoder()}
@@ -35,7 +38,7 @@ func (e *boolRunLength) Reset() {
 	e.brl.Reset()
 }
 
-func (e *boolRunLength) Encode(v interface{}) (err error) {
+func (e *boolRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	value := v.(bool)
 
 	e.offset++
@@ -48,17 +51,17 @@ func (e *boolRunLength) Encode(v interface{}) (err error) {
 				b |= 0x01 << byte(7-i)
 			}
 		}
-		if err = e.brl.Encode(b); err != nil {
-			return
+		if err := e.brl.Encode(b, out); err != nil {
+			return err
 		}
 		e.offset = -1
-		return
+		return nil
 	}
 
-	return
+	return nil
 }
 
-func (e *boolRunLength) Flush() (data []byte, err error) {
+func (e *boolRunLength) Flush(out *bytes.Buffer) error {
 	if e.offset != -1 {
 		var b byte
 		for i := 0; i <= e.offset; i++ {
@@ -66,17 +69,17 @@ func (e *boolRunLength) Flush() (data []byte, err error) {
 				b |= 0x01 << byte(7-i)
 			}
 		}
-		if err = e.brl.Encode(b); err != nil {
-			return
+		if err := e.brl.Encode(b, out); err != nil {
+			return err
 		}
-		e.offset = -1
 	}
 
-	if data, err = e.brl.Flush(); err != nil {
-		return
+	if err := e.brl.Flush(out); err != nil {
+		return err
 	}
+
 	e.Reset()
-	return
+	return nil
 }
 
 func DecodeBools(in io.ByteReader, vs []bool) ([]bool, error) {

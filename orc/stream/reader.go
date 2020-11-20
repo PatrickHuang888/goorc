@@ -11,6 +11,12 @@ import (
 	"io"
 )
 
+var logger = log.New()
+
+func SetLogLevel(level log.Level) {
+	logger.SetLevel(level)
+}
+
 type reader struct {
 	info *pb.Stream
 
@@ -33,12 +39,14 @@ func (r *reader) ReadByte() (b byte, err error) {
 		return
 	}
 
-	if r.readLength < r.info.GetLength() {
-		if err = r.readAChunk(); err != nil {
-			return 0, err
-		}
+	if r.readLength >= r.info.GetLength() {
+		return 0, errors.WithStack(io.EOF)
 	}
 
+	if err = r.readAChunk(); err != nil {
+		return 0, err
+	}
+	logger.Tracef("stream %s reading, has been read %d bytes", r.info.String(), r.readLength)
 	b, err = r.buf.ReadByte()
 	if err != nil {
 		return b, errors.WithStack(err)
@@ -53,6 +61,8 @@ func (r *reader) Read(p []byte) (n int, err error) {
 			return n, errors.WithStack(err)
 		}
 		return
+	} else if r.readLength >= r.info.GetLength() {
+		return 0, errors.New("stream reach end")
 	}
 
 	for r.buf.Len() < len(p) && r.readLength < r.info.GetLength() {
@@ -60,8 +70,7 @@ func (r *reader) Read(p []byte) (n int, err error) {
 			return 0, err
 		}
 	}
-
-	log.Tracef("stream %s reading, has read %d", r.info.String(), r.readLength)
+	logger.Tracef("stream %s reading, has been read %d bytes", r.info.String(), r.readLength)
 
 	n, err = r.buf.Read(p)
 	if err != nil {
@@ -92,9 +101,9 @@ func (r *reader) readAChunk() error {
 			l = r.info.GetLength() - r.readLength
 		}
 
-		log.Tracef("read a chunk, no compression copy %d from stream", l)
+		logger.Tracef("read a chunk, no compression copy %d from stream", l)
 
-		if _, err := io.CopyN(r.buf, r.in, int64(l));err != nil {
+		if _, err := io.CopyN(r.buf, r.in, int64(l)); err != nil {
 			return errors.WithStack(err)
 		}
 
@@ -109,7 +118,7 @@ func (r *reader) readAChunk() error {
 	r.readLength += 3
 	chunkLength, original := common.DecChunkHeader(head)
 
-	log.Tracef("read a chunk, stream %s, compressing %s, chunkLength %d, original %t",
+	logger.Tracef("will read a chunk, stream %s, compressing %s, chunkLength %d, original %t",
 		r.info.String(), r.opts.CompressionKind, chunkLength, original)
 
 	if uint64(chunkLength) > r.opts.ChunkSize {
@@ -143,8 +152,8 @@ func (r reader) finished() bool {
 	return r.readLength >= r.info.GetLength() && r.buf.Len() == 0
 }
 
-func (r *reader) Close(){
-	if err:=r.in.Close();err!=nil {
-		log.Error("closing error ", err)
+func (r *reader) Close() {
+	if err := r.in.Close(); err != nil {
+		logger.Error("closing error ", err)
 	}
 }

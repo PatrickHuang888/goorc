@@ -185,7 +185,7 @@ func (w stringDirectV2Writer) Size() int {
 }
 
 func newStringDirectV2Reader(opts *config.ReaderOptions, schema *api.TypeDescription, f orcio.File) Reader {
-	return &stringDirectV2Reader{reader:&reader{opts:opts, schema: schema, f:f}}
+	return &stringDirectV2Reader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 
 type stringDirectV2Reader struct {
@@ -233,41 +233,34 @@ func (s *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) e
 	return nil
 }
 
-func (r *stringDirectV2Reader) Next(values []api.Value) error {
-	if err:=r.checkInit();err!=nil {
-		return err
+func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
+	if err = r.checkInit(); err != nil {
+		return
 	}
 
 	if r.schema.HasNulls {
-		for i := 0; i < len(values); i++ {
-			p, err := r.present.Next()
-			if err != nil {
-				return err
-			}
-			values[i].Null = !p
+		var p bool
+		if p, err = r.present.Next(); err != nil {
+			return
 		}
+		value.Null = !p
 	}
 
-	// will not beyond number of rows
-	for i := 0; i < len(values); i++ {
-		hasValue := true
-		if r.schema.HasNulls && values[i].Null {
-			hasValue = false
+	hasValue := true
+	if r.schema.HasNulls && value.Null {
+		hasValue = false
+	}
+	if hasValue {
+		var l uint64
+		l, err = r.length.NextUInt64()
+		if err != nil {
+			return
 		}
-		if hasValue {
-			l, err := r.length.NextUInt()
-			if err != nil {
-				return err
-			}
-			v, err := r.data.NextString(l)
-			if err != nil {
-				return err
-			}
-			values[i].V = v
+		if value.V, err = r.data.NextString(l);err != nil {
+			return
 		}
 	}
-
-	return nil
+	return
 }
 
 func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
@@ -286,7 +279,7 @@ func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
 			lens := make([]uint64, offset)
 			for i := 0; i < int(offset); i++ {
 				var err error
-				if lens[i], err = r.length.NextUInt(); err != nil {
+				if lens[i], err = r.length.NextUInt64(); err != nil {
 					return err
 				}
 			}
@@ -303,7 +296,7 @@ func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
 		lens := make([]uint64, offset)
 		for i := 0; i < int(offset); i++ {
 			var err error
-			if lens[i], err = r.length.NextUInt(); err != nil {
+			if lens[i], err = r.length.NextUInt64(); err != nil {
 				return err
 			}
 		}
@@ -323,7 +316,7 @@ func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
 		lens := make([]uint64, offset)
 		for i := 0; i < int(offset); i++ {
 			var err error
-			if lens[i], err = r.length.NextUInt(); err != nil {
+			if lens[i], err = r.length.NextUInt64(); err != nil {
 				return err
 			}
 		}
@@ -340,7 +333,7 @@ func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
 	lens := make([]uint64, offset)
 	for i := 0; i < int(offset); i++ {
 		var err error
-		if lens[i], err = r.length.NextUInt(); err != nil {
+		if lens[i], err = r.length.NextUInt64(); err != nil {
 			return err
 		}
 	}
@@ -358,16 +351,16 @@ func (r *stringDirectV2Reader) Close() {
 	r.length.Close()
 }
 
-func (r stringDirectV2Reader) checkInit()  error {
+func (r stringDirectV2Reader) checkInit() error {
 	if r.schema.HasNulls {
-		if r.present==nil {
+		if r.present == nil {
 			return errors.New("present stream not initialized")
 		}
 	}
-	if r.data==nil {
+	if r.data == nil {
 		return errors.New("data stream not initialized")
 	}
-	if r.length==nil {
+	if r.length == nil {
 		return errors.New("length stream not initialized")
 	}
 	return nil

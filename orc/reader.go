@@ -48,23 +48,17 @@ type reader struct {
 	f orcio.File
 
 	numberOfRows uint64
-	stats        []*pb.ColumnStatistics
+	cursor       uint64
+
+	stats []*pb.ColumnStatistics
 }
 
-func NewFileReader(path string, opts config.ReaderOptions) (r Reader, err error) {
-	var f *os.File
-	if f, err = os.Open(path); err != nil {
-		return nil, errors.Wrapf(err, "open file %s error", path)
-	}
-	defer f.Close()
-	log.Infof("open file %s", path)
-
-	//r, err = newReader(&opts, f)
+func NewFileReader(path string, opts config.ReaderOptions) (Reader, error) {
+	f, err := orcio.OpenFileForRead(path)
 	if err != nil {
-		return
+		return nil, err
 	}
-
-	return
+	return newReader(&opts, f)
 }
 
 func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) {
@@ -73,13 +67,12 @@ func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) 
 		return nil, errors.Wrap(err, "read file tail error")
 	}
 
-	//check
-	if tail.GetFooter().GetNumberOfRows() == 0 {
+	rows := tail.GetFooter().GetNumberOfRows()
+	if rows == 0 {
 		return nil, errors.New("file footer error, number of rows 0")
 	}
 
 	schemas := unmarshallSchema(tail.Footer.Types)
-
 	for i, stat := range tail.Footer.Statistics {
 		schemas[i].HasNulls = stat.GetHasNull()
 	}
@@ -88,12 +81,10 @@ func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) 
 	if opts.CompressionKind != pb.CompressionKind_NONE { // compression_none no block size
 		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
 	}
+	opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
 
-	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: tail.GetFooter().GetNumberOfRows(),
-		stats: tail.Footer.GetStatistics()}
-
+	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: rows, stats: tail.Footer.GetStatistics()}
 	r.initStripes(f, tail.Footer.GetStripes())
-
 	return
 }
 
@@ -106,51 +97,16 @@ func (r *reader) NumberOfRows() uint64 {
 }
 
 func (r *reader) initStripes(f orcio.File, infos []*pb.StripeInformation) error {
-	var err error
-
 	for i, stripeInfo := range infos {
-
-		//check
 		if stripeInfo.GetNumberOfRows() == 0 {
 			return errors.Errorf("stripe number of rows 0 err, %s", stripeInfo.String())
 		}
-
-		offset := stripeInfo.GetOffset()
-		indexLength := stripeInfo.GetIndexLength()
-		dataLength := stripeInfo.GetDataLength()
-
-		// footer
-		log.Tracef("seek stripe footer of %d", i)
-		footerOffset := int64(offset + indexLength + dataLength)
-		if _, err = f.Seek(footerOffset, 0); err != nil {
-			return errors.WithStack(err)
-		}
-
-		footerBuf := make([]byte, stripeInfo.GetFooterLength())
-		if _, err = io.ReadFull(f, footerBuf); err != nil {
-			return errors.WithStack(err)
-		}
-		if r.opts.CompressionKind != pb.CompressionKind_NONE {
-			fb := &bytes.Buffer{}
-			if err = common.DecompressBuffer(r.opts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
-				return err
-			}
-			footerBuf = fb.Bytes()
-		}
-		footer := &pb.StripeFooter{}
-		if err = proto.Unmarshal(footerBuf, footer); err != nil {
-			return errors.Wrapf(err, "unmarshal stripe footer error")
-		}
-		log.Debugf("extracted stripe footer %d: %s", i, footer.String())
-
-		var sr *stripeReader
-		/*if sr, err = newStripeReader(f, r.schemas, r.opts, i, stripeInfo, footer); err != nil {
+		sr, err := newStripeReader(f, r.schemas, r.opts, i, stripeInfo)
+		if err != nil {
 			return err
-		}*/
-
+		}
 		r.stripes = append(r.stripes, sr)
 	}
-
 	return nil
 }
 
@@ -163,27 +119,36 @@ func (r *reader) Close() error {
 }
 
 func (r *reader) Next(batch *api.ColumnVector) error {
-	var err error
-
-	if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
-		return err
+	batch.Reset()
+	if r.cursor >= r.numberOfRows-1 {
+		return nil
 	}
 
-	// next stripe
-	if (r.stripeIndex < len(r.stripes)-1) && (len(batch.Vector) == 0) {
-		r.stripeIndex++
-		if err = r.stripes[r.stripeIndex].Next(batch); err != nil {
+	for r.stripeIndex < len(r.stripes) {
+		end, err := r.stripes[r.stripeIndex].next(batch)
+		if err != nil {
 			return err
 		}
+		if end {
+			r.stripeIndex++
+			if batch.Len() >= batch.Cap() {
+				break
+			}
+		} else {
+			break
+		}
 	}
-	return err
+	if r.stripeIndex == len(r.stripes) {
+		r.stripeIndex--
+	}
+	r.cursor += uint64(batch.Len())
+	return nil
 }
 
 func (r *reader) Seek(rowNumber uint64) error {
 	if rowNumber > r.numberOfRows {
 		return errors.New("row number larger than number of rows")
 	}
-
 	var rows uint64
 	for i := 0; i < len(r.stripes); i++ {
 		if rows+r.stripes[i].numberOfRows > rowNumber {
@@ -191,9 +156,9 @@ func (r *reader) Seek(rowNumber uint64) error {
 		}
 		rows += r.stripes[i].numberOfRows
 	}
+	r.cursor = rowNumber
 	return errors.New("no row found")
 }
-
 
 /*
 type timestampV2Reader struct {

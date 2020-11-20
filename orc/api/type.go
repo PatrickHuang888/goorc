@@ -95,7 +95,7 @@ func walkSchema(schemas *[]*TypeDescription, node *TypeDescription, id uint32) e
 	return nil
 }
 
-func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
+func SchemasToTypes(schemas []*TypeDescription) []*pb.Type {
 	t := make([]*pb.Type, len(schemas))
 	for i, v := range schemas {
 		t[i] = &pb.Type{Subtypes: make([]uint32, len(v.Children)),
@@ -110,7 +110,7 @@ func schemasToTypes(schemas []*TypeDescription) []*pb.Type {
 }
 
 func CreateReaderBatch(td TypeDescription, opts config.ReaderOptions) ColumnVector {
-	batch := ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opts.RowSize)}
+	batch := ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
 	for _, v := range td.Children {
 		batch.Children = append(batch.Children, CreateReaderBatch(*v, opts))
 	}

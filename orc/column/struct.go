@@ -36,20 +36,19 @@ func (c *structReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("struct column no stream other than present")
 }
 
-func (c *structReader) Next(values []api.Value) error {
-	if err := c.checkInit(); err != nil {
-		return err
+func (c *structReader) Next() (value api.Value, err error) {
+	if err = c.checkInit(); err != nil {
+		return
 	}
 
 	if c.schema.HasNulls {
-		for i := 0; i < len(values); i++ {
-			p, err := c.present.Next()
-			if err != nil {
-				return err
-			}
-			values[i].Null = !p
+		var p bool
+		if p, err = c.present.Next(); err != nil {
+			return
 		}
+		value.Null = !p
 	}
+
 	//c.cursor += uint64(len(values))
 
 	/*pp := *presents
@@ -85,7 +84,7 @@ func (c *structReader) Next(values []api.Value) error {
 
 	s.cursor += uint64(rows)*/
 
-	return nil
+	return
 }
 
 func (s *structReader) Seek(rowNumber uint64) error {

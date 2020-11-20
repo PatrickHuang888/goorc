@@ -21,8 +21,8 @@ type stripeWriter struct {
 
 	// rows update after every write
 	// index length and data length update after flush
-	info         *pb.StripeInformation
-	previousInfo *pb.StripeInformation
+	info  *pb.StripeInformation
+	infos []*pb.StripeInformation
 
 	opts *config.WriterOptions
 
@@ -36,6 +36,8 @@ func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
 
 	count := uint64(0)
 	for i, v := range batch.Vector {
+		count++
+
 		if err := col.Write(v); err != nil {
 			return err
 		}
@@ -52,22 +54,13 @@ func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
 			count = 0
 
 			// todo: run in another go routine
-			if err := stripe.roll(); err != nil {
+			if err := stripe.flushOut(); err != nil {
 				return err
 			}
+			stripe.forward()
 		}
-
-		count++
 	}
 	*stripe.info.NumberOfRows += count
-	return nil
-}
-
-func (stripe *stripeWriter) roll() error {
-	if err := stripe.flushOut(); err != nil {
-		return err
-	}
-	stripe.forward()
 	return nil
 }
 
@@ -114,7 +107,6 @@ func (stripe *stripeWriter) flushOut() error {
 	if err := stripe.writeFooter(); err != nil {
 		return errors.WithStack(err)
 	}
-
 	return nil
 }
 
@@ -152,7 +144,7 @@ func (stripe *stripeWriter) writeFooter() error {
 }
 
 func (stripe *stripeWriter) forward() {
-	stripe.previousInfo = stripe.info
+	stripe.infos = append(stripe.infos, stripe.info)
 
 	offset := stripe.info.GetOffset() + stripe.info.GetIndexLength() + stripe.info.GetDataLength() + stripe.info.GetFooterLength()
 	stripe.info = &pb.StripeInformation{Offset: &offset, IndexLength: new(uint64), DataLength: new(uint64), FooterLength: new(uint64), NumberOfRows: new(uint64)}
@@ -289,36 +281,26 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 }
 
 // a stripe is typically  ~200MB
-func (stripe *stripeReader) Next(batch *api.ColumnVector) error {
-	// ended
-	if stripe.cursor+1 >= stripe.numberOfRows {
-		batch.Vector = batch.Vector[:0]
-		for _, v := range batch.Children {
-			v.Vector = v.Vector[:0]
+func (stripe *stripeReader) next(batch *api.ColumnVector) (end bool, err error) {
+	i := stripe.cursor
+	for ; i < stripe.numberOfRows && len(batch.Vector) < cap(batch.Vector); i++ {
+		var v api.Value
+		if v, err = stripe.columnReaders[batch.Id].Next();err != nil {
+			return
 		}
-		return nil
-	}
-
-	page := len(batch.Vector)
-	if int(stripe.numberOfRows-stripe.cursor) < len(batch.Vector) {
-		page = int(stripe.numberOfRows - stripe.cursor)
-		batch.Vector = batch.Vector[:page]
-	}
-
-	if err := stripe.columnReaders[batch.Id].Next(batch.Vector); err != nil {
-		return err
-	}
-	for _, v := range batch.Children {
-		v.Vector = v.Vector[:page]
-		if err := stripe.columnReaders[v.Id].Next(v.Vector); err != nil {
-			return err
+		batch.Vector = append(batch.Vector, v)
+		for _, child := range batch.Children {
+			var v api.Value
+			if v, err = stripe.columnReaders[child.Id].Next();err != nil {
+				return
+			}
+			child.Vector = append(child.Vector, v)
 		}
 	}
-
-	stripe.cursor += uint64(len(batch.Vector))
-
-	log.Debugf("stripe %d column %d has read %d", stripe.index, batch.Id, len(batch.Vector))
-	return nil
+	stripe.cursor = i
+	logger.Debugf("stripe %d column %d has cursor %d", stripe.index, batch.Id, stripe.cursor)
+	end= stripe.cursor+1>=stripe.numberOfRows
+	return
 }
 
 // locate rows in this stripe

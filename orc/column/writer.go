@@ -26,7 +26,8 @@ type Writer interface {
 
 	// GetStreamInfos get no-non streams, used for writing stripe footer after flush
 	GetStreamInfos() []*pb.Stream
-	// after flush
+
+	// data will be updated after flush
 	GetStats() *pb.ColumnStatistics
 
 	// Reset for column writer reset after stripe write out

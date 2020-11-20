@@ -1,12 +1,17 @@
 package io
 
 import (
-	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 )
+
+var logger = log.New()
+
+func SetLogLevel(level log.Level)  {
+	logger.SetLevel(level)
+}
 
 type File interface {
 	io.ReadSeeker
@@ -16,55 +21,66 @@ type File interface {
 	Clone() (File, error)
 }
 
-type fileFile struct {
-	f *os.File
+type osFile struct {
+	path string
+	flag int
+	f    *os.File
 }
 
-func (fr fileFile) Write(p []byte) (n int, err error) {
-	panic("implement me")
+func OpenFileForRead(path string) (File, error) {
+	return OpenOsFile(path, os.O_RDONLY)
 }
 
-func (fr fileFile) Clone() (File, error) {
-	panic("implement me")
+// should not exist, because cannot APPEND
+func OpenFileForWrite(path string) (File, error) {
+	return OpenOsFile(path, os.O_EXCL)
 }
 
-func (fr fileFile) Size() (int64, error) {
-	fi, err := fr.f.Stat()
+func OpenOsFile(path string, flag int) (File, error) {
+	f, err := os.OpenFile(path, flag, 0)
+	if err != nil {
+		return nil, err
+	}
+	return &osFile{f: f, flag: flag, path: path}, nil
+}
+
+func (f *osFile) Write(p []byte) (n int, err error) {
+	return f.f.Write(p)
+}
+
+func (f *osFile) Clone() (File, error) {
+	r, err := OpenOsFile(f.path, f.flag)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (f *osFile) Size() (int64, error) {
+	fi, err := f.f.Stat()
 	if err != nil {
 		return 0, errors.WithStack(err)
 	}
 	return fi.Size(), nil
 }
 
-func (fr fileFile) Read(p []byte) (n int, err error) {
-	n, err = fr.f.Read(p)
+func (f *osFile) Read(p []byte) (int, error) {
+	n, err := f.f.Read(p)
 	if err != nil {
 		return n, errors.WithStack(err)
 	}
-	return
+	return n, nil
 }
 
-func (fr fileFile) Seek(offset int64, whence int) (int64, error) {
-	return fr.f.Seek(offset, whence)
+func (f *osFile) Seek(offset int64, whence int) (int64, error) {
+	return f.f.Seek(offset, whence)
 }
 
-func (fr fileFile) Close() error {
-	if err := fr.f.Close(); err != nil {
+func (f *osFile) Close() error {
+	if err := f.f.Close(); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
-}
-
-func OpenOsFile(f *os.File) File {
-	return &fileFile{f: f}
-}
-
-func Open(opts config.ReaderOptions, path string) (in File, err error) {
-	var f *os.File
-	if f, err = os.Open(path); err != nil {
-		return nil, errors.WithStack(err)
-	}
-	return OpenOsFile(f), nil
 }
 
 type MockFile struct {
@@ -81,8 +97,8 @@ func (m *MockFile) Clone() (File, error) {
 }
 
 func (m *MockFile) Close() error {
-	m.offset = 0
-	m.waterMark = 0
+	/*m.offset = 0
+	m.waterMark = 0*/
 	return nil
 }
 
@@ -108,7 +124,7 @@ func (m *MockFile) Read(p []byte) (n int, err error) {
 	if m.offset == len(m.buf)-1 || n == 0 {
 		err = io.EOF
 	}
-	log.Tracef("mock file read %d, offset %d, watermark %d", n, m.offset, m.waterMark)
+	logger.Tracef("mock file read %d, offset %d, watermark %d", n, m.offset, m.waterMark)
 	return
 }
 

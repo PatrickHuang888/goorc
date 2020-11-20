@@ -1,19 +1,17 @@
 package orc
 
 import (
-	"fmt"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func init() {
+/*func init() {
 	log.SetLevel(log.TraceLevel)
-}
+}*/
 
 /*func TestStripeStructBasic(t *testing.T) {
 
@@ -139,43 +137,9 @@ func TestStripeBasic(t *testing.T) {
 
 	readBatch := api.CreateReaderBatch(schema, ropts)
 
-	if err := reader.Next(&readBatch); err != nil {
+	if _, err := reader.next(&readBatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	assert.Equal(t, values, readBatch.Vector)
-}
-
-func TestMultipleStripes(t *testing.T) {
-	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2, HasNulls: false}
-	schemas, err := schema.Normalize()
-	assert.Nil(t, err)
-
-	wopts := config.DefaultWriterOptions()
-	wopts.CompressionKind = pb.CompressionKind_ZLIB
-	wopts.StripeSize = 50_000
-	batch := api.CreateWriterBatch(schema, wopts)
-
-	rows := 600
-	values := make([]api.Value, rows)
-	for i := 0; i < rows; i++ {
-		values[i].V = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
-	}
-	batch.Vector = values
-
-	buf := make([]byte, 2_000_000)
-	f := orcio.NewMockFile(buf)
-
-	writer, err := newStripeWriter(f, 0, schemas, &wopts)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	if err := writer.write(&batch); err != nil {
-		t.Fatalf("%+v", err)
-	}
-	if err := writer.flushOut(); err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-
 }

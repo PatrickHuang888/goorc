@@ -7,11 +7,10 @@ import (
 	"math"
 
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 func NewIntRLV2(signed bool) *IntRL2 {
-	return &IntRL2{values: make([]uint64, MAX_INT_RL), signed: signed, buf: &bytes.Buffer{}, offset: -1}
+	return &IntRL2{values: make([]uint64, MAX_INT_RL), signed: signed, offset: -1}
 }
 
 // int run length encoding v2
@@ -27,7 +26,7 @@ type IntRL2 struct {
 	offset         int
 
 	values []uint64
-	buf    *bytes.Buffer
+	//buf    *bytes.Buffer
 }
 
 // decode 1 'block' values, not all data in input bufferedReader
@@ -39,13 +38,11 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 	// header from MSB to LSB
 	firstByte, err := in.ReadByte()
 	if err != nil {
-		if err==io.EOF {
-			if d.signed {
-				return []int64{}, nil
-			}else {
-				return []uint64{}, nil
-			}
-		}
+		/*if io.EOF.Error()== err.Error(){
+			return nil, err
+		} else {
+			return nil, errors.WithStack(err)
+		}*/
 		return nil, err
 	}
 
@@ -55,14 +52,14 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 		header := firstByte
 		width := 1 + (header>>3)&0x07 // width 3bit at position 3
 		repeatCount := int(3 + (header & 0x07))
-		log.Tracef("decoding: int rl v2 Short Repeat of count %d", repeatCount)
+		logger.Tracef("decoding: int rl v2 Short Repeat of count %d", repeatCount)
 
 		var v uint64
 		for i := width; i > 0; { // big endian
 			i--
 			b, err := in.ReadByte()
 			if err != nil {
-				return nil, errors.WithStack(err)
+				return nil, err
 			}
 			v |= uint64(b) << (8 * i)
 		}
@@ -83,7 +80,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 			return nil, err
 		}
 		length := int(header&0x1FF + 1)
-		log.Tracef("decoding: int rl v2 Direct width %d length %d", width, length)
+		logger.Tracef("decoding: int rl v2 Direct width %d length %d", width, length)
 
 		d.forgetBits()
 		for i := 0; i < length; i++ {
@@ -118,7 +115,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 		}
 		length := int(header[0])&0x01<<8 | int(header[1]) + 1
 
-		log.Tracef("decoding: irl v2 Delta length %d, width %d", length, width)
+		logger.Tracef("decoding: irl v2 Delta length %d, width %d", length, width)
 
 		var ubase uint64
 		var base int64
@@ -250,7 +247,7 @@ func (d *IntRL2) readPatched(in BufferedReader, firstByte byte) ([]uint64, error
 		base = -base
 	}
 
-	log.Tracef("decoding: int rl v2 Patch values width %d length %d bw %d(bytes) and patchWidth %d pll %d base %d",
+	logger.Tracef("decoding: int rl v2 Patch values width %d length %d bw %d(bytes) and patchWidth %d pll %d base %d",
 		width, length, bw, pw, pll, base)
 
 	// values (W*L bits padded to the byte)
@@ -355,7 +352,7 @@ func (e *IntRL2) writeLeftBits(out *bytes.Buffer) error {
 
 const MAX_INT_RL = 512
 
-func (e *IntRL2) Encode(v interface{}) error {
+func (e *IntRL2) Encode(v interface{}, out *bytes.Buffer) error {
 	var value uint64
 	if e.signed {
 		vt, ok := v.(int64)
@@ -375,36 +372,30 @@ func (e *IntRL2) Encode(v interface{}) error {
 	e.values[e.offset] = value
 
 	if e.offset >= MAX_INT_RL-1 {
-		if err := e.write(e.buf, e.values[:e.offset+1]); err != nil {
+		if err := e.write(out, e.values[:e.offset+1]); err != nil {
 			return err
 		}
+		logger.Tracef("int encoder write out %d values", e.offset+1)
 		e.offset = -1
 	}
 
 	return nil
 }
 
-func (d *IntRL2) BufferedSize() int {
+/*func (d *IntRL2) BufferedSize() int {
 	return d.buf.Len()
-}
+}*/
 
 func (e *IntRL2) PopPositions() []uint64 {
 	r := e.positions
 	e.positions = nil
 	e.markedPosition = -1
-	e.offset = -1
 	return r
 }
 
 func (e *IntRL2) Reset() {
 	e.bitsLeft = 0
 	e.lastByte = 0
-	e.buf.Reset()
-
-	if e.positions != nil {
-		e.positions = e.positions[:0]
-	}
-	e.markedPosition = -1
 	e.offset = -1
 }
 
@@ -412,15 +403,15 @@ func (e *IntRL2) MarkPosition() {
 	e.markedPosition = e.offset
 }
 
-func (e *IntRL2) Flush() (data []byte, err error) {
+func (e *IntRL2) Flush(out *bytes.Buffer) error {
 	if e.offset != -1 {
-		if err = e.write(e.buf, e.values[:e.offset+1]); err != nil {
-			return
+		if err := e.write(out, e.values[:e.offset+1]); err != nil {
+			return err
 		}
+		logger.Tracef("int encoder flush %d values", e.offset+1)
 	}
-
-	data = e.buf.Bytes()
-	return
+	e.Reset()
+	return nil
 }
 
 /*
@@ -449,10 +440,10 @@ func (e *IntRL2) write(out *bytes.Buffer, values []uint64) error {
 
 				var v uint64
 				if e.signed {
-					log.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
+					logger.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
 						repeat, UnZigzag(values[i]), i)
 				} else {
-					log.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
+					logger.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
 						repeat, values[i], i)
 				}
 				v = values[i]
@@ -479,7 +470,7 @@ func (e *IntRL2) write(out *bytes.Buffer, values []uint64) error {
 			} else {
 				n = binary.PutUvarint(b, values[i])
 			}
-			log.Tracef("encoding: irl v2 Fixed Delta 0 count %d at index %d", repeat, i)
+			logger.Tracef("encoding: irl v2 Fixed Delta 0 count %d at index %d", repeat, i)
 			i += int(repeat)
 			if err := e.writeDelta(b[:n], 0, repeat, []uint64{}, out); err != nil {
 				return err
@@ -597,7 +588,7 @@ func (e *IntRL2) writeDirect(out *bytes.Buffer, widthAlign bool, values []uint64
 	l := len(values) - 1
 	header[0] |= byte(l>>8) & 0x01
 	header[1] = byte(l)
-	log.Tracef("encoding: int rl v2 Direct width %d values %d ", width, len(values))
+	logger.Tracef("encoding: int rl v2 Direct width %d values %d ", width, len(values))
 	if _, err := out.Write(header); err != nil {
 		return errors.WithStack(err)
 	}
@@ -766,7 +757,7 @@ func bitsWidthAnalyze(values []uint64, pvs *patchedValues) (sub byte, err error)
 			break
 		}
 	}
-	log.Tracef("encoding: int rl try patch, 0.90 width %d and 1.00 width %d", p90w, p100w)*/
+	logger.Tracef("encoding: int rl try patch, 0.90 width %d and 1.00 width %d", p90w, p100w)*/
 
 	var width, w byte // w is %90 delta values width
 
@@ -795,7 +786,7 @@ func bitsWidthAnalyze(values []uint64, pvs *patchedValues) (sub byte, err error)
 		}
 	}
 
-	log.Tracef("encoding: int rl possible patch, 90%% width %d and width %d of adjusted values", w, width)
+	logger.Tracef("encoding: int rl possible patch, 90%% width %d and width %d of adjusted values", w, width)
 	if width > w {
 		sub = Encoding_PATCHED_BASE
 		pvs.base = base
@@ -969,12 +960,12 @@ func (e *IntRL2) writeDelta(first []byte, deltaBase int64, length uint16, deltas
 	if width == 1 { // delta width no 1?
 		width = 2
 	}
-	//log.Tracef("encoding: irl v2 Delta length %d, width %d", length, width)
+	//logger.Tracef("encoding: irl v2 Delta length %d, width %d", length, width)
 	w, err := widthEncoding(int(width))
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	log.Tracef("write delta encoded width %d", w)
+	logger.Tracef("write delta encoded width %d", w)
 	h1 |= w & 0x1F << 1 // 5 bit for W
 	length -= 1
 	h1 |= byte(length>>8) & 0x01 // 9th bit

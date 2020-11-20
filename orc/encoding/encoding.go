@@ -10,6 +10,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+var logger= log.New()
+
+func SetLogLevel(level log.Level)  {
+	logger.SetLevel(level)
+}
+
 const (
 	Encoding_SHORT_REPEAT = byte(0)
 	Encoding_DIRECT       = byte(1)
@@ -25,14 +31,15 @@ const (
 
 type Encoder interface {
 	// Encode may returns no data due to buffer and algorithm need more v to encoding
-	Encode(v interface{}) error
+	Encode(v interface{}, out *bytes.Buffer) error
 
 	// BufferedSize get encoded data sized buffered, not including no encoded data
-	BufferedSize() int
+	//BufferedSize() int
 
 	// Flush flush remaining data, make sure there is only one position mark in one flush
 	// data should be used immediately, it's from encoder's buffer, maybe changed next encode
-	Flush() (data []byte, err error)
+	// encoder reset after flush
+	Flush(out *bytes.Buffer) error
 
 	MarkPosition()
 

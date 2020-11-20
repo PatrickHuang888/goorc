@@ -1,12 +1,26 @@
 package orc
 
 import (
-	"github.com/pkg/errors"
+	"fmt"
+	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
+	"github.com/patrickhuang888/goorc/orc/stream"
+	"github.com/patrickhuang888/goorc/pb/pb"
 	log "github.com/sirupsen/logrus"
-	"io"
+	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
-type dummyFile struct {
+func init()  {
+	logger.SetLevel(log.TraceLevel)
+	stream.SetLogLevel(log.DebugLevel)
+	//encoding.SetLogLevel(log.TraceLevel)
+	//orcio.SetLogLevel(log.TraceLevel)
+}
+
+
+/*type dummyFile struct {
 	array              []byte
 	start, offset, end int64
 }
@@ -55,7 +69,7 @@ func (df *dummyFile) Reset() {
 	df.end = 0
 }
 
-var df = &dummyFile{array: make([]byte, 2_000_000)}
+var df = &dummyFile{array: make([]byte, 2_000_000)}*/
 
 /*func TestBasicNoCompression(t *testing.T) {
 	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
@@ -153,71 +167,112 @@ var df = &dummyFile{array: make([]byte, 2_000_000)}
 	assert.Equal(t, vector, readResults[10_000:20_000])
 }*/
 
-/*func TestBasicMultipleStripes(t *testing.T) {
-	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2}
-	wopts := DefaultWriterOptions()
+func TestString(t *testing.T) {
+	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2, HasNulls: false}
+	//schemas, err := schema.Normalize()
+	//assert.Nil(t, err)
+
+	wopts := config.DefaultWriterOptions()
 	wopts.CompressionKind = pb.CompressionKind_ZLIB
-	wopts.StripeSize = 100_000
-	wopts.ChunkSize = 50_000
-	batch := schema.CreateWriterBatch(wopts)
+	wopts.StripeSize = 10_000
+	// todo: check chunkSize should not larger than stripe size
+	wopts.ChunkSize= 5_000
+	wbatch := api.CreateWriterBatch(schema, wopts)
 
-	rows := 30_000
-	vector := make([]string, rows)
+	rows := 100
+	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
-		vector[i] = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
+		values[i].V = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
 	}
-	batch.Vector = vector
+	wbatch.Vector = values
 
-	df.Reset()
-	writer, err := newWriter(schema, wopts, df)
+	buf := make([]byte, 200_000)
+	f := orcio.NewMockFile(buf)
+
+	//writer, err := newStripeWriter(f, 0, schemas, &wopts)
+	writer, err := newWriter(&schema, &wopts, f)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := writer.Write(batch); err != nil {
+	if err := writer.Write(&wbatch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.Close(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	if err := writer.Write(batch); err != nil {
-		t.Fatalf("%+v", err)
-	}
+	ropts:= config.DefaultReaderOptions()
+	reader, err:=newReader(&ropts, f)
+	assert.Nil(t, err)
+	rbatch:= api.CreateReaderBatch(*reader.GetSchema(), ropts )
 
-	batch.Vector = vector[:1000]
-
-	if err := writer.Write(batch); err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	if err := writer.close(); err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	ropts := DefaultReaderOptions()
-	ropts.RowSize=100_000
-	rbatch := schema.CreateReaderBatch(ropts)
-
-	reader, err := newReader(ropts, df)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	var totalRows int
-	var readResults []string
+	var vector []api.Value
 	for {
-		if err := reader.Next(rbatch); err != nil {
+		err = reader.Next(&rbatch)
+		if err!=nil {
 			t.Fatalf("%+v", err)
 		}
-
-		if rbatch.ReadRows==0 {
+		vector= append(vector, rbatch.Vector...)
+		if rbatch.Len()==0 {
 			break
 		}
+	}
+	reader.Close()
+	assert.Equal(t, values, vector)
+}
 
-		totalRows+= int(rbatch.ReadRows)
-		readResults= append(readResults, rbatch.Vector.([]string)...)
+
+func TestMultipleStripes(t *testing.T) {
+	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2, HasNulls: false}
+	//schemas, err := schema.Normalize()
+	//assert.Nil(t, err)
+
+	wopts := config.DefaultWriterOptions()
+	wopts.CompressionKind = pb.CompressionKind_ZLIB
+	wopts.StripeSize = 10_000
+	// todo: check chunkSize should not larger than stripe size
+	wopts.ChunkSize= 8_000
+	wbatch := api.CreateWriterBatch(schema, wopts)
+
+	rows := 1_000
+	values := make([]api.Value, rows)
+	for i := 0; i < rows; i++ {
+		values[i].V = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
+	}
+	wbatch.Vector = values
+
+	buf := make([]byte, 200_000)
+	f := orcio.NewMockFile(buf)
+
+	//writer, err := newStripeWriter(f, 0, schemas, &wopts)
+	writer, err := newWriter(&schema, &wopts, f)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.Write(&wbatch); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("%+v", err)
 	}
 
-	assert.Equal(t, 61000, totalRows)
-	assert.Equal(t, vector, readResults[:30_000])
-	assert.Equal(t, vector, readResults[30_000:60_000])
-	assert.Equal(t, vector[:1000], readResults[60_000:61_000])
+	ropts:= config.DefaultReaderOptions()
+	ropts.RowSize= 2000
+	reader, err:=newReader(&ropts, f)
+	assert.Nil(t, err)
+	rbatch:= api.CreateReaderBatch(*reader.GetSchema(), ropts )
+
+	var vector []api.Value
+	for {
+		err = reader.Next(&rbatch)
+		if err!=nil {
+			t.Fatalf("%+v", err)
+		}
+		vector= append(vector, rbatch.Vector...)
+		if rbatch.Len()==0 {
+			break
+		}
+	}
+	reader.Close()
+	assert.Equal(t, values, vector)
 }
-*/

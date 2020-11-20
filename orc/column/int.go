@@ -3,7 +3,6 @@ package column
 import (
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
-	"github.com/patrickhuang888/goorc/orc/encoding"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
@@ -52,9 +51,7 @@ func (w *intWriter) Write(value api.Value) error {
 
 	if hasValue {
 		v := value.V.(int64)
-
-		// ?? zigzag before encoding
-		if err := w.data.Write(encoding.Zigzag(v)); err != nil {
+		if err := w.data.Write(v); err != nil {
 			return err
 		}
 
@@ -179,36 +176,30 @@ func (c *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("stream unknown")
 }
 
-func (c *intV2Reader) Next(values []api.Value) error {
-	if err := c.checkInit(); err != nil {
-		return err
+func (c *intV2Reader) Next() (value api.Value, err error) {
+	if err = c.checkInit(); err != nil {
+		return
 	}
 
 	if c.schema.HasNulls {
-		for i := 0; i < len(values); i++ {
-			p, err := c.present.Next()
-			if err != nil {
-				return err
-			}
-			values[i].Null = !p
+		var p bool
+		if p, err = c.present.Next(); err != nil {
+			return
 		}
-	}
-	for i := 0; i < len(values); i++ {
-		hasValue := true
-		if c.schema.HasNulls && values[i].Null {
-			hasValue = false
-		}
-
-		if hasValue {
-			v, err := c.data.NextInt64()
-			if err != nil {
-				return err
-			}
-			values[i].V = v
-		}
+		value.Null = !p
 	}
 
-	return nil
+	hasValue := true
+	if c.schema.HasNulls && value.Null {
+		hasValue = false
+	}
+	if hasValue {
+		value.V, err = c.data.NextInt64()
+		if err != nil {
+			return
+		}
+	}
+	return
 }
 
 func (c intV2Reader) checkInit() error {
@@ -269,11 +260,11 @@ func (c *intV2Reader) Seek(rowNumber uint64) error {
 		return err
 	}
 
-	vec := make([]api.Value, 0, strideOffset)
-	if err := c.Next(vec); err != nil {
-		return err
+	for i := 0; i < int(strideOffset); i++ {
+		if _, err := c.Next(); err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 

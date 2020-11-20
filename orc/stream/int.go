@@ -7,7 +7,6 @@ import (
 	"github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 type IntRLV2Reader struct {
@@ -22,12 +21,12 @@ type IntRLV2Reader struct {
 }
 
 func NewIntRLV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, signed bool, in io.File) *IntRLV2Reader {
-	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}, decoder: encoding.NewIntRLV2(signed)}
+	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}, decoder: encoding.NewIntRLV2(signed), signed: signed}
 }
 
 func (r *IntRLV2Reader) NextInt64() (int64, error) {
 	if !r.signed {
-		return 0, errors.New("should be un-singed int")
+		return 0, errors.New("should be singed int")
 	}
 
 	if r.pos >= len(r.values) {
@@ -37,7 +36,7 @@ func (r *IntRLV2Reader) NextInt64() (int64, error) {
 			return 0, err
 		}
 		r.values = vector.([]int64)
-		log.Tracef("stream long read column %d has read %d values", r.stream.info.GetColumn(), len(r.values))
+		logger.Tracef("stream long read column %d has read %d values", r.stream.info.GetColumn(), len(r.values))
 	}
 
 	v := r.values[r.pos]
@@ -47,17 +46,20 @@ func (r *IntRLV2Reader) NextInt64() (int64, error) {
 
 func (r *IntRLV2Reader) NextUInt64() (uint64, error) {
 	if r.signed {
-		return 0, errors.New("should be signed int")
+		return 0, errors.New("should be un-signed int")
 	}
 
-	if r.pos >= len(r.values) {
+	if r.pos >= len(r.uvalues) {
 		r.pos = 0
 		vector, err := r.decoder.Decode(r.stream)
 		if err != nil {
 			return 0, err
 		}
 		r.uvalues = vector.([]uint64)
-		log.Tracef("stream long read column %d has read %d values", r.stream.info.GetColumn(), len(r.values))
+		if len(r.uvalues)==0 {
+			return 0, errors.New("no uint64 values decoded")
+		}
+		logger.Debugf("stream LONG read column %d has read %d unsiged values", r.stream.info.GetColumn(), len(r.uvalues))
 	}
 
 	v := r.uvalues[r.pos]
@@ -82,7 +84,11 @@ func (r *IntRLV2Reader) GetAllUInts() ([]uint64, error) {
 }
 
 func (r *IntRLV2Reader) Finished() bool {
-	return r.stream.finished() && (r.pos == len(r.values))
+	if r.signed {
+		return r.stream.finished() && (r.pos == len(r.values))
+	}else {
+		return r.stream.finished() && (r.pos == len(r.uvalues))
+	}
 }
 
 func (r *IntRLV2Reader) Seek(chunkOffset, uncompressedOffset, pos uint64) error {
