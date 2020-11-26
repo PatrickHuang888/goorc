@@ -117,7 +117,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
-		//writer, err = newStructWriter(schema, opts)
+		w = newStructWriter(schema, opts)
 
 	case pb.Type_LIST:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {

@@ -44,26 +44,22 @@ func (w *intWriter) Write(value api.Value) error {
 		}
 	}
 
-	hasValue := true
-	if w.schema.HasNulls && value.Null {
-		hasValue = false
+	if value.Null {
+		return nil
 	}
 
-	if hasValue {
-		v := value.V.(int64)
-		if err := w.data.Write(v); err != nil {
-			return err
-		}
-
-		*w.stats.IntStatistics.Sum += v
-		if v < *w.stats.IntStatistics.Minimum {
-			*w.stats.IntStatistics.Minimum = v
-		}
-		if v > *w.stats.IntStatistics.Maximum {
-			*w.stats.IntStatistics.Maximum = v
-		}
+	v := value.V.(int64)
+	if err := w.data.Write(v); err != nil {
+		return err
 	}
 
+	*w.stats.IntStatistics.Sum += v
+	if v < *w.stats.IntStatistics.Minimum {
+		*w.stats.IntStatistics.Minimum = v
+	}
+	if v > *w.stats.IntStatistics.Maximum {
+		*w.stats.IntStatistics.Maximum = v
+	}
 	*w.stats.NumberOfValues++
 
 	// todo: write index
@@ -71,12 +67,13 @@ func (w *intWriter) Write(value api.Value) error {
 }
 
 func (w intWriter) Size() int {
-	return w.present.Size() + w.data.Size()
+	if w.schema.HasNulls {
+		return w.present.Size() + w.data.Size()
+	}
+	return w.data.Size()
 }
 
 func (w intWriter) Flush() error {
-	w.flushed = true
-
 	if w.schema.HasNulls {
 		if err := w.present.Flush(); err != nil {
 			return err
@@ -87,6 +84,8 @@ func (w intWriter) Flush() error {
 		return err
 	}
 	*w.stats.BytesOnDisk += w.data.Info().GetLength()
+
+	w.flushed = true
 	return nil
 }
 
@@ -110,16 +109,14 @@ func (w *intWriter) WriteOut(out io.Writer) (n int64, err error) {
 }
 
 func (w intWriter) GetIndex() *pb.RowIndex {
-	panic("implement me")
+	return w.index
 }
 
 func (w intWriter) GetStreamInfos() []*pb.Stream {
-	var ss []*pb.Stream
-	if w.present.Info().GetLength() != 0 {
-		ss = append(ss, w.present.Info())
+	if w.schema.HasNulls {
+		return []*pb.Stream{w.present.Info(), w.data.Info()}
 	}
-	ss = append(ss, w.data.Info())
-	return ss
+	return []*pb.Stream{w.data.Info()}
 }
 
 func (w intWriter) GetStats() *pb.ColumnStatistics {
@@ -128,7 +125,6 @@ func (w intWriter) GetStats() *pb.ColumnStatistics {
 
 func (w *intWriter) Reset() {
 	w.reset()
-	w.present.Reset()
 	w.data.Reset()
 }
 
@@ -139,8 +135,7 @@ func newIntV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f o
 type intV2Reader struct {
 	*reader
 
-	present *stream.BoolReader
-	data    *stream.IntRLV2Reader
+	data *stream.IntRLV2Reader
 }
 
 func (c *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
@@ -181,6 +176,7 @@ func (c *intV2Reader) Next() (value api.Value, err error) {
 		return
 	}
 
+	// if parent struct has nulls then child like int's schema will not has nulls ?
 	if c.schema.HasNulls {
 		var p bool
 		if p, err = c.present.Next(); err != nil {
@@ -189,11 +185,7 @@ func (c *intV2Reader) Next() (value api.Value, err error) {
 		value.Null = !p
 	}
 
-	hasValue := true
-	if c.schema.HasNulls && value.Null {
-		hasValue = false
-	}
-	if hasValue {
+	if !value.Null {
 		value.V, err = c.data.NextInt64()
 		if err != nil {
 			return

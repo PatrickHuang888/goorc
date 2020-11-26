@@ -282,22 +282,31 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 
 // a stripe is typically  ~200MB
 func (stripe *stripeReader) next(batch *api.ColumnVector) (end bool, err error) {
-	i := stripe.cursor
-	for ; i < stripe.numberOfRows && len(batch.Vector) < cap(batch.Vector); i++ {
+	schema:= stripe.schemas[batch.Id]
+	i:= 0
+	for ; stripe.cursor+uint64(i) < stripe.numberOfRows && len(batch.Vector) < cap(batch.Vector); i++ {
 		var v api.Value
 		if v, err = stripe.columnReaders[batch.Id].Next();err != nil {
 			return
 		}
 		batch.Vector = append(batch.Vector, v)
-		for _, child := range batch.Children {
-			var v api.Value
-			if v, err = stripe.columnReaders[child.Id].Next();err != nil {
-				return
+
+		for i:=0; i<len(batch.Children); i++ {
+			var childValue api.Value
+			if schema.HasNulls && schema.Kind == pb.Type_STRUCT{
+				if v.Null {
+					childValue.Null= true
+				}
 			}
-			child.Vector = append(child.Vector, v)
+			if !childValue.Null {
+				if childValue, err = stripe.columnReaders[batch.Children[i].Id].Next(); err != nil {
+					return
+				}
+			}
+			batch.Children[i].Vector = append(batch.Children[i].Vector, childValue)
 		}
 	}
-	stripe.cursor = i
+	stripe.cursor += uint64(i)
 	logger.Debugf("stripe %d column %d has cursor %d", stripe.index, batch.Id, stripe.cursor)
 	end= stripe.cursor+1>=stripe.numberOfRows
 	return

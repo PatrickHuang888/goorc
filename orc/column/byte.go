@@ -16,50 +16,44 @@ type byteWriter struct {
 }
 
 func (c *byteWriter) Write(value api.Value) error {
-	hasValue := true
-
 	if c.schema.HasNulls {
 		if err := c.present.Write(!value.Null); err != nil {
 			return err
 		}
-		if value.Null {
-			hasValue = false
-		}
 	}
 
-	if hasValue {
-		if err := c.data.Write(value.V); err != nil {
-			return err
-		}
+	if value.Null {
+		return nil
+	}
 
-		*c.stats.BinaryStatistics.Sum++
-		*c.stats.NumberOfValues++
+	if err := c.data.Write(value.V); err != nil {
+		return err
+	}
 
-		if c.opts.WriteIndex {
-			c.indexInRows++
+	*c.stats.BinaryStatistics.Sum++
+	*c.stats.NumberOfValues++
 
-			if c.indexInRows >= c.opts.IndexStride {
-				c.present.MarkPosition()
-				c.data.MarkPosition()
+	if c.opts.WriteIndex {
+		c.indexInRows++
+		if c.indexInRows >= c.opts.IndexStride {
+			c.present.MarkPosition()
+			c.data.MarkPosition()
 
-				if c.index == nil {
-					c.index = &pb.RowIndex{}
-				}
-				c.index.Entry = append(c.index.Entry, &pb.RowIndexEntry{Statistics: c.indexStats})
-				// new stats
-				c.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
-				if c.schema.HasNulls {
-					*c.indexStats.HasNull = true
-				}
-				// does not write index statistic bytes on disk, java impl either
-				c.indexInRows = 0
+			if c.index == nil {
+				c.index = &pb.RowIndex{}
 			}
-
-			*c.indexStats.BinaryStatistics.Sum++
-			*c.indexStats.NumberOfValues++
+			c.index.Entry = append(c.index.Entry, &pb.RowIndexEntry{Statistics: c.indexStats})
+			// new stats
+			c.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+			if c.schema.HasNulls {
+				*c.indexStats.HasNull = true
+			}
+			// does not write index statistic bytes on disk, java impl either
+			c.indexInRows = 0
 		}
+		*c.indexStats.BinaryStatistics.Sum++
+		*c.indexStats.NumberOfValues++
 	}
-
 	return nil
 }
 
@@ -155,7 +149,6 @@ func (c *byteWriter) WriteOut(out io.Writer) (n int64, err error) {
 
 type byteReader struct {
 	*reader
-	present *stream.BoolReader
 	data    *stream.ByteReader
 }
 
@@ -197,17 +190,13 @@ func (c *byteReader) Next() (value api.Value, err error) {
 
 	if c.schema.HasNulls {
 		var p bool
-		if p, err = c.present.Next();err != nil {
+		if p, err = c.present.Next(); err != nil {
 			return
 		}
-		value.Null= !p
+		value.Null = !p
 	}
 
-	hasValue := true
-	if c.schema.HasNulls && value.Null {
-		hasValue = false
-	}
-	if hasValue {
+	if !value.Null {
 		value.V, err = c.data.Next()
 		if err != nil {
 			return

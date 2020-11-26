@@ -33,61 +33,59 @@ type stringDirectV2Writer struct {
 }
 
 func (w *stringDirectV2Writer) Write(value api.Value) error {
-	hasValue := true
 	if w.schema.HasNulls {
 		w.present.Write(!value.Null)
-		if value.Null {
-			hasValue = false
-		}
 	}
 
-	if hasValue {
-		s, ok := value.V.(string)
-		if !ok {
-			return errors.New("string column writing, value should be string")
-		}
-		// string encoded in utf-8
-		data := []byte(s)
-		if err := w.data.Write(data); err != nil {
-			return err
-		}
-		if err := w.length.Write(uint64(len(data))); err != nil {
-			return err
-		}
+	if value.Null {
+		return nil
+	}
 
-		*w.stats.NumberOfValues++
-		*w.stats.StringStatistics.Sum += int64(len(data))
-		// todo: min, max, lowerbound, upperbound
+	s, ok := value.V.(string)
+	if !ok {
+		return errors.New("string column writing, value should be string")
+	}
+	// string encoded in utf-8
+	data := []byte(s)
+	if err := w.data.Write(data); err != nil {
+		return err
+	}
+	if err := w.length.Write(uint64(len(data))); err != nil {
+		return err
+	}
 
-		if w.opts.WriteIndex {
-			w.indexInRows++
-			if w.indexInRows >= w.opts.IndexStride {
-				if w.schema.HasNulls {
-					w.present.MarkPosition()
-				}
-				w.data.MarkPosition()
-				w.length.MarkPosition()
+	*w.stats.NumberOfValues++
+	*w.stats.StringStatistics.Sum += int64(len(data))
+	// todo: min, max, lowerbound, upperbound
 
-				if w.index == nil {
-					w.index = &pb.RowIndex{}
-				}
-				w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Statistics: w.indexStats})
-				// new stats
-				// no index statistic bytes on disk, java writer neither
-				w.indexStats = &pb.ColumnStatistics{StringStatistics: &pb.StringStatistics{
-					Maximum: new(string), Minimum: new(string), Sum: new(int64), LowerBound: new(string), UpperBound: new(string)},
-					NumberOfValues: new(uint64), HasNull: new(bool)}
-				if w.schema.HasNulls {
-					*w.indexStats.HasNull = true
-				}
+	if w.opts.WriteIndex {
+		w.indexInRows++
+		if w.indexInRows >= w.opts.IndexStride {
+			if w.schema.HasNulls {
+				w.present.MarkPosition()
+			}
+			w.data.MarkPosition()
+			w.length.MarkPosition()
 
-				w.indexInRows = 0
+			if w.index == nil {
+				w.index = &pb.RowIndex{}
+			}
+			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Statistics: w.indexStats})
+			// new stats
+			// no index statistic bytes on disk, java writer neither
+			w.indexStats = &pb.ColumnStatistics{StringStatistics: &pb.StringStatistics{
+				Maximum: new(string), Minimum: new(string), Sum: new(int64), LowerBound: new(string), UpperBound: new(string)},
+				NumberOfValues: new(uint64), HasNull: new(bool)}
+			if w.schema.HasNulls {
+				*w.indexStats.HasNull = true
 			}
 
-			*w.indexStats.NumberOfValues++
-			*w.indexStats.StringStatistics.Sum += int64(len(data))
-			// todo: min, max, lowerbound, upperbound
+			w.indexInRows = 0
 		}
+
+		*w.indexStats.NumberOfValues++
+		*w.indexStats.StringStatistics.Sum += int64(len(data))
+		// todo: min, max, lowerbound, upperbound
 	}
 	return nil
 }
@@ -190,7 +188,6 @@ func newStringDirectV2Reader(opts *config.ReaderOptions, schema *api.TypeDescrip
 
 type stringDirectV2Reader struct {
 	*reader
-	present *stream.BoolReader
 	data    *stream.StringContentsReader
 	length  *stream.IntRLV2Reader
 }
@@ -256,7 +253,7 @@ func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
 		if err != nil {
 			return
 		}
-		if value.V, err = r.data.NextString(l);err != nil {
+		if value.V, err = r.data.NextString(l); err != nil {
 			return
 		}
 	}

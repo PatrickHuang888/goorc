@@ -120,7 +120,7 @@ func CreateReaderBatch(td TypeDescription, opts config.ReaderOptions) ColumnVect
 // should normalize first
 func CreateWriterBatch(td TypeDescription, opts config.WriterOptions) ColumnVector {
 	// set id
-	td.Normalize()
+	//td.Normalize()
 
 	if td.Kind == pb.Type_STRUCT {
 		var children []ColumnVector

@@ -12,7 +12,6 @@ import (
 
 type structReader struct {
 	*reader
-	present *stream.BoolReader
 	//children []Reader
 }
 
@@ -113,4 +112,76 @@ func (c *structReader) Close() {
 	if c.schema.HasNulls {
 		c.present.Close()
 	}
+}
+
+func newStructWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+	// todo: struct stats
+	//stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
+	var present *stream.Writer
+	if schema.HasNulls {
+		//*stats.HasNull = true
+		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	}
+	return &structWriter{&writer{schema: schema, opts: opts, present: present}}
+}
+
+type structWriter struct {
+	*writer
+}
+
+func (w *structWriter) Write(value api.Value) error {
+	if w.schema.HasNulls {
+		if err := w.present.Write(!value.Null); err != nil {
+			return err
+		}
+		// todo: write stats?
+		// todo: index
+	}
+	return nil
+}
+
+func (w *structWriter) Flush() error {
+	if w.schema.HasNulls {
+		if err:=w.present.Flush();err!=nil {
+			return err
+		}
+		w.flushed= true
+	}
+	return nil
+}
+
+func (w *structWriter) WriteOut(out io.Writer) (n int64, err error) {
+	if !w.flushed {
+		err = errors.New("not flushed")
+		return
+	}
+
+	if w.schema.HasNulls {
+		if !w.flushed {
+			err = errors.New("not flushed!")
+			return
+		}
+		return w.present.WriteOut(out)
+	}
+	return 0, nil
+}
+
+func (w structWriter) GetStreamInfos() []*pb.Stream {
+	if w.schema.HasNulls {
+		return []*pb.Stream{w.present.Info()}
+	}
+	return nil
+}
+
+func (w structWriter) Reset() {
+	if w.schema.HasNulls {
+		w.reset()
+	}
+}
+
+func (w structWriter) Size() int {
+	if w.schema.HasNulls {
+		return w.present.Size()
+	}
+	return 0
 }
