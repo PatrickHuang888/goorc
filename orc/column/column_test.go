@@ -116,46 +116,50 @@ func TestIntV2WithPresents(t *testing.T) {
 	assert.Equal(t, values, vector)
 }
 
-/*func TestBool(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
+func TestBool(t *testing.T) {
+	schema := api.TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
+	wopts := config.DefaultWriterOptions()
 
 	rows := 104
-	values := make([]bool, rows)
+	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
-		values[i] = true
+		values[i].V = true
 	}
-	values[0] = false
-	values[45] = false
-	values[103] = false
-	batch.Vector = values
+	values[0].V = false
+	values[45].V = false
+	values[103].V = false
 
-	writer := newBoolWriter(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
-	if err != nil {
+	writer := newBoolWriter(&schema, &wopts).(*boolWriter)
+	for _, v := range values {
+		if err:= writer.Write(v);err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, rows, n)
 
-	ropts := orc.DefaultReaderOptions()
-	rbatch := schema.CreateReaderBatch(ropts)
+	f := orcio.NewMockFile(make([]byte, 1024))
 
-	bs := &bufSeeker{writer.data.buf}
-	kind_ := pb.Stream_DATA
-	length_ := uint64(writer.data.buf.Len())
-	info := &pb.Stream{Column: &schema.Id, Kind: &kind_, Length: &length_}
-
-	cr := &orc.treeReader{schema: schema, numberOfRows: uint64(rows)}
-	dataStream := &orc.streamReader{opts: ropts, info: info, buf: &bytes.Buffer{}, in: bs}
-	data := &orc.boolStreamReader{decoder: &encoding.BoolRunLength{&encoding.ByteRunLength{}}, stream: dataStream}
-	reader := &orc.boolReader{treeReader: cr, data: data}
-	err = reader.next(rbatch)
-	if err != nil {
+	if _, err := writer.WriteOut(f); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, values, rbatch.Vector)
-}*/
+
+	ropts := config.DefaultReaderOptions()
+
+	reader:= newBoolReader(&schema, &ropts, f)
+	err := reader.InitStream(writer.data.Info(), 0)
+	assert.Nil(t, err)
+
+	vector := make([]api.Value, rows)
+	for i:=0; i<rows;i++ {
+		if vector[i], err = reader.Next(); err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+
+	assert.Equal(t, values, vector)
+}
 
 /*func TestFloatColumnWithPresents(t *testing.T) {
 	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_FLOAT, HasNulls: true}
