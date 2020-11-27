@@ -15,9 +15,9 @@ type byteWriter struct {
 	data *stream.Writer
 }
 
-func (c *byteWriter) Write(value api.Value) error {
-	if c.schema.HasNulls {
-		if err := c.present.Write(!value.Null); err != nil {
+func (w *byteWriter) Write(value api.Value) error {
+	if w.schema.HasNulls {
+		if err := w.present.Write(!value.Null); err != nil {
 			return err
 		}
 	}
@@ -26,42 +26,42 @@ func (c *byteWriter) Write(value api.Value) error {
 		return nil
 	}
 
-	if err := c.data.Write(value.V); err != nil {
+	if err := w.data.Write(value.V); err != nil {
 		return err
 	}
 
-	*c.stats.BinaryStatistics.Sum++
-	*c.stats.NumberOfValues++
+	*w.stats.BinaryStatistics.Sum++
+	*w.stats.NumberOfValues++
 
-	if c.opts.WriteIndex {
-		c.indexInRows++
-		if c.indexInRows >= c.opts.IndexStride {
-			c.present.MarkPosition()
-			c.data.MarkPosition()
+	if w.opts.WriteIndex {
+		w.indexInRows++
+		if w.indexInRows >= w.opts.IndexStride {
+			w.present.MarkPosition()
+			w.data.MarkPosition()
 
-			if c.index == nil {
-				c.index = &pb.RowIndex{}
+			if w.index == nil {
+				w.index = &pb.RowIndex{}
 			}
-			c.index.Entry = append(c.index.Entry, &pb.RowIndexEntry{Statistics: c.indexStats})
+			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Statistics: w.indexStats})
 			// new stats
-			c.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
-			if c.schema.HasNulls {
-				*c.indexStats.HasNull = true
+			w.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+			if w.schema.HasNulls {
+				*w.indexStats.HasNull = true
 			}
 			// does not write index statistic bytes on disk, java impl either
-			c.indexInRows = 0
+			w.indexInRows = 0
 		}
-		*c.indexStats.BinaryStatistics.Sum++
-		*c.indexStats.NumberOfValues++
+		*w.indexStats.BinaryStatistics.Sum++
+		*w.indexStats.NumberOfValues++
 	}
 	return nil
 }
 
-func (c *byteWriter) Size() int {
-	if c.schema.HasNulls {
-		return c.present.Size() + c.data.Size()
+func (w *byteWriter) Size() int {
+	if w.schema.HasNulls {
+		return w.present.Size() + w.data.Size()
 	}
-	return c.data.Size()
+	return w.data.Size()
 }
 
 func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
@@ -76,38 +76,38 @@ func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writ
 	return &byteWriter{base, data}
 }
 
-func (c *byteWriter) Flush() error {
-	c.flushed = true
+func (w *byteWriter) Flush() error {
+	w.flushed = true
 
-	if c.schema.HasNulls {
-		if err := c.present.Flush(); err != nil {
+	if w.schema.HasNulls {
+		if err := w.present.Flush(); err != nil {
 			return err
 		}
 	}
-	if err := c.data.Flush(); err != nil {
+	if err := w.data.Flush(); err != nil {
 		return err
 	}
 
-	if c.schema.HasNulls {
-		*c.stats.BytesOnDisk = c.present.Info().GetLength()
+	if w.schema.HasNulls {
+		*w.stats.BytesOnDisk = w.present.Info().GetLength()
 	}
-	*c.stats.BytesOnDisk += c.data.Info().GetLength()
+	*w.stats.BytesOnDisk += w.data.Info().GetLength()
 
-	if c.opts.WriteIndex {
+	if w.opts.WriteIndex {
 		var pp [][]uint64
-		if c.schema.HasNulls {
-			pp = c.present.GetPositions()
-			if len(c.index.Entry) != len(pp) {
+		if w.schema.HasNulls {
+			pp = w.present.GetPositions()
+			if len(w.index.Entry) != len(pp) {
 				return errors.New("index entry and position error")
 			}
 		}
 
-		dp := c.data.GetPositions()
-		if len(c.index.Entry) != len(dp) {
+		dp := w.data.GetPositions()
+		if len(w.index.Entry) != len(dp) {
 			return errors.New("index entry and position error")
 		}
 
-		for i, e := range c.index.Entry {
+		for i, e := range w.index.Entry {
 			e.Positions = append(e.Positions, pp[i]...)
 			e.Positions = append(e.Positions, dp[i]...)
 		}
@@ -116,31 +116,31 @@ func (c *byteWriter) Flush() error {
 	return nil
 }
 
-func (c *byteWriter) GetStreamInfos() []*pb.Stream {
-	if c.schema.HasNulls {
-		return []*pb.Stream{c.present.Info(), c.data.Info()}
+func (w *byteWriter) GetStreamInfos() []*pb.Stream {
+	if w.schema.HasNulls {
+		return []*pb.Stream{w.present.Info(), w.data.Info()}
 	}
-	return []*pb.Stream{c.data.Info()}
+	return []*pb.Stream{w.data.Info()}
 }
 
-func (c *byteWriter) Reset() {
-	c.reset()
-	c.data.Reset()
+func (w *byteWriter) Reset() {
+	w.reset()
+	w.data.Reset()
 }
 
-func (c *byteWriter) WriteOut(out io.Writer) (n int64, err error) {
-	if !c.flushed {
+func (w *byteWriter) WriteOut(out io.Writer) (n int64, err error) {
+	if !w.flushed {
 		err = errors.New("not flushed!")
 		return
 	}
 
 	var np, nd int64
-	if c.schema.HasNulls {
-		if np, err = c.present.WriteOut(out); err != nil {
+	if w.schema.HasNulls {
+		if np, err = w.present.WriteOut(out); err != nil {
 			return
 		}
 	}
-	if nd, err = c.data.WriteOut(out); err != nil {
+	if nd, err = w.data.WriteOut(out); err != nil {
 		return
 	}
 	n = np + nd

@@ -7,7 +7,82 @@ import (
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
+	"io"
 )
+
+func NewFloatReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+	return &floatReader{reader: &reader{schema: schema, opts: opts, f: f}}
+}
+
+type floatReader struct {
+	*reader
+	data *stream.FloatReader
+}
+
+func (r *floatReader) InitStream(info *pb.Stream, startOffset uint64) error {
+	if info.GetKind() == pb.Stream_PRESENT {
+		ic, err := r.f.Clone()
+		if err != nil {
+			return err
+		}
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
+		return nil
+	}
+
+	if info.GetKind() == pb.Stream_DATA {
+		ic, err := r.f.Clone()
+		if err != nil {
+			return err
+		}
+		r.data = stream.NewFloatReader(r.opts, info, startOffset, ic)
+		return nil
+	}
+	return errors.New("stream kind error")
+}
+
+func (r *floatReader) Next() (value api.Value, err error) {
+	if err = r.checkInit(); err != nil {
+		return
+	}
+
+	if r.schema.HasNulls {
+		var p bool
+		if p, err = r.present.Next(); err != nil {
+			return
+		}
+		value.Null = !p
+	}
+
+	if !value.Null {
+		value.V, err = r.data.Next()
+		if err != nil {
+			return
+		}
+	}
+	return
+}
+
+func (r *floatReader) Seek(rowNumber uint64) error {
+	// todo:
+	return nil
+}
+
+func (r *floatReader) Close() {
+	if r.schema.HasNulls {
+		r.present.Close()
+	}
+	r.data.Close()
+}
+
+func (r floatReader) checkInit() error {
+	if r.data == nil {
+		return errors.New("stream data not initialized!")
+	}
+	if r.schema.HasNulls && r.present == nil {
+		return errors.New("stream present not initialized!")
+	}
+	return nil
+}
 
 func NewDoubleReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
 	return &doubleReader{reader: &reader{schema: schema, opts: opts, f: f}}
@@ -15,114 +90,219 @@ func NewDoubleReader(schema *api.TypeDescription, opts *config.ReaderOptions, f 
 
 type doubleReader struct {
 	*reader
-	present *stream.BoolReader
 	data *stream.DoubleReader
 }
 
-func (c *doubleReader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *doubleReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err := c.f.Clone()
+		ic, err := r.f.Clone()
 		if err != nil {
 			return err
 		}
-		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
 		return nil
 	}
 
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err := c.f.Clone()
+		ic, err := r.f.Clone()
 		if err != nil {
 			return err
 		}
-		c.data = stream.NewDoubleReader(c.opts, info, startOffset, ic)
+		r.data = stream.NewDoubleReader(r.opts, info, startOffset, ic)
 		return nil
 	}
 
 	return errors.New("stream kind error")
 }
 
-func (c *doubleReader) Next() (value api.Value, err error) {
-	/*vector := (*vec).([]float64)
-	vector = vector[:0]
+func (r *doubleReader) Next() (value api.Value, err error) {
+	if err = r.checkInit(); err != nil {
+		return
+	}
 
-	if !pFromParent {
-		if err = c.nextPresents(presents); err != nil {
+	if r.schema.HasNulls {
+		var p bool
+		if p, err = r.present.Next(); err != nil {
+			return
+		}
+		value.Null = !p
+	}
+
+	if !value.Null {
+		value.V, err = r.data.Next()
+		if err != nil {
 			return
 		}
 	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-		if len(*presents) == 0 || (len(*presents) != 0 && (*presents)[i]) {
-			var v float64
-			if v, err = c.data.Next(); err != nil {
-				return
-			}
-			vector = append(vector, v)
-		} else {
-			vector = append(vector, 0)
-		}
-
-		c.cursor++
-	}
-
-	*vec = vector
-	rows = len(vector)*/
 	return
 }
 
-func (c *doubleReader) seek(indexEntry *pb.RowIndexEntry) error {
-	pos := indexEntry.GetPositions()
+func (r *doubleReader) seek(indexEntry *pb.RowIndexEntry) error {
+	// todo:
+	/*pos := indexEntry.GetPositions()
 
-	if c.present == nil {
-		if c.opts.CompressionKind == pb.CompressionKind_NONE {
-			return c.data.Seek(pos[0], 0, pos[1])
+	if r.present == nil {
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			return r.data.Seek(pos[0], 0, pos[1])
 		}
 
-		return c.data.Seek(pos[0], pos[1], pos[2])
+		return r.data.Seek(pos[0], pos[1], pos[2])
 	}
 
-	if c.opts.CompressionKind == pb.CompressionKind_NONE {
-		if err := c.present.Seek(pos[0], 0, pos[1]); err != nil {
+	if r.opts.CompressionKind == pb.CompressionKind_NONE {
+		if err := r.present.Seek(pos[0], 0, pos[1]); err != nil {
 			return err
 		}
-		if err := c.data.Seek(pos[2], 0, pos[3]); err != nil {
+		if err := r.data.Seek(pos[2], 0, pos[3]); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := c.present.Seek(pos[0], pos[1], pos[2]); err != nil {
+	if err := r.present.Seek(pos[0], pos[1], pos[2]); err != nil {
 		return err
 	}
-	if err := c.data.Seek(pos[3], pos[4], pos[5]); err != nil {
+	if err := r.data.Seek(pos[3], pos[4], pos[5]); err != nil {
 		return err
-	}
+	}*/
 	return nil
 }
 
-func (c *doubleReader) Seek(rowNumber uint64) error {
-	if !c.opts.HasIndex {
+func (r *doubleReader) Seek(rowNumber uint64) error {
+	if !r.opts.HasIndex {
 		return errors.New("no index")
 	}
 
-	stride := rowNumber / c.opts.IndexStride
-	strideOffset := rowNumber % (stride * c.opts.IndexStride)
+	stride := rowNumber / r.opts.IndexStride
+	strideOffset := rowNumber % (stride * r.opts.IndexStride)
 
-	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
+	if err := r.seek(r.index.GetEntry()[stride]); err != nil {
 		return err
 	}
 
-	for i:=0;  i<int(strideOffset); i++ {
-		if _, err := c.Next(); err != nil {
+	for i := 0; i < int(strideOffset); i++ {
+		if _, err := r.Next(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *doubleReader) Close() {
-	if c.schema.HasNulls {
-		c.present.Close()
+func (r *doubleReader) Close() {
+	if r.schema.HasNulls {
+		r.present.Close()
 	}
-	c.data.Close()
+	r.data.Close()
+}
+
+func (r doubleReader) checkInit() error {
+	if r.data == nil {
+		return errors.New("stream data not initialized!")
+	}
+	if r.schema.HasNulls && r.present == nil {
+		return errors.New("stream present not initialized!")
+	}
+	return nil
+}
+
+func newFloatWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+	// todo:stats
+	var present *stream.Writer
+	if schema.HasNulls {
+		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	}
+	base := &writer{schema: schema, opts: opts, present: present}
+	data := stream.NewFloatWriter(schema.Id, pb.Stream_DATA, opts)
+	return &floatWriter{base, data}
+}
+
+func newDoubleWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+	// todo:stats
+	var present *stream.Writer
+	if schema.HasNulls {
+		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	}
+	base := &writer{schema: schema, opts: opts, present: present}
+	data := stream.NewDoubleWriter(schema.Id, pb.Stream_DATA, opts)
+	return &floatWriter{base, data}
+}
+
+type floatWriter struct {
+	*writer
+	data *stream.Writer
+}
+
+func (w *floatWriter) Write(value api.Value) error {
+	if w.schema.HasNulls {
+		if err := w.present.Write(!value.Null); err != nil {
+			return err
+		}
+	}
+
+	if value.Null {
+		return nil
+	}
+
+	if err := w.data.Write(value.V); err != nil {
+		return err
+	}
+
+	// todo: stats
+	// todo: index
+	return nil
+}
+
+func (w *floatWriter) Flush() error {
+	w.flushed = true
+
+	if w.schema.HasNulls {
+		if err := w.present.Flush(); err != nil {
+			return err
+		}
+	}
+	if err := w.data.Flush(); err != nil {
+		return err
+	}
+
+	// todo: stats
+	// todo: index
+	return nil
+}
+
+func (w *floatWriter) WriteOut(out io.Writer) (n int64, err error) {
+	if !w.flushed {
+		err = errors.New("not flushed!")
+		return
+	}
+
+	var np, nd int64
+	if w.schema.HasNulls {
+		if np, err = w.present.WriteOut(out); err != nil {
+			return
+		}
+	}
+	if nd, err = w.data.WriteOut(out); err != nil {
+		return
+	}
+	n = np + nd
+	return
+}
+
+func (w floatWriter) GetStreamInfos() []*pb.Stream {
+	if w.schema.HasNulls {
+		return []*pb.Stream{w.present.Info(), w.data.Info()}
+	}
+	return []*pb.Stream{w.data.Info()}
+}
+
+func (w *floatWriter) Reset() {
+	w.reset()
+	w.data.Reset()
+}
+
+func (w floatWriter) Size() int {
+	if w.schema.HasNulls {
+		return w.present.Size() + w.data.Size()
+	}
+	return w.data.Size()
 }

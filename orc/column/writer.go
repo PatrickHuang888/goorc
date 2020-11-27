@@ -51,7 +51,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		return nil, errors.New("encoding not impl")
 
 	case pb.Type_FLOAT:
-		//writer = newFloatWriter(schema, opts)
+		w = newFloatWriter(schema, opts)
 	case pb.Type_DOUBLE:
 		//writer = newDoubleWriter(schema, opts)
 

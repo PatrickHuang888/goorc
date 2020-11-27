@@ -165,25 +165,27 @@ func TestFindBytesRepeats(t *testing.T) {
 	assert.Equal(t, 0, len(repeats))
 }
 
-/*func TestDouble(test *testing.T) {
-	vs := []float64{0.0001, 125.001, 1343822337.759, 0.8}
-	c := &ieee754Double{}
+func TestDouble(test *testing.T) {
+	values := []float64{0.0001, 125.001, 1343822337.759, 0.8}
+	e := NewDoubleEncoder()
 	buf := &bytes.Buffer{}
 
-	if err := c.Encode(buf, vs); err != nil {
-		test.Fatalf("fail %+v", err)
+	for _, v := range values {
+		if err := e.Encode(v, buf); err != nil {
+			test.Fatalf("fail %+v", err)
+		}
 	}
 
-	var values []float64
+	var vector []float64
 	for ; buf.Len() != 0; {
-		value, err := c.Decode(buf)
+		value, err := DecodeDouble(buf)
 		if err != nil {
 			test.Fatalf("fail %+v", err)
 		}
-		values = append(values, value)
+		vector = append(vector, value)
 	}
-	assert.Equal(test, vs, values)
-}*/
+	assert.Equal(test, values, vector)
+}
 
 /*func TestIntRunLengthV1(t *testing.T) {
 	t1 := bytes.NewBuffer([]byte{0x61, 0x00, 0x07})
@@ -325,17 +327,17 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 
 func TestIntRunLengthV2Direct(t *testing.T) {
 	irl := NewIntRLV2(false)
-	buf:= &bytes.Buffer{}
+	buf := &bytes.Buffer{}
 
 	//uint
 	uvs := []uint64{23713, 57005, 43806, 48879}
 	encoded := []byte{0x5e, 0x03, 0x5c, 0xa1, 0xde, 0xad, 0xab, 0x1e, 0xbe, 0xef}
 	for _, v := range uvs {
-		if err:= irl.Encode(v, buf);err!=nil {
+		if err := irl.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
-	if err:= irl.Flush(buf);err!=nil {
+	if err := irl.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, encoded, buf.Bytes())
@@ -347,11 +349,11 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	uvs = []uint64{999, 900203003, 688888888, 857340643}
 	buf.Reset()
 	for _, v := range uvs {
-		if err = irl.Encode(v, buf);err!=nil {
+		if err = irl.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
-	err= irl.Flush(buf)
+	err = irl.Flush(buf)
 	assert.Nil(t, err)
 	vector, err = irl.Decode(buf)
 	assert.Nil(t, err)
@@ -401,21 +403,21 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	irl.Reset()
 
 	// test width 16
-	uvalue:=uint64(0x5ff)
-	irl.signed= false
+	uvalue := uint64(0x5ff)
+	irl.signed = false
 	buf.Reset()
-	err=irl.Encode(uvalue, buf)
+	err = irl.Encode(uvalue, buf)
 	assert.Nil(t, err)
-	err=irl.Flush(buf)
+	err = irl.Flush(buf)
 	assert.Nil(t, err)
-	vector, err=irl.Decode(buf)
+	vector, err = irl.Decode(buf)
 	assert.Nil(t, err)
 	assert.Equal(t, []uint64{uvalue}, vector.([]uint64))
 	irl.Reset()
 
 	// test width 11
-	uvs= []uint64{0b100_0000_0001, 0b100_0000_0011}
-	irl.signed=false
+	uvs = []uint64{0b100_0000_0001, 0b100_0000_0011}
+	irl.signed = false
 	buf.Reset()
 	if err := irl.writeDirect(buf, false, uvs); err != nil {
 		t.Fatalf("%+v", err)
@@ -433,7 +435,7 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 		2140, 2150, 2160, 2170, 2180, 2190}
 	bs := []byte{0x8e, 0x13, 0x2b, 0x21, 0x07, 0xd0, 0x1e, 0x00, 0x14, 0x70, 0x28, 0x32, 0x3c, 0x46, 0x50, 0x5a,
 		0x64, 0x6e, 0x78, 0x82, 0x8c, 0x96, 0xa0, 0xaa, 0xb4, 0xbe, 0xfc, 0xe8}
-	buf:= bytes.NewBuffer(bs)
+	buf := bytes.NewBuffer(bs)
 
 	vector, err := irl.Decode(buf)
 	assert.Nil(t, err)
@@ -441,12 +443,12 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 	irl.Reset()
 
 	buf.Reset()
-	for _, v :=range values {
+	for _, v := range values {
 		if err := irl.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
-	err=irl.Flush(buf)
+	err = irl.Flush(buf)
 	assert.Nil(t, err)
 	assert.Equal(t, bs, buf.Bytes())
 
@@ -454,11 +456,11 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 		-2140, -2150, -2160, -2170, -2180, -2190}
 	buf.Reset()
 	for _, v := range values {
-		if err := irl.Encode(v,buf); err != nil {
+		if err := irl.Encode(v, buf); err != nil {
 			t.Fatalf("encoding error %+v", err)
 		}
 	}
-	err=irl.Flush(buf)
+	err = irl.Flush(buf)
 	assert.Nil(t, err)
 	if vector, err = irl.Decode(buf); err != nil {
 		t.Fatalf("decoding error %+v", err)
@@ -477,7 +479,6 @@ func TestIntRunLengthV2(t *testing.T) {
 	assert.Equal(t, 5, len(vector.([]uint64)))
 	assert.Equal(t, uint64(10000), vector.([]uint64)[0])
 
-
 	irl.signed = true
 	values := make([]int64, 10)
 	for i := 0; i < 10; i++ {
@@ -487,7 +488,7 @@ func TestIntRunLengthV2(t *testing.T) {
 		err = irl.Encode(v, buf)
 		assert.Nil(t, err)
 	}
-	err=irl.Flush(buf)
+	err = irl.Flush(buf)
 	assert.Nil(t, err)
 	vector, err = irl.Decode(buf)
 	assert.Nil(t, err)
@@ -497,7 +498,7 @@ func TestIntRunLengthV2(t *testing.T) {
 	// direct
 	uvalues := []uint64{23713, 43806, 57005, 48879}
 	bs = []byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef}
-	irl.signed= false
+	irl.signed = false
 	buf = bytes.NewBuffer(bs)
 	vector, err = irl.Decode(buf)
 	assert.Nil(t, err)
@@ -540,7 +541,7 @@ func TestNanoEncoding(t *testing.T) {
 	assert.Equal(t, uint64(0x0c), EncodingNano(uint64(100000)))
 }
 
-func TestBoolRunLength (t *testing.T) {
+func TestBoolRunLength(t *testing.T) {
 	values := []bool{true, false, false, false, false, false, false, false}
 	encoded := []byte{0xff, 0x80}
 
@@ -572,7 +573,7 @@ func TestBoolRunLength (t *testing.T) {
 
 	buf.Reset()
 	for _, v := range values {
-		if err = brl.Encode(v, buf);err != nil {
+		if err = brl.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
@@ -594,8 +595,8 @@ func TestBoolRunLength (t *testing.T) {
 	values[99] = true
 
 	buf.Reset()
-	for _, v := range values{
-		if err = brl.Encode(v, buf);err != nil {
+	for _, v := range values {
+		if err = brl.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		//if i==99 {
@@ -629,7 +630,7 @@ func TestBoolRunLength (t *testing.T) {
 
 	buf.Reset()
 	for _, v := range bb {
-		if err= brl.Encode(v, buf);err!=nil {
+		if err = brl.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}

@@ -19,10 +19,6 @@ type byteRunLength struct {
 	values []byte
 }
 
-/*func (e byteRunLength) BufferedSize() int {
-	return e.buf.Len()
-}*/
-
 func NewByteEncoder() *byteRunLength {
 	e := &byteRunLength{values: make([]byte, MAX_BYTE_RL), offset: -1}
 	return e

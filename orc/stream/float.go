@@ -18,11 +18,10 @@ func NewFloatReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, i
 }
 
 func (r *FloatReader) Next() (v float32, err error) {
-
 	return encoding.DecodeFloat(r.stream)
 }
 
-func (r *FloatReader) Finished() bool {
+func (r FloatReader) Finished() bool {
 	return r.stream.finished()
 }
 
@@ -43,14 +42,23 @@ func (r *FloatReader) Close() {
 }
 
 type DoubleReader struct {
-	*FloatReader
+	stream *reader
 }
 
 func NewDoubleReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *DoubleReader {
-	fr := NewFloatReader(opts, info, start, in)
-	return &DoubleReader{FloatReader: fr}
+	return &DoubleReader{stream: &reader{opts: opts, start: start, info: info, buf: &bytes.Buffer{}, in: in}}
 }
 
 func (r *DoubleReader) Next() (v float64, err error) {
 	return encoding.DecodeDouble(r.stream)
+}
+
+// todo: seek
+
+func (r DoubleReader) Finished() bool {
+	return r.stream.finished()
+}
+
+func (r *DoubleReader) Close() {
+	r.stream.Close()
 }

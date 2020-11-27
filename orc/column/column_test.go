@@ -161,62 +161,47 @@ func TestBool(t *testing.T) {
 	assert.Equal(t, values, vector)
 }
 
-/*func TestFloatColumnWithPresents(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_FLOAT, HasNulls: true}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
+func TestFloat(t *testing.T) {
+	schema := api.TypeDescription{Id: 0, Kind: pb.Type_FLOAT}
+	wopts := config.DefaultWriterOptions()
 
 	rows := 100
-	values := make([]float32, rows)
-	for i := 0; i < rows; i++ {
-		values[i] = float32(i)
-	}
-	presents := make([]bool, rows)
-	for i := 0; i < rows; i++ {
-		presents[i] = true
-	}
-	presents[0] = false
-	values[0] = 0
-	presents[45] = false
-	values[45] = 0
-	presents[98] = false
-	values[98] = 0
 
-	batch.Presents = presents
-	batch.Vector = values
-
-	writer := newFloatWriter(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
-	if err != nil {
+	values := make([]api.Value, rows)
+	for i := 0; i < rows; i++ {
+		values[i].V = float32(i)
+	}
+	writer := newFloatWriter(&schema, &wopts).(*floatWriter)
+	for _, v := range values {
+		if err:= writer.Write(v);err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, rows, n)
 
-	ropts := orc.DefaultReaderOptions()
-	batch = schema.CreateReaderBatch(ropts)
-	presentBs := &bufSeeker{writer.present.buf}
-	pKind := pb.Stream_PRESENT
-	pLength_ := uint64(writer.present.buf.Len())
-	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
-
-	dataBs := &bufSeeker{writer.data.buf}
-	dKind := pb.Stream_DATA
-	dLength := uint64(writer.data.buf.Len())
-	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := orc.newFloatStreamReader(ropts, dInfo, 0, dataBs)
-
-	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &orc.floatReader{treeReader: cr, data: data}
-	err = reader.next(batch)
-	if err != nil {
+	f := orcio.NewMockFile(make([]byte, 1024))
+	if _, err := writer.WriteOut(f); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, presents, batch.Presents[:100])
-	assert.Equal(t, values, batch.Vector)
+
+	ropts := config.DefaultReaderOptions()
+	reader:= NewFloatReader(&schema, &ropts, f)
+	err := reader.InitStream(writer.data.Info(), 0)
+	assert.Nil(t, err)
+
+	vector := make([]api.Value, rows)
+	for i:=0; i<rows;i++ {
+		if vector[i], err = reader.Next(); err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+
+	assert.Equal(t, values, vector)
 }
 
-func TestDoubleColumnWithPresents(t *testing.T) {
+/*func TestDoubleColumnWithPresents(t *testing.T) {
 	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_DOUBLE, HasNulls: true}
 	wopts := orc.DefaultWriterOptions()
 	batch := schema.CreateWriterBatch(wopts)

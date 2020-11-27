@@ -3,11 +3,9 @@ package encoding
 import (
 	"bytes"
 	"encoding/binary"
-	"io"
-	"math"
-
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"io"
 )
 
 var logger= log.New()
@@ -220,100 +218,6 @@ func (e varInt64) Flush() (data []byte, err error) {
 func DecodeVarInt64(in BufferedReader) (value int64, err error) {
 	value, err = binary.ReadVarint(in)
 	return
-}
-
-type ieee754Float struct {
-}
-
-func (e *ieee754Float) MarkPosition() {
-	//
-}
-
-func (e *ieee754Float) GetAndClearPositions() []uint64 {
-	return nil
-}
-
-func (e *ieee754Float) Reset() {
-	//
-}
-
-func DecodeFloat(in BufferedReader) (float32, error) {
-	bb := make([]byte, 4)
-	if _, err := io.ReadFull(in, bb); err != nil {
-		return 0, errors.WithStack(err)
-	}
-	v := math.Float32frombits(binary.BigEndian.Uint32(bb))
-	return v, nil
-}
-
-func (e *ieee754Float) Encode(v interface{}) (data []byte, err error) {
-	value := v.(float32)
-	bb := make([]byte, 4)
-	binary.BigEndian.PutUint32(bb, math.Float32bits(value))
-	return bb, nil
-}
-
-func encodeIeee754Float(out *bytes.Buffer, vs interface{}) error {
-	values := vs.([]float32)
-	bb := make([]byte, 4)
-	for _, v := range values {
-		binary.BigEndian.PutUint32(bb, math.Float32bits(v))
-		if _, err := out.Write(bb); err != nil {
-			return errors.WithStack(err)
-		}
-	}
-	return nil
-}
-
-type ieee754Double struct {
-}
-
-func (e *ieee754Double) Flush() (data []byte, err error) {
-	return nil, nil
-}
-
-func (e *ieee754Double) MarkPosition() {
-	//
-}
-
-func (e *ieee754Double) GetAndClearPositions() []uint64 {
-	return nil
-}
-
-func (e *ieee754Double) Reset() {
-	//
-}
-
-func DecodeDouble(in BufferedReader) (float64, error) {
-	bb := make([]byte, 8)
-	if _, err := io.ReadFull(in, bb); err != nil {
-		return 0, errors.WithStack(err)
-	}
-	// !!
-	//v := math.Float64frombits(binary.BigEndian.Uint64(bb))
-	v := math.Float64frombits(binary.LittleEndian.Uint64(bb))
-	return v, nil
-}
-
-func (e *ieee754Double) Encode(v interface{}) (data []byte, err error) {
-	value := v.(float64)
-	bb := make([]byte, 8)
-	binary.LittleEndian.PutUint64(bb, math.Float64bits(value))
-	return bb, nil
-}
-
-func encodeIeee754Double(out *bytes.Buffer, vs interface{}) error {
-	values := vs.([]float64)
-	bb := make([]byte, 8)
-	for _, v := range values {
-		binary.LittleEndian.PutUint64(bb, math.Float64bits(v))
-		// !!
-		//binary.BigEndian.PutUint64(bb, math.Float64bits(v))
-		if _, err := out.Write(bb); err != nil {
-			return errors.WithStack(err)
-		}
-	}
-	return nil
 }
 
 func widthEncoding(width int) (w byte, err error) {

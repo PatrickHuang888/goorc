@@ -13,65 +13,6 @@ import (
 	log.SetLevel(log.TraceLevel)
 }*/
 
-/*func TestStripeStructBasic(t *testing.T) {
-
-	schema := &api.TypeDescription{Kind: pb.Type_STRUCT}
-	x := &api.TypeDescription{Kind: pb.Type_DECIMAL, Encoding: pb.ColumnEncoding_DIRECT_V2}
-	schema.ChildrenNames = []string{"x"}
-	schema.Children = []*api.TypeDescription{x}
-
-	wopts := config.DefaultWriterOptions()
-	writer, err := newStripeWriter(0, schema, wopts)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	vector := make([]api.Decimal64, 19)
-	vector[0] = api.Decimal64{1, 3}
-	for i := 1; i < 18; i++ {
-		vector[i] = api.Decimal64{int64(i-1) * 10, 3}
-	}
-	vector[18] = api.Decimal64{-2000, 3}
-
-	batch := schema.CreateWriterBatch(wopts)
-	batch.Vector.([]*api.ColumnVector)[0].Vector = vector
-
-	if err := writer.writeColumn(batch); err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	dummyOut.Reset()
-	if err := writer.writeout(dummyOut); err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	footer, err := writer.writeFooter(dummyOut)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	ropts := DefaultReaderOptions()
-	sr, err := newStripeReader(dummyOut, schema.normalize(), ropts, 0, writer.info, footer)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	rbatch := schema.CreateReaderBatch(ropts)
-
-	if err := sr.next(rbatch); err != nil {
-		t.Fatalf("%+v", err)
-	}
-
-	values := batch.Vector.([]*api.ColumnVector)[0].Vector.([]api.Decimal64)
-	assert.Equal(t, 19, len(values))
-	assert.Equal(t, 3, int(values[0].Scale))
-	assert.Equal(t, 1, int(values[0].Precision), "row 0")
-	for i := 1; i < 18; i++ {
-		assert.Equal(t, 10*int64(i-1), values[i].Precision)
-	}
-	assert.Equal(t, -2000, int(values[18].Precision))
-}*/
-
 func TestStripeBasic(t *testing.T) {
 	//schema := api.TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding: pb.ColumnEncoding_DIRECT_V2}
 	schema := api.TypeDescription{Kind: pb.Type_BYTE, Encoding: pb.ColumnEncoding_DIRECT}
