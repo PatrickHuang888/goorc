@@ -41,7 +41,7 @@ func (r *floatReader) InitStream(info *pb.Stream, startOffset uint64) error {
 }
 
 func (r *floatReader) Next() (value api.Value, err error) {
-	if err = r.checkInit(); err != nil {
+	if err = r.checkStreams(); err != nil {
 		return
 	}
 
@@ -74,7 +74,7 @@ func (r *floatReader) Close() {
 	r.data.Close()
 }
 
-func (r floatReader) checkInit() error {
+func (r floatReader) checkStreams() error {
 	if r.data == nil {
 		return errors.New("stream data not initialized!")
 	}

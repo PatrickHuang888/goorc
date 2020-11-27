@@ -41,13 +41,13 @@ func TestByteRunLength(t *testing.T) {
 	//
 	vs := []byte{0x5, 0x5, 0x5, 0x5}
 	buf.Reset()
-	for _, v := range vs {
+	for i, v := range vs {
 		if err = brl.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
-		/*if i==2 {
+		if i==2 {
 			brl.MarkPosition()
-		}*/
+		}
 	}
 	if err = brl.Flush(buf); err != nil {
 		t.Fatalf("+%v", err)
@@ -57,8 +57,8 @@ func TestByteRunLength(t *testing.T) {
 	values, err = DecodeByteRL(buf, values)
 	assert.Equal(t, vs, values)
 
-	/*pos:= brl.GetAndClearPositions()
-	assert.Equal(t, uint64(3), pos[0])*/
+	pos:= brl.PopPositions()
+	assert.Equal(t, uint64(3), pos[0])
 
 	vs = []byte{0x1, 0x5, 0x5, 0x5, 0x5}
 	buf.Reset()
@@ -100,20 +100,20 @@ func TestByteRunLength(t *testing.T) {
 
 	vs = []byte{0x01, 0x02, 0x03, 0x4, 0x05, 0x05, 0x05, 0x05, 0x06, 0x07, 0x08, 0x08, 0x08, 0x09, 0x10}
 	buf.Reset()
-	for _, v := range vs {
+	for i, v := range vs {
 		if err = brl.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
-		/*if i==4 {
+		if i==4 {
 			brl.MarkPosition()
-		}*/
+		}
 	}
 	if err = brl.Flush(buf); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 
-	/*p:= brl.GetAndClearPositions()
-	assert.Equal(t, uint64(5), p[0])*/
+	p:= brl.PopPositions()
+	assert.Equal(t, uint64(1), p[0])
 
 	values = values[:0]
 	for buf.Len() != 0 {
@@ -122,6 +122,22 @@ func TestByteRunLength(t *testing.T) {
 		}
 	}
 	assert.Equal(t, vs, values)
+
+	buf.Reset()
+	for i, v := range vs {
+		if err = brl.Encode(v, buf); err != nil {
+			t.Fatalf("fail %+v", err)
+		}
+		if i==11 {
+			brl.MarkPosition()
+		}
+	}
+	if err = brl.Flush(buf); err != nil {
+		t.Fatalf("fail %+v", err)
+	}
+
+	p= brl.PopPositions()
+	assert.Equal(t, uint64(2), p[0])
 
 	vs = vs[:0]
 	for i := 0; i <= 130; i++ { // run 131
@@ -646,4 +662,11 @@ func TestBoolRunLength(t *testing.T) {
 		}
 	}
 	assert.Equal(t, bb, vs[:100])
+}
+
+func TestFindRepeats(t *testing.T) {
+	x:= findRepeats([]byte{5,5,5,5}, 3)
+	assert.Equal(t, 0, x)
+	x = findRepeats([]byte{1,5,5,5,5}, 3)
+	assert.Equal(t, 1, x)
 }

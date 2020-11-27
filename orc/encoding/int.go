@@ -418,7 +418,7 @@ func (e *IntRL2) Flush(out *bytes.Buffer) error {
 	encoding in MAX_INT_RL values, this can be improved
 */
 func (e *IntRL2) write(out *bytes.Buffer, values []uint64) error {
-	if len(values) <= MIN_REPEAT_SIZE {
+	if len(values) <= MinRepeats {
 		if e.markedPosition != -1 {
 			e.positions = append(e.positions, uint64(e.markedPosition))
 			e.markedPosition = -1

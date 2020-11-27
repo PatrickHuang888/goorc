@@ -10,6 +10,22 @@ import (
 	"io"
 )
 
+func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
+	var present *stream.Writer
+	if schema.HasNulls {
+		*stats.HasNull = true
+		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	}
+	var indexStats *pb.ColumnStatistics
+	if opts.WriteIndex {
+		indexStats=  &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
+	}
+	base := &writer{schema: schema, opts: opts, stats: stats, present: present, indexStats: indexStats}
+	data := stream.NewByteWriter(schema.Id, pb.Stream_DATA, opts)
+	return &byteWriter{base, data}
+}
+
 type byteWriter struct {
 	*writer
 	data *stream.Writer
@@ -64,18 +80,6 @@ func (w *byteWriter) Size() int {
 	return w.data.Size()
 }
 
-func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
-	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
-	var present *stream.Writer
-	if schema.HasNulls {
-		*stats.HasNull = true
-		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
-	}
-	base := &writer{schema: schema, opts: opts, stats: stats, present: present}
-	data := stream.NewByteWriter(schema.Id, pb.Stream_DATA, opts)
-	return &byteWriter{base, data}
-}
-
 func (w *byteWriter) Flush() error {
 	w.flushed = true
 
@@ -101,7 +105,6 @@ func (w *byteWriter) Flush() error {
 				return errors.New("index entry and position error")
 			}
 		}
-
 		dp := w.data.GetPositions()
 		if len(w.index.Entry) != len(dp) {
 			return errors.New("index entry and position error")
@@ -112,7 +115,6 @@ func (w *byteWriter) Flush() error {
 			e.Positions = append(e.Positions, dp[i]...)
 		}
 	}
-
 	return nil
 }
 

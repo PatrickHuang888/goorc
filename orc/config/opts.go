@@ -17,7 +17,8 @@ const (
 	DEFAULT_CHUNK_SIZE           = 256 * 1024
 	MAX_CHUNK_LENGTH             = uint64(32768) // 15 bit
 	DEFAULT_ROW_SIZE             = 1024 * 10
-	DefaultEncoderBufferSize=8*1024
+	DefaultEncoderBufferSize     = 8 * 1024
+	DefaultIndexStride = 1_000
 )
 
 type ReaderOptions struct {
@@ -34,10 +35,10 @@ type ReaderOptions struct {
 type WriterOptions struct {
 	RowSize int
 
-	ChunkSize       int
-	CompressionKind pb.CompressionKind
-	StripeSize      int  // ~200MB
-	BufferSize      uint // written data in memory
+	ChunkSize         int
+	CompressionKind   pb.CompressionKind
+	StripeSize        int  // ~200MB
+	BufferSize        uint // written data in memory
 	EncoderBufferSize int
 
 	WriteIndex  bool
@@ -46,7 +47,7 @@ type WriterOptions struct {
 
 func DefaultWriterOptions() WriterOptions {
 	return WriterOptions{CompressionKind: pb.CompressionKind_ZLIB, StripeSize: DEFAULT_STRIPE_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE,
-		BufferSize: DefalutBufferSize, RowSize: DEFAULT_ROW_SIZE, EncoderBufferSize: DefalutBufferSize}
+		BufferSize: DefalutBufferSize, RowSize: DEFAULT_ROW_SIZE, EncoderBufferSize: DefalutBufferSize, IndexStride: DefaultIndexStride}
 }
 
 func DefaultReaderOptions() ReaderOptions {
