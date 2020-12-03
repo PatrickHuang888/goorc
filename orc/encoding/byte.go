@@ -20,7 +20,7 @@ type byteRunLength struct {
 }
 
 func NewByteEncoder() *byteRunLength {
-	e := &byteRunLength{values: make([]byte, 0, MaxByteRunLength)}
+	e := &byteRunLength{values: make([]byte, 0, MaxByteRunLength), markedPosition: -1}
 	return e
 }
 

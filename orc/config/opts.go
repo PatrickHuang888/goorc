@@ -29,7 +29,7 @@ type ReaderOptions struct {
 	Loc *time.Location
 
 	HasIndex    bool
-	IndexStride uint64
+	IndexStride int
 }
 
 type WriterOptions struct {

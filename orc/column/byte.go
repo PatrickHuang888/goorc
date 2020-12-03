@@ -19,7 +19,7 @@ func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writ
 	}
 	var indexStats *pb.ColumnStatistics
 	if opts.WriteIndex {
-		indexStats=  &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
+		indexStats = &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
 	}
 	base := &writer{schema: schema, opts: opts, stats: stats, present: present, indexStats: indexStats}
 	data := stream.NewByteWriter(schema.Id, pb.Stream_DATA, opts)
@@ -52,7 +52,9 @@ func (w *byteWriter) Write(value api.Value) error {
 	if w.opts.WriteIndex {
 		w.indexInRows++
 		if w.indexInRows >= w.opts.IndexStride {
-			w.present.MarkPosition()
+			if w.schema.HasNulls {
+				w.present.MarkPosition()
+			}
 			w.data.MarkPosition()
 
 			if w.index == nil {
@@ -111,7 +113,9 @@ func (w *byteWriter) Flush() error {
 		}
 
 		for i, e := range w.index.Entry {
-			e.Positions = append(e.Positions, pp[i]...)
+			if w.schema.HasNulls {
+				e.Positions = append(e.Positions, pp[i]...)
+			}
 			e.Positions = append(e.Positions, dp[i]...)
 		}
 	}
@@ -151,7 +155,7 @@ func (w *byteWriter) WriteOut(out io.Writer) (n int64, err error) {
 
 type byteReader struct {
 	*reader
-	data    *stream.ByteReader
+	data *stream.ByteReader
 }
 
 func newByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
@@ -212,13 +216,25 @@ func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
 		return err
 	}
 
+	// from start
+	if indexEntry == nil {
+		if c.schema.HasNulls {
+			if err := c.present.Seek(0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := c.data.Seek(0, 0, 0); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	pos := indexEntry.GetPositions()
 
 	if !c.schema.HasNulls {
 		if c.opts.CompressionKind == pb.CompressionKind_NONE {
 			return c.data.Seek(pos[0], 0, pos[1])
 		}
-
 		return c.data.Seek(pos[0], pos[1], pos[2])
 	}
 
@@ -246,14 +262,22 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 		return errors.New("no index")
 	}
 
-	stride := rowNumber / c.opts.IndexStride
-	strideOffset := rowNumber % (stride * c.opts.IndexStride)
-
-	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
-		return err
+	var offset uint64
+	if rowNumber < uint64(c.opts.IndexStride) {
+		// from start
+		if err := c.seek(nil); err != nil {
+			return err
+		}
+		offset = rowNumber
+	} else {
+		stride := rowNumber / uint64(c.opts.IndexStride)
+		offset = rowNumber % (stride * uint64(c.opts.IndexStride))
+		if err := c.seek(c.index.GetEntry()[stride-1]); err != nil {
+			return err
+		}
 	}
 
-	for i := 0; i < int(strideOffset); i++ {
+	for i := 0; i < int(offset); i++ {
 		if _, err := c.Next(); err != nil {
 			return err
 		}

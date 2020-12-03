@@ -245,8 +245,8 @@ func (c *intV2Reader) Seek(rowNumber uint64) error {
 		return errors.New("no index")
 	}
 
-	stride := rowNumber / c.opts.IndexStride
-	strideOffset := rowNumber % (stride * c.opts.IndexStride)
+	stride := rowNumber / uint64(c.opts.IndexStride)
+	strideOffset := rowNumber % (stride * uint64(c.opts.IndexStride))
 
 	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
 		return err

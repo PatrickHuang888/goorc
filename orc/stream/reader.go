@@ -81,14 +81,16 @@ func (r *reader) Read(p []byte) (n int, err error) {
 
 // offset seek to specific chunk and cuncompressedOffset in that chunk
 // if NONE_COMPRESSION, offset just stream offset, and uncompressedOffset should be 0
-func (r *reader) seek(offset uint64, uncompressedOffset uint64) error {
-	if _, err := r.in.Seek(int64(r.start+offset), io.SeekStart); err != nil {
+func (r *reader) seek(chunkOffset uint64, offset uint64) error {
+	r.buf.Reset()
+	if _, err := r.in.Seek(int64(r.start+chunkOffset), io.SeekStart); err != nil {
 		return err
 	}
+	r.readLength= chunkOffset
 	if err := r.readAChunk(); err != nil {
 		return err
 	}
-	r.buf.Next(int(uncompressedOffset))
+	r.buf.Next(int(offset))
 	return nil
 }
 

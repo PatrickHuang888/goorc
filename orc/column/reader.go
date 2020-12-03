@@ -14,23 +14,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-type Reader interface {
-	//InitChildren(children []Reader) error
-	InitIndex(startOffset uint64, length uint64) error
-	InitStream(info *pb.Stream, startOffset uint64) error
-
-	Next() (value api.Value, err error)
-
-	// Seek seek to row number offset to current stripe
-	// if column is struct (or like)  children, and struct has present stream, then
-	// seek to non-null row that is calculated by parent
-	Seek(rowNumber uint64) error
-
-	//Children() []Reader
-
-	Close()
-}
-
 type reader struct {
 	f orcio.File
 	schema *api.TypeDescription

@@ -11,7 +11,6 @@ import (
 
 type BoolReader struct {
 	stream *reader
-
 	values []bool
 	pos    int
 }
@@ -35,11 +34,14 @@ func (r *BoolReader) Next() (v bool, err error) {
 	return
 }
 
-func (r *BoolReader) Seek(chunkOffset uint64, uncompressedOffset uint64, decodingPos uint64) error {
-	if err := r.stream.seek(chunkOffset, uncompressedOffset); err != nil {
+func (r *BoolReader) Seek(chunkOffset uint64, offset uint64, valueOffset uint64) error {
+	if err := r.stream.seek(chunkOffset, offset); err != nil {
 		return err
 	}
-	for i := 0; i < int(decodingPos); i++ {
+
+	r.values = r.values[:0]
+	r.pos = 0
+	for i := 0; i < int(valueOffset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err
 		}

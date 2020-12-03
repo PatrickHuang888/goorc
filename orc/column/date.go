@@ -123,8 +123,8 @@ func (c *dateV2Reader) Seek(rowNumber uint64) error {
 		return errors.New("no index")
 	}
 
-	stride := rowNumber / c.opts.IndexStride
-	offsetInStride := rowNumber % (stride * c.opts.IndexStride)
+	stride := rowNumber / uint64(c.opts.IndexStride)
+	offsetInStride := rowNumber % (stride * uint64(c.opts.IndexStride))
 
 	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
 		return err

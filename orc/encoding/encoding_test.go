@@ -162,6 +162,25 @@ func TestByteRunLength(t *testing.T) {
 		}
 	}
 	assert.Equal(t, vs, values)
+
+	vs = vs[:0]
+	for i := 0; i <= 130; i++ {
+		vs = append(vs, byte(i))
+	}
+	buf.Reset()
+	for i, v := range vs {
+		if err = brl.Encode(v, buf); err != nil {
+			t.Fatalf("fail %+v", err)
+		}
+		if i==124 {
+			brl.MarkPosition()
+		}
+	}
+	if err = brl.Flush(buf); err != nil {
+		t.Fatalf("fail %+v", err)
+	}
+	pp:= brl.PopPositions()
+	assert.Equal(t, uint64(125), pp[0])
 }
 
 func TestFindBytesRepeats(t *testing.T) {

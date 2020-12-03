@@ -6,6 +6,7 @@ import (
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
+	"github.com/patrickhuang888/goorc/orc/stream"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -14,8 +15,9 @@ import (
 )
 
 func init() {
-	log.SetLevel(log.TraceLevel)
+	logger.SetLevel(log.TraceLevel)
 	encoding.SetLogLevel(log.TraceLevel)
+	stream.SetLogLevel(log.TraceLevel)
 }
 
 func TestIntV2(t *testing.T) {
@@ -315,8 +317,6 @@ func TestByteWithPresents(t *testing.T) {
 	values[45].Null = true
 	values[98].Null = true
 	wopts := config.DefaultWriterOptions()
-	wopts.WriteIndex= true
-	wopts.IndexStride= 130  // index stride should > 128 (max byte encoding block)
 
 	writer := newByteWriter(schema, &wopts).(*byteWriter)
 	for _, v := range values {
@@ -336,7 +336,7 @@ func TestByteWithPresents(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	/*ropts := config.DefaultReaderOptions()
+	ropts := config.DefaultReaderOptions()
 	reader := newByteReader(schema, &ropts, f)
 
 	if err := reader.InitStream(writer.present.Info(), 0); err != nil {
@@ -362,10 +362,87 @@ func TestByteWithPresents(t *testing.T) {
 		if !v.Null {
 			assert.Equal(t, values[i], vector[i])
 		}
-	}*/
+	}
 
 	// todo: stats test
 	// stats verification at file test?
+}
+
+func TestIndexOnByte(t *testing.T)  {
+	rows := 150
+	indexStride:= 130
+
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_BYTE}
+	schema.Encoding = pb.ColumnEncoding_DIRECT
+
+	values := make([]api.Value, rows)
+	for i := 0; i < rows; i++ {
+		values[i].V = byte(i)
+	}
+
+	wopts := config.DefaultWriterOptions()
+	wopts.WriteIndex= true
+	wopts.IndexStride= indexStride  // index stride should > 128 (max byte encoding block)
+
+	writer := newByteWriter(schema, &wopts).(*byteWriter)
+	for _, v := range values {
+		if err := writer.Write(v); err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	bb := make([]byte, 500)
+	f := orcio.NewMockFile(bb)
+	if _, err := writer.WriteOut(f); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	ropts := config.DefaultReaderOptions()
+	ropts.HasIndex= true
+	ropts.IndexStride= indexStride
+	reader := newByteReader(schema, &ropts, f).(*byteReader)
+	reader.index= writer.index
+	if err := reader.InitStream(writer.data.Info(), 0); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	vector := make([]api.Value, rows)
+	for i:=0; i<rows; i++ {
+		var err error
+		if vector[i], err = reader.Next(); err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+	assert.Equal(t, values, vector)
+
+	if err:=reader.Seek(125);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	value, err:=reader.Next()
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, byte(125), value.V)
+
+	if err:=reader.Seek(130);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	value, err=reader.Next()
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, byte(130), value.V)
+
+	if err:=reader.Seek(140);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	value, err=reader.Next()
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, byte(140), value.V)
 }
 
 /*func TestColumnBinaryV2WithPresents(t *testing.T) {

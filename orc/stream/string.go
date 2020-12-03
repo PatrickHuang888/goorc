@@ -48,8 +48,8 @@ func (r *StringContentsReader) getAllString(byteLengths []uint64) (vs []string, 
 	return
 }
 
-func (r *StringContentsReader) Seek(chunkOffset uint64, uncompressionOffset uint64, lens []uint64) error {
-	if err := r.stream.seek(chunkOffset, uncompressionOffset); err != nil {
+func (r *StringContentsReader) Seek(chunkOffset uint64, offset uint64, lens []uint64) error {
+	if err := r.stream.seek(chunkOffset, offset); err != nil {
 		return err
 	}
 

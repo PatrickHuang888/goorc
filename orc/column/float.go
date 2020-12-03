@@ -173,8 +173,8 @@ func (r *doubleReader) Seek(rowNumber uint64) error {
 		return errors.New("no index")
 	}
 
-	stride := rowNumber / r.opts.IndexStride
-	strideOffset := rowNumber % (stride * r.opts.IndexStride)
+	stride := rowNumber / uint64(r.opts.IndexStride)
+	strideOffset := rowNumber % (stride * uint64(r.opts.IndexStride))
 
 	if err := r.seek(r.index.GetEntry()[stride]); err != nil {
 		return err

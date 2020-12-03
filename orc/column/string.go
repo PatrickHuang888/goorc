@@ -261,8 +261,8 @@ func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
 }
 
 func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
-	page := rowNumber / r.opts.IndexStride
-	offset := rowNumber % r.opts.IndexStride
+	page := rowNumber / uint64(r.opts.IndexStride)
+	offset := rowNumber % uint64(r.opts.IndexStride)
 	entry := r.index.Entry[page]
 
 	if r.opts.CompressionKind == pb.CompressionKind_NONE {

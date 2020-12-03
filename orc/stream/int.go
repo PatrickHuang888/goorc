@@ -91,9 +91,16 @@ func (r *IntRLV2Reader) Finished() bool {
 	}
 }
 
-func (r *IntRLV2Reader) Seek(chunkOffset, uncompressedOffset, pos uint64) error {
-	if err := r.stream.seek(chunkOffset, uncompressedOffset); err != nil {
+func (r *IntRLV2Reader) Seek(chunkOffset, offset, pos uint64) error {
+	if err := r.stream.seek(chunkOffset, offset); err != nil {
 		return err
+	}
+
+	r.pos= 0
+	if r.signed {
+		r.values=r.values[:0]
+	}else {
+		r.uvalues= r.uvalues[:0]
 	}
 	for i := 0; i < int(pos); i++ {
 		if r.signed {

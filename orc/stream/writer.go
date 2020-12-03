@@ -50,13 +50,12 @@ func (w *Writer) Reset() {
 }
 
 func (w *Writer) Write(v interface{}) error {
-	mark := w.buf.Len()
 	if err := w.encoder.Encode(v, w.buf); err != nil {
 		return err
 	}
 	w.count++
 
-	if w.buf.Len()-mark > 0 && w.opts.CompressionKind != pb.CompressionKind_NONE && w.buf.Len() > w.opts.ChunkSize{
+	if w.opts.CompressionKind != pb.CompressionKind_NONE && w.buf.Len() > w.opts.ChunkSize{
 		if err := common.CompressingChunks(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
 			return err
 		}
@@ -151,27 +150,9 @@ func (w *writer) markPosition() {
 		return
 	}
 	w.positions = append(w.positions, []uint64{uint64(w.compressedBuf.Len()), uint64(w.buf.Len())})
+	/*logger.Tracef("stream %s of column %d mark position %d, %d", w.info.GetKind().String(), w.info.GetColumn(),
+		w.positions[len(w.positions)-1][0], w.positions[len(w.positions)-1][1])*/
 }
-
-/*func (w writer) empty() bool {
-	return w.compressedBuf.Len() == 0 && w.buf.Len() == 0
-}*/
-
-// compressing data in memory, update stream info length
-/*func (w *writer) compressing() error {
-	if w.opts.CompressionKind == pb.CompressionKind_NONE {
-		*w.info.Length = uint64(w.buf.Len())
-		return nil
-	}
-
-	if w.buf.Len() != 0 {
-		if err := common.CompressingLeft(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
-			return err
-		}
-	}
-	//*w.info.Length = uint64(w.compressedBuf.Len())
-	return nil
-}*/
 
 // used together with flush
 func (w *Writer) WriteOut(out io.Writer) (n int64, err error) {
