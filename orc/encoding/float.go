@@ -41,10 +41,12 @@ func (f *float) MarkPosition() {
 	f.positions = append(f.positions, 1)
 }
 
-func (f *float) PopPositions() []uint64 {
-	r := f.positions
+func (f *float) PopPositions() [][]uint64 {
+	// todo:
+	/*r := f.positions
 	f.positions = nil
-	return r
+	return r*/
+	return nil
 }
 
 func (f *float) Reset() {
@@ -102,10 +104,12 @@ func (d *double) MarkPosition() {
 	d.positions = append(d.positions, 1)
 }
 
-func (d *double) PopPositions() []uint64 {
-	r := d.positions
+func (d *double) PopPositions() [][]uint64 {
+	/*r := d.positions
 	d.positions = nil
-	return r
+	return r*/
+	// todo:
+	return nil
 }
 
 func (d *double) Reset() {

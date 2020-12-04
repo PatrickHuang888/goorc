@@ -42,7 +42,8 @@ type Encoder interface {
 	MarkPosition()
 
 	// GetPositions get positions marked previously after stream flush, then clear
-	PopPositions() []uint64
+	// maybe not only one position when every mark
+	PopPositions() [][]uint64
 
 	Reset()
 }

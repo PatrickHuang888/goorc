@@ -33,7 +33,7 @@ func (w Writer) GetPositions() [][]uint64 {
 		panic("stream chunk positions number != encoder positions number")
 	}
 	for i := 0; i < len(pp); i++ {
-		pp[i] = append(pp[i], eps[i])
+		pp[i] = append(pp[i], eps[i]...)
 	}
 	w.positions = nil
 	return pp

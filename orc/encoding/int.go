@@ -386,11 +386,12 @@ func (e *IntRL2) Encode(v interface{}, out *bytes.Buffer) error {
 	return d.buf.Len()
 }*/
 
-func (e *IntRL2) PopPositions() []uint64 {
-	r := e.positions
+func (e *IntRL2) PopPositions() [][]uint64 {
+	/*r := e.positions
 	e.positions = nil
 	e.markedPosition = -1
-	return r
+	return r*/
+	return nil
 }
 
 func (e *IntRL2) Reset() {

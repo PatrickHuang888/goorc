@@ -2,7 +2,6 @@ package encoding
 
 import (
 	"bytes"
-	log "github.com/sirupsen/logrus"
 	"io"
 )
 
@@ -10,7 +9,7 @@ const MaxByteRunLength = 128
 const MinRepeats = 3
 
 /*
-	for simplicity, there should be 1 marked position in 1 encoded block which no less than MaxByteRunLength
+	for simplicity, there should be 1 marked position in 1 encoded block, maybe MaxByteRunLength
  */
 type byteRunLength struct {
 	// fixme: only 1 marked here
@@ -26,21 +25,23 @@ func NewByteEncoder() *byteRunLength {
 
 func (e *byteRunLength) MarkPosition() {
 	if len(e.values) == 0 {
-		log.Errorf("mark position error, no value")
+		logger.Errorf("mark position error, no value")
 		return
 	}
 	e.markedPosition = len(e.values)
 }
 
-func (e *byteRunLength) PopPositions() []uint64 {
-	ps := e.positions
-	e.positions = nil
-	return ps
+func (e *byteRunLength) PopPositions() [][]uint64 {
+	var r [][]uint64
+	for _, v := range e.positions {
+		r= append(r, []uint64{v})
+	}
+	e.positions = e.positions[:0]
+	return r
 }
 
 func (e *byteRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	value := v.(byte)
-
 	e.values = append(e.values, value)
 
 	if len(e.values) >= MaxByteRunLength {
@@ -53,12 +54,13 @@ func (e *byteRunLength) Flush(out *bytes.Buffer) error {
 	for len(e.values) != 0 {
 		e.encodeBytes(out, &e.values)
 	}
-	e.Reset()
 	return nil
 }
 
 func (e *byteRunLength) Reset() {
-	//
+	e.values= e.values[:0]
+	e.markedPosition= -1
+	e.positions= e.positions[:0]
 }
 
 func (e *byteRunLength) encodeBytes(out *bytes.Buffer, vector *[]byte) {
@@ -85,7 +87,7 @@ func (e *byteRunLength) encodeBytes(out *bytes.Buffer, vector *[]byte) {
 	}
 
 	if e.markedPosition != -1 {
-		if e.markedPosition < index {
+		if e.markedPosition <= index {
 			e.positions = append(e.positions, uint64(e.markedPosition))
 			e.markedPosition = -1
 		} else {

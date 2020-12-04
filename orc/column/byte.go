@@ -38,15 +38,12 @@ func (w *byteWriter) Write(value api.Value) error {
 		}
 	}
 
-	if value.Null {
-		return nil
+	if !value.Null {
+		if err := w.data.Write(value.V); err != nil {
+			return err
+		}
+		*w.stats.BinaryStatistics.Sum++
 	}
-
-	if err := w.data.Write(value.V); err != nil {
-		return err
-	}
-
-	*w.stats.BinaryStatistics.Sum++
 	*w.stats.NumberOfValues++
 
 	if w.opts.WriteIndex {
@@ -66,10 +63,12 @@ func (w *byteWriter) Write(value api.Value) error {
 			if w.schema.HasNulls {
 				*w.indexStats.HasNull = true
 			}
-			// does not write index statistic bytes on disk, java impl either
 			w.indexInRows = 0
 		}
-		*w.indexStats.BinaryStatistics.Sum++
+		// fixme: does not write index statistic bytes on disk, java impl either
+		if !value.Null {
+			*w.indexStats.BinaryStatistics.Sum++
+		}
 		*w.indexStats.NumberOfValues++
 	}
 	return nil

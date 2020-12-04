@@ -58,7 +58,7 @@ func TestByteRunLength(t *testing.T) {
 	assert.Equal(t, vs, values)
 
 	pos:= brl.PopPositions()
-	assert.Equal(t, uint64(3), pos[0])
+	assert.Equal(t, uint64(3), pos[0][0])
 
 	vs = []byte{0x1, 0x5, 0x5, 0x5, 0x5}
 	buf.Reset()
@@ -113,7 +113,7 @@ func TestByteRunLength(t *testing.T) {
 	}
 
 	p:= brl.PopPositions()
-	assert.Equal(t, uint64(1), p[0])
+	assert.Equal(t, uint64(1), p[0][0])
 
 	values = values[:0]
 	for buf.Len() != 0 {
@@ -137,7 +137,7 @@ func TestByteRunLength(t *testing.T) {
 	}
 
 	p= brl.PopPositions()
-	assert.Equal(t, uint64(2), p[0])
+	assert.Equal(t, uint64(2), p[0][0])
 
 	vs = vs[:0]
 	for i := 0; i <= 130; i++ { // run 131
@@ -180,7 +180,7 @@ func TestByteRunLength(t *testing.T) {
 		t.Fatalf("fail %+v", err)
 	}
 	pp:= brl.PopPositions()
-	assert.Equal(t, uint64(125), pp[0])
+	assert.Equal(t, uint64(125), pp[0][0])
 }
 
 func TestFindBytesRepeats(t *testing.T) {
@@ -583,17 +583,24 @@ func TestBoolRunLength(t *testing.T) {
 	var err error
 
 	buf := &bytes.Buffer{}
-	brl := NewBoolEncoder()
+	e := NewBoolEncoder()
 
-	for _, v := range values {
-		if err = brl.Encode(v, buf); err != nil {
+	for i, v := range values {
+		if err = e.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
+		if i==3 {
+			e.MarkPosition()
+		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = e.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, encoded, buf.Bytes())
+
+	pp:= e.PopPositions()
+	assert.Equal(t, uint64(1), pp[0][0])
+	assert.Equal(t, uint64(4), pp[0][1])
 
 	var vs []bool
 	vs, err = DecodeBools(buf, vs)
@@ -608,11 +615,11 @@ func TestBoolRunLength(t *testing.T) {
 
 	buf.Reset()
 	for _, v := range values {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = e.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = e.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -631,14 +638,14 @@ func TestBoolRunLength(t *testing.T) {
 
 	buf.Reset()
 	for _, v := range values {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = e.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		//if i==99 {
 		//	brl.MarkPosition()
 		//}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = e.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -665,11 +672,11 @@ func TestBoolRunLength(t *testing.T) {
 
 	buf.Reset()
 	for _, v := range bb {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = e.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = e.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -688,4 +695,6 @@ func TestFindRepeats(t *testing.T) {
 	assert.Equal(t, 0, x)
 	x = findRepeats([]byte{1,5,5,5,5}, 3)
 	assert.Equal(t, 1, x)
+	x = findRepeats([]byte{1,2,3,4,5}, 3)
+	assert.Equal(t, 5, 5)
 }

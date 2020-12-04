@@ -37,10 +37,12 @@ func (e *stringContents) MarkPosition() {
 	e.positions = append(e.positions, uint64(e.markedPosition))
 }
 
-func (e *stringContents) PopPositions() []uint64 {
-	r := e.positions
+func (e *stringContents) PopPositions() [][]uint64 {
+	/*r := e.positions
 	e.positions = nil
-	return r
+	return r*/
+	// todo:
+	return nil
 }
 
 func (e *stringContents) Reset() {

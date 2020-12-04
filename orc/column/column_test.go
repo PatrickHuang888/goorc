@@ -54,7 +54,7 @@ func TestIntV2(t *testing.T) {
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)
-	for i:=0; i<rows;i++ {
+	for i := 0; i < rows; i++ {
 		if vector[i], err = reader.Next(); err != nil {
 			t.Fatalf("%+v", err)
 		}
@@ -109,7 +109,7 @@ func TestIntV2WithPresents(t *testing.T) {
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)
-	for i:=0; i<rows;i++ {
+	for i := 0; i < rows; i++ {
 		if vector[i], err = reader.Next(); err != nil {
 			t.Fatalf("%+v", err)
 		}
@@ -133,7 +133,7 @@ func TestBool(t *testing.T) {
 
 	writer := newBoolWriter(&schema, &wopts).(*boolWriter)
 	for _, v := range values {
-		if err:= writer.Write(v);err != nil {
+		if err := writer.Write(v); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
@@ -149,12 +149,12 @@ func TestBool(t *testing.T) {
 
 	ropts := config.DefaultReaderOptions()
 
-	reader:= newBoolReader(&schema, &ropts, f)
+	reader := newBoolReader(&schema, &ropts, f)
 	err := reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)
-	for i:=0; i<rows;i++ {
+	for i := 0; i < rows; i++ {
 		if vector[i], err = reader.Next(); err != nil {
 			t.Fatalf("%+v", err)
 		}
@@ -175,7 +175,7 @@ func TestFloat(t *testing.T) {
 	}
 	writer := newFloatWriter(&schema, &wopts).(*floatWriter)
 	for _, v := range values {
-		if err:= writer.Write(v);err != nil {
+		if err := writer.Write(v); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
@@ -189,12 +189,12 @@ func TestFloat(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	reader:= NewFloatReader(&schema, &ropts, f)
+	reader := NewFloatReader(&schema, &ropts, f)
 	err := reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)
-	for i:=0; i<rows;i++ {
+	for i := 0; i < rows; i++ {
 		if vector[i], err = reader.Next(); err != nil {
 			t.Fatalf("%+v", err)
 		}
@@ -295,7 +295,7 @@ func TestStringDirectV2(t *testing.T) {
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)
-	for i:=0; i<rows;i++ {
+	for i := 0; i < rows; i++ {
 		if vector[i], err = reader.Next(); err != nil {
 			t.Fatalf("%+v", err)
 		}
@@ -347,7 +347,7 @@ func TestByteWithPresents(t *testing.T) {
 	}
 
 	vector := make([]api.Value, rows)
-	for i:=0; i<rows; i++ {
+	for i := 0; i < rows; i++ {
 		var err error
 		if vector[i], err = reader.Next(); err != nil {
 			t.Fatalf("%+v", err)
@@ -368,9 +368,9 @@ func TestByteWithPresents(t *testing.T) {
 	// stats verification at file test?
 }
 
-func TestIndexOnByte(t *testing.T)  {
+func TestIndexOnByte(t *testing.T) {
 	rows := 150
-	indexStride:= 130
+	indexStride := 130
 
 	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_BYTE}
 	schema.Encoding = pb.ColumnEncoding_DIRECT
@@ -381,8 +381,8 @@ func TestIndexOnByte(t *testing.T)  {
 	}
 
 	wopts := config.DefaultWriterOptions()
-	wopts.WriteIndex= true
-	wopts.IndexStride= indexStride  // index stride should > 128 (max byte encoding block)
+	wopts.WriteIndex = true
+	wopts.IndexStride = indexStride // index stride should > 128 (max byte encoding block)
 
 	writer := newByteWriter(schema, &wopts).(*byteWriter)
 	for _, v := range values {
@@ -400,16 +400,16 @@ func TestIndexOnByte(t *testing.T)  {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	ropts.HasIndex= true
-	ropts.IndexStride= indexStride
+	ropts.HasIndex = true
+	ropts.IndexStride = indexStride
 	reader := newByteReader(schema, &ropts, f).(*byteReader)
-	reader.index= writer.index
+	reader.index = writer.index
 	if err := reader.InitStream(writer.data.Info(), 0); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	vector := make([]api.Value, rows)
-	for i:=0; i<rows; i++ {
+	for i := 0; i < rows; i++ {
 		var err error
 		if vector[i], err = reader.Next(); err != nil {
 			t.Fatalf("%+v", err)
@@ -417,29 +417,96 @@ func TestIndexOnByte(t *testing.T)  {
 	}
 	assert.Equal(t, values, vector)
 
-	if err:=reader.Seek(125);err!=nil {
+	if err := reader.Seek(125); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	value, err:=reader.Next()
-	if err!=nil {
+	value, err := reader.Next()
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, byte(125), value.V)
 
-	if err:=reader.Seek(130);err!=nil {
+	if err := reader.Seek(130); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	value, err=reader.Next()
-	if err!=nil {
+	value, err = reader.Next()
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, byte(130), value.V)
 
-	if err:=reader.Seek(140);err!=nil {
+	if err := reader.Seek(140); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	value, err=reader.Next()
-	if err!=nil {
+	value, err = reader.Next()
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, byte(140), value.V)
+}
+
+func TestByteOnIndexWithPresents(t *testing.T) {
+	rows := 150
+	indexStride := 130
+
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_BYTE, HasNulls: true}
+	schema.Encoding = pb.ColumnEncoding_DIRECT
+
+	values := make([]api.Value, rows)
+	for i := 0; i < rows; i++ {
+		values[i].V = byte(i)
+	}
+	values[0].Null = true
+	values[129].Null = true
+	wopts := config.DefaultWriterOptions()
+	wopts.WriteIndex = true
+	wopts.IndexStride = indexStride
+
+	writer := newByteWriter(schema, &wopts).(*byteWriter)
+	for _, v := range values {
+		if err := writer.Write(v); err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	bb := make([]byte, 500)
+	f := orcio.NewMockFile(bb)
+
+	if _, err := writer.WriteOut(f); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	ropts := config.DefaultReaderOptions()
+	ropts.HasIndex = true
+	ropts.IndexStride = indexStride
+
+	reader := newByteReader(schema, &ropts, f).(*byteReader)
+	reader.index = writer.index
+	if err := reader.InitStream(writer.present.Info(), 0); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if err := reader.InitStream(writer.data.Info(), writer.present.Info().GetLength()); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	if err := reader.Seek(130); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	value, err := reader.Next()
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, true, value.Null)
+
+	if err := reader.Seek(140); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	value, err = reader.Next()
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, byte(140), value.V)
@@ -690,5 +757,3 @@ func TestColumnTimestampWithPresents(t *testing.T) {
 	assert.Equal(t, presents, batch.Presents)
 	assert.Equal(t, vector, batch.Vector)
 }*/
-
-
