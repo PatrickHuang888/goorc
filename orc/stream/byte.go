@@ -28,6 +28,7 @@ func (r *ByteReader) Next() (v byte, err error) {
 		if r.values, err = encoding.DecodeByteRL(r.stream, r.values); err != nil {
 			return 0, err
 		}
+		logger.Tracef("byte stream %d decode %d values", r.stream.info.GetColumn(), len(r.values))
 	}
 
 	v = r.values[r.consumed]
@@ -36,7 +37,7 @@ func (r *ByteReader) Next() (v byte, err error) {
 }
 
 func (r *ByteReader) Seek(chunkOffset uint64, offset uint64, valueOffset uint64) error {
-	logger.Tracef("stream %s of column %d seek to chunk %d, decompressed offset %d, value offset %d",
+	logger.Tracef("byte stream %s of column %d seek to chunk %d, decompressed offset %d, value offset %d",
 		r.stream.info.GetKind().String(), r.stream.info.GetColumn(), chunkOffset, offset, valueOffset)
 	if err := r.stream.seek(chunkOffset, offset); err != nil {
 		return err

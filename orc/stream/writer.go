@@ -17,25 +17,22 @@ type Writer struct {
 }
 
 // mark position and collect stats, will not invoked when not write index
-func (w *Writer) MarkPosition() {
+/*func (w *Writer) MarkPosition() {
 	w.markPosition()
 	w.encoder.MarkPosition()
-}
+}*/
 
-func (w Writer) GetPositions() [][]uint64 {
+func (w Writer) GetPosition() []uint64 {
 	if !w.opts.WriteIndex {
-		return [][]uint64{}
+		return []uint64{}
 	}
 
-	pp := w.positions
-	eps := w.encoder.PopPositions()
-	if len(pp) != len(eps) {
-		panic("stream chunk positions number != encoder positions number")
+	var pp []uint64
+	if w.opts.CompressionKind != pb.CompressionKind_NONE {
+		pp = append(pp, uint64(w.compressedBuf.Len()))
 	}
-	for i := 0; i < len(pp); i++ {
-		pp[i] = append(pp[i], eps[i]...)
-	}
-	w.positions = nil
+	pp = append(pp, uint64(w.buf.Len()))
+	pp = append(pp, w.encoder.GetPosition()...)
 	return pp
 }
 
@@ -55,13 +52,17 @@ func (w *Writer) Write(v interface{}) error {
 	}
 	w.count++
 
-	if w.opts.CompressionKind != pb.CompressionKind_NONE && w.buf.Len() > w.opts.ChunkSize{
+	if w.opts.CompressionKind != pb.CompressionKind_NONE && w.buf.Len() > w.opts.ChunkSize {
 		if err := common.CompressingChunks(w.opts.CompressionKind, w.opts.ChunkSize, w.compressedBuf, w.buf); err != nil {
 			return err
 		}
 		logger.Debugf("stream writer column %d kind %s has written %d values, buffer over chunksize, do compressing...",
 			w.info.GetColumn(), w.info.GetKind().String(), w.count)
-		w.count= 0
+		w.count = 0
+
+		if w.opts.WriteIndex {
+			w.encoder.ResetPosition()
+		}
 	}
 	return nil
 }
@@ -69,7 +70,6 @@ func (w *Writer) Write(v interface{}) error {
 // return compressed data + uncompressed data
 func (w *Writer) Size() (size int) {
 	// not include encoder not flushed values
-
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
 		size = w.buf.Len()
 		return
@@ -151,7 +151,7 @@ func (w *writer) markPosition() {
 	}
 	w.positions = append(w.positions, []uint64{uint64(w.compressedBuf.Len()), uint64(w.buf.Len())})
 	/*logger.Tracef("stream %s of column %d mark position %d, %d", w.info.GetKind().String(), w.info.GetColumn(),
-		w.positions[len(w.positions)-1][0], w.positions[len(w.positions)-1][1])*/
+	w.positions[len(w.positions)-1][0], w.positions[len(w.positions)-1][1])*/
 }
 
 // used together with flush
@@ -183,7 +183,7 @@ func NewByteWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *
 		cbuf.Reset()
 	}
 
-	return &Writer{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, encoding.NewByteEncoder()}
+	return &Writer{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, encoding.NewByteEncoder(opts.WriteIndex)}
 }
 
 func NewBoolWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
@@ -197,8 +197,7 @@ func NewBoolWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *
 		cbuf = bytes.NewBuffer(make([]byte, opts.ChunkSize))
 		cbuf.Reset()
 	}
-
-	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewBoolEncoder()}
+	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewBoolEncoder(opts.WriteIndex)}
 }
 
 func NewStringContentsWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
@@ -231,7 +230,7 @@ func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions
 	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewIntRLV2(signed)}
 }
 
-func NewFloatWriter (id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
+func NewFloatWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
 	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
@@ -246,7 +245,7 @@ func NewFloatWriter (id uint32, kind pb.Stream_Kind, opts *config.WriterOptions)
 	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewFloatEncoder()}
 }
 
-func NewDoubleWriter (id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
+func NewDoubleWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
 	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
 
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))

@@ -221,20 +221,20 @@ func (c *intV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 
 	if c.opts.CompressionKind == pb.CompressionKind_NONE {
 		if c.present != nil {
-			if err := c.present.Seek(pos[0], 0, pos[1]); err != nil {
+			if err := c.present.Seek(pos[0], 0, pos[1], pos[2]); err != nil {
 				return err
 			}
 		}
-		if err := c.data.Seek(pos[2], 0, pos[3]); err != nil {
+		if err := c.data.Seek(pos[3], 0, pos[4]); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := c.present.Seek(pos[0], pos[1], pos[2]); err != nil {
+	if err := c.present.Seek(pos[0], pos[1], pos[2], pos[3]); err != nil {
 		return err
 	}
-	if err := c.data.Seek(pos[3], pos[4], pos[5]); err != nil {
+	if err := c.data.Seek(pos[4], pos[5], pos[6]); err != nil {
 		return err
 	}
 	return nil

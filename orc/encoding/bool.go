@@ -2,100 +2,83 @@ package encoding
 
 import (
 	"bytes"
-	"github.com/pkg/errors"
 	"io"
 )
 
-const MAX_BOOL_RL = 8
+const MaxBoolRunLength = 8
 
-/*
- stride will not less than MaxBoolRL
- */
 type boolRunLength struct {
-	brl       *byteRunLength
-	values    []bool
-
-	positions []uint64
-	positionMarked bool
+	brl      *byteRunLength
+	index    int
+	value    byte
+	position int
 }
 
-func NewBoolEncoder() *boolRunLength {
-	return &boolRunLength{values: make([]bool, 0, MAX_BOOL_RL), brl: NewByteEncoder()}
-}
-
-func (e *boolRunLength) MarkPosition() {
-	e.positions = append(e.positions, uint64(len(e.values)))
-	// maybe byte runlength no values at this time
-	//e.brl.MarkPosition()
-	e.positionMarked= true
-}
-
-func (e *boolRunLength) PopPositions() [][]uint64 {
-	r:= e.brl.PopPositions()
-	if len(r)!=len(e.positions) {
-		logger.Panicf("position error %d %d", len(r), len(e.positions))
+func NewBoolEncoder(resetPosition bool) *boolRunLength {
+	if resetPosition {
+		return &boolRunLength{brl: NewByteEncoder(true), position: 0, index: -1}
 	}
-	for i:=0; i<len(r);i++ {
-		r[i]= append(r[i], e.positions[i])
-	}
-	e.positions = e.positions[:0]
+	return &boolRunLength{brl: NewByteEncoder(false), position: -1, index: -1}
+}
+
+func (e *boolRunLength) ResetPosition() {
+	e.position = 0
+	e.brl.ResetPosition()
+}
+
+func (e *boolRunLength) GetPosition() []uint64 {
+	var r []uint64
+
+	// refactor:
+	r = append(r, uint64(e.brl.position))
+
+	r = append(r, uint64(e.position))
 	return r
 }
 
 func (e *boolRunLength) Reset() {
-	e.values= e.values[:0]
-	e.positions= e.positions[:0]
+	e.value = 0
+	e.index = -1
 	e.brl.Reset()
 }
 
 func (e *boolRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	value := v.(bool)
+	e.index++
 
-	e.values= append(e.values, value)
+	if e.position != -1 {
+		e.position++
+	}
 
-	if len(e.values) >= MAX_BOOL_RL {
-		var b byte
-		for i := 0; i <= 7; i++ {
-			if e.values[i] {
-				b |= 0x01 << byte(7-i)
-			}
-		}
-		if err := e.brl.Encode(b, out); err != nil {
+	if value {
+		e.value |= 1 << byte(7-e.index)
+	}
+
+	if e.index >= MaxBoolRunLength-1 { // finish a byte
+		if err := e.brl.Encode(e.value, out); err != nil {
 			return err
 		}
-		if e.positionMarked {
-			e.brl.MarkPosition()
-			e.positionMarked= false
+		e.index = -1
+		e.value = 0
+
+		if e.position != -1 {
+			e.position = 0
 		}
-		e.values= e.values[8:]
-		return nil
 	}
 	return nil
 }
 
 func (e *boolRunLength) Flush(out *bytes.Buffer) error {
-	if len(e.values) > 7 {
-		return errors.New("flush values error")
-	}
-	if len(e.values)!=0 {
-		var b byte
-		for i := 0; i < len(e.values); i++ {
-			if e.values[i] {
-				b |= 0x01 << byte(7-i)
-			}
-		}
-		if err := e.brl.Encode(b, out); err != nil {
+	if e.index != -1 {
+		if err := e.brl.Encode(e.value, out); err != nil {
 			return err
 		}
-		if e.positionMarked {
-			e.brl.MarkPosition()
-			e.positionMarked= false
-		}
-		e.values= e.values[:0]
 	}
 	if err := e.brl.Flush(out); err != nil {
 		return err
 	}
+	// rethink:
+	e.Reset()
 	return nil
 }
 
@@ -114,4 +97,13 @@ func DecodeBools(in io.ByteReader, vs []bool) ([]bool, error) {
 		}
 	}
 	return vs, err
+}
+
+func DecodeBoolsFromByte(b byte) []bool {
+	var vs []bool
+	for i := 0; i < 8; i++ {
+		v := (b>>byte(7-i))&0x01 == 0x01
+		vs = append(vs, v)
+	}
+	return vs
 }

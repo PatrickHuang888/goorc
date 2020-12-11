@@ -17,7 +17,7 @@ func TestByteRunLength(t *testing.T) {
 	var err error
 
 	buf := bytes.NewBuffer([]byte{0x61, 0x00})
-	brl := NewByteEncoder()
+	enc := NewByteEncoder(true)
 
 	values, err = DecodeByteRL(buf, values)
 	if err != nil {
@@ -41,15 +41,16 @@ func TestByteRunLength(t *testing.T) {
 	//
 	vs := []byte{0x5, 0x5, 0x5, 0x5}
 	buf.Reset()
+	enc.ResetPosition()
 	for i, v := range vs {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 		if i==2 {
-			brl.MarkPosition()
+			assert.Equal(t, uint64(3),  enc.GetPosition()[0])
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("+%v", err)
 	}
 
@@ -57,17 +58,14 @@ func TestByteRunLength(t *testing.T) {
 	values, err = DecodeByteRL(buf, values)
 	assert.Equal(t, vs, values)
 
-	pos:= brl.PopPositions()
-	assert.Equal(t, uint64(3), pos[0][0])
-
 	vs = []byte{0x1, 0x5, 0x5, 0x5, 0x5}
 	buf.Reset()
 	for _, v := range vs {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 
@@ -82,11 +80,11 @@ func TestByteRunLength(t *testing.T) {
 	vs = []byte{0x1, 0x5, 0x5, 0x5, 0x5, 0x1}
 	buf.Reset()
 	for _, v := range vs {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 
@@ -100,20 +98,18 @@ func TestByteRunLength(t *testing.T) {
 
 	vs = []byte{0x01, 0x02, 0x03, 0x4, 0x05, 0x05, 0x05, 0x05, 0x06, 0x07, 0x08, 0x08, 0x08, 0x09, 0x10}
 	buf.Reset()
+	enc.ResetPosition()
 	for i, v := range vs {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 		if i==4 {
-			brl.MarkPosition()
+			assert.Equal(t, uint64(5), enc.GetPosition()[0])
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
-
-	p:= brl.PopPositions()
-	assert.Equal(t, uint64(1), p[0][0])
 
 	values = values[:0]
 	for buf.Len() != 0 {
@@ -124,20 +120,18 @@ func TestByteRunLength(t *testing.T) {
 	assert.Equal(t, vs, values)
 
 	buf.Reset()
+	enc.ResetPosition()
 	for i, v := range vs {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 		if i==11 {
-			brl.MarkPosition()
+			assert.Equal(t, uint64(12), enc.GetPosition()[0])
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
-
-	p= brl.PopPositions()
-	assert.Equal(t, uint64(2), p[0][0])
 
 	vs = vs[:0]
 	for i := 0; i <= 130; i++ { // run 131
@@ -146,12 +140,13 @@ func TestByteRunLength(t *testing.T) {
 	vs = append(vs, 0x02, 0x03)
 
 	buf.Reset()
+	enc.ResetPosition()
 	for _, v := range vs {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
 
@@ -164,23 +159,25 @@ func TestByteRunLength(t *testing.T) {
 	assert.Equal(t, vs, values)
 
 	vs = vs[:0]
-	for i := 0; i <= 130; i++ {
+	for i := 0; i <= 150; i++ {
 		vs = append(vs, byte(i))
 	}
 	buf.Reset()
+	enc.ResetPosition()
 	for i, v := range vs {
-		if err = brl.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
 		if i==124 {
-			brl.MarkPosition()
+			assert.Equal(t, uint64(125), enc.GetPosition()[0])
+		}
+		if i==130 {
+			assert.Equal(t, uint64(3), enc.GetPosition()[0])
 		}
 	}
-	if err = brl.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("fail %+v", err)
 	}
-	pp:= brl.PopPositions()
-	assert.Equal(t, uint64(125), pp[0][0])
 }
 
 func TestFindBytesRepeats(t *testing.T) {
@@ -583,24 +580,23 @@ func TestBoolRunLength(t *testing.T) {
 	var err error
 
 	buf := &bytes.Buffer{}
-	e := NewBoolEncoder()
-
+	enc := NewBoolEncoder(true)
+	enc.ResetPosition()
 	for i, v := range values {
-		if err = e.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		if i==3 {
-			e.MarkPosition()
+			pp:= enc.GetPosition()
+			assert.Equal(t, uint64(0), pp[0])
+			assert.Equal(t, uint64(4), pp[1])
 		}
 	}
-	if err = e.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, encoded, buf.Bytes())
 
-	pp:= e.PopPositions()
-	assert.Equal(t, uint64(1), pp[0][0])
-	assert.Equal(t, uint64(4), pp[0][1])
 
 	var vs []bool
 	vs, err = DecodeBools(buf, vs)
@@ -615,11 +611,11 @@ func TestBoolRunLength(t *testing.T) {
 
 	buf.Reset()
 	for _, v := range values {
-		if err = e.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
-	if err = e.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -637,20 +633,20 @@ func TestBoolRunLength(t *testing.T) {
 	values[99] = true
 
 	buf.Reset()
-	for _, v := range values {
-		if err = e.Encode(v, buf); err != nil {
+	enc.ResetPosition()
+	for i, v := range values {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
-		//if i==99 {
-		//	brl.MarkPosition()
-		//}
+		if i==99 { // 100
+			pp:= enc.GetPosition()
+			assert.Equal(t, uint64(12), pp[0]) // byte position
+			assert.Equal(t, uint64(4), pp[1])
+		}
 	}
-	if err = e.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
-
-	//p:=brl.GetAndClearPositions()
-	//assert.Equal(t, uint64(4), p[0])
 
 	vs = vs[:0]
 	for buf.Len() != 0 {
@@ -672,11 +668,11 @@ func TestBoolRunLength(t *testing.T) {
 
 	buf.Reset()
 	for _, v := range bb {
-		if err = e.Encode(v, buf); err != nil {
+		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
 	}
-	if err = e.Flush(buf); err != nil {
+	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
 

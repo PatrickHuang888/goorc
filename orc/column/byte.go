@@ -18,10 +18,12 @@ func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writ
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
 	}
 	var indexStats *pb.ColumnStatistics
+	var index *pb.RowIndex
 	if opts.WriteIndex {
 		indexStats = &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
+		index = &pb.RowIndex{}
 	}
-	base := &writer{schema: schema, opts: opts, stats: stats, present: present, indexStats: indexStats}
+	base := &writer{schema: schema, opts: opts, stats: stats, present: present, indexStats: indexStats, index: index}
 	data := stream.NewByteWriter(schema.Id, pb.Stream_DATA, opts)
 	return &byteWriter{base, data}
 }
@@ -43,21 +45,19 @@ func (w *byteWriter) Write(value api.Value) error {
 			return err
 		}
 		*w.stats.BinaryStatistics.Sum++
+		*w.stats.NumberOfValues++ // makeSure:
 	}
-	*w.stats.NumberOfValues++
 
 	if w.opts.WriteIndex {
 		w.indexInRows++
 		if w.indexInRows >= w.opts.IndexStride {
+			var pp []uint64
 			if w.schema.HasNulls {
-				w.present.MarkPosition()
+				pp = append(pp, w.present.GetPosition()...)
 			}
-			w.data.MarkPosition()
+			pp = append(pp, w.data.GetPosition()...)
+			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Positions: pp, Statistics: w.indexStats})
 
-			if w.index == nil {
-				w.index = &pb.RowIndex{}
-			}
-			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Statistics: w.indexStats})
 			// new stats
 			w.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
 			if w.schema.HasNulls {
@@ -68,8 +68,8 @@ func (w *byteWriter) Write(value api.Value) error {
 		// fixme: does not write index statistic bytes on disk, java impl either
 		if !value.Null {
 			*w.indexStats.BinaryStatistics.Sum++
+			*w.indexStats.NumberOfValues++
 		}
-		*w.indexStats.NumberOfValues++
 	}
 	return nil
 }
@@ -98,26 +98,6 @@ func (w *byteWriter) Flush() error {
 	}
 	*w.stats.BytesOnDisk += w.data.Info().GetLength()
 
-	if w.opts.WriteIndex {
-		var pp [][]uint64
-		if w.schema.HasNulls {
-			pp = w.present.GetPositions()
-			if len(w.index.Entry) != len(pp) {
-				return errors.New("index entry and position error")
-			}
-		}
-		dp := w.data.GetPositions()
-		if len(w.index.Entry) != len(dp) {
-			return errors.New("index entry and position error")
-		}
-
-		for i, e := range w.index.Entry {
-			if w.schema.HasNulls {
-				e.Positions = append(e.Positions, pp[i]...)
-			}
-			e.Positions = append(e.Positions, dp[i]...)
-		}
-	}
 	return nil
 }
 
@@ -218,7 +198,7 @@ func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
 	// from start
 	if indexEntry == nil {
 		if c.schema.HasNulls {
-			if err := c.present.Seek(0, 0, 0); err != nil {
+			if err := c.present.Seek(0, 0, 0, 0); err != nil {
 				return err
 			}
 		}
@@ -238,19 +218,19 @@ func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
 	}
 
 	if c.opts.CompressionKind == pb.CompressionKind_NONE {
-		if err := c.present.Seek(pos[0], 0, pos[1]); err != nil {
+		if err := c.present.Seek(pos[0], 0, pos[1], pos[2]); err != nil {
 			return err
 		}
-		if err := c.data.Seek(pos[2], 0, pos[3]); err != nil {
+		if err := c.data.Seek(pos[3], 0, pos[4]); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := c.present.Seek(pos[0], pos[1], pos[2]); err != nil {
+	if err := c.present.Seek(pos[0], pos[1], pos[2], pos[3]); err != nil {
 		return err
 	}
-	if err := c.data.Seek(pos[3], pos[4], pos[5]); err != nil {
+	if err := c.data.Seek(pos[4], pos[5], pos[6]); err != nil {
 		return err
 	}
 	return nil

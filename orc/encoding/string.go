@@ -33,11 +33,11 @@ func (e *stringContents) Flush(out *bytes.Buffer) error {
 	return nil
 }
 
-func (e *stringContents) MarkPosition() {
+func (e *stringContents) ResetPosition() {
 	e.positions = append(e.positions, uint64(e.markedPosition))
 }
 
-func (e *stringContents) PopPositions() [][]uint64 {
+func (e *stringContents) GetPosition() []uint64 {
 	/*r := e.positions
 	e.positions = nil
 	return r*/

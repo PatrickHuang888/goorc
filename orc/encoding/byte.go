@@ -8,95 +8,85 @@ import (
 const MaxByteRunLength = 128
 const MinRepeats = 3
 
-/*
-	for simplicity, there should be 1 marked position in 1 encoded block, maybe MaxByteRunLength
- */
 type byteRunLength struct {
-	// fixme: only 1 marked here
-	markedPosition int
-	positions      []uint64
-	values         []byte
+	position int
+	values   []byte
 }
 
-func NewByteEncoder() *byteRunLength {
-	e := &byteRunLength{values: make([]byte, 0, MaxByteRunLength), markedPosition: -1}
-	return e
-}
-
-func (e *byteRunLength) MarkPosition() {
-	if len(e.values) == 0 {
-		logger.Errorf("mark position error, no value")
-		return
+func NewByteEncoder(resetPosition bool) *byteRunLength {
+	if resetPosition {
+		return &byteRunLength{values: make([]byte, 0, MaxByteRunLength), position: 0}
 	}
-	e.markedPosition = len(e.values)
+	return &byteRunLength{values: make([]byte, 0, MaxByteRunLength), position: -1}
 }
 
-func (e *byteRunLength) PopPositions() [][]uint64 {
-	var r [][]uint64
-	for _, v := range e.positions {
-		r= append(r, []uint64{v})
-	}
-	e.positions = e.positions[:0]
-	return r
+func (e *byteRunLength) ResetPosition() {
+	e.position = 0
+}
+
+func (e *byteRunLength) GetPosition() []uint64 {
+	return []uint64{uint64(e.position)}
 }
 
 func (e *byteRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	value := v.(byte)
 	e.values = append(e.values, value)
 
+	if e.position != -1 {
+		e.position++
+	}
+
 	if len(e.values) >= MaxByteRunLength {
-		e.encodeBytes(out, &e.values)
+		e.encodeBytes(out, false)
+		// write out, recalculate position
+		if e.position != -1 {
+			e.position = len(e.values)
+		}
 	}
 	return nil
 }
 
 func (e *byteRunLength) Flush(out *bytes.Buffer) error {
 	for len(e.values) != 0 {
-		e.encodeBytes(out, &e.values)
+		e.encodeBytes(out, true)
 	}
 	return nil
 }
 
 func (e *byteRunLength) Reset() {
-	e.values= e.values[:0]
-	e.markedPosition= -1
-	e.positions= e.positions[:0]
+	e.values = e.values[:0]
 }
 
-func (e *byteRunLength) encodeBytes(out *bytes.Buffer, vector *[]byte) {
+func (e *byteRunLength) encodeBytes(out *bytes.Buffer, toEnd bool) {
 	// max len(values) is 128
-	values := *vector
-
-	// find repeats from start
-	index := findRepeats(values, MinRepeats)
-	if index == 0 { //start from repeats, then find how many
-		j:= MinRepeats
-		for; j < len(values); j++ {
-			if values[j] != values[0] {
-				break
+	for ; ; {
+		// find repeats from start, if no repeats index==len(values)
+		index := findRepeats(e.values, MinRepeats)
+		if index == 0 { //start from repeats, then find how many
+			j := MinRepeats
+			for ; j < len(e.values); j++ {
+				if e.values[j] != e.values[0] {
+					break
+				}
 			}
-		}
-		index = j
-		// write repeats
-		out.WriteByte(byte(index - MinRepeats))
-		out.WriteByte(values[0])
-	} else {
-		//write direct
-		out.WriteByte(byte(-index))
-		out.Write(values[:index])
-	}
-
-	if e.markedPosition != -1 {
-		if e.markedPosition <= index {
-			e.positions = append(e.positions, uint64(e.markedPosition))
-			e.markedPosition = -1
+			index = j
+			// write repeats
+			out.WriteByte(byte(index - MinRepeats))
+			out.WriteByte(e.values[0])
+			logger.Tracef("byte encoder encoded %d repeated values", index)
 		} else {
-			e.markedPosition = e.markedPosition - index
+			//write direct
+			out.WriteByte(byte(-index))
+			out.Write(e.values[:index])
+			logger.Tracef("byte encoder encoded %d directed values", index)
+		}
+
+		e.values = e.values[index:]
+
+		if !toEnd || len(e.values) == 0 {
+			break
 		}
 	}
-
-	values = values[index:]
-	*vector = values
 }
 
 func DecodeByteRL(in io.ByteReader, values []byte) ([]byte, error) {

@@ -11,11 +11,24 @@ import (
 )
 
 func newBoolWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+	stats := &pb.ColumnStatistics{BucketStatistics: &pb.BucketStatistics{Count: make([]uint64, 1)},
+		NumberOfValues: new(uint64), BytesOnDisk: new(uint64), HasNull: new(bool)}
 	var present *stream.Writer
 	if schema.HasNulls {
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+		*stats.HasNull = true
 	}
-	base := &writer{schema: schema, opts: opts, present: present}
+	var indexStats *pb.ColumnStatistics
+	var index *pb.RowIndex
+	if opts.WriteIndex {
+		indexStats = &pb.ColumnStatistics{BucketStatistics: &pb.BucketStatistics{Count: make([]uint64, 1)},
+			HasNull: new(bool), NumberOfValues: new(uint64), BytesOnDisk: new(uint64)}
+		if schema.HasNulls {
+			*indexStats.HasNull= true
+		}
+		index = &pb.RowIndex{}
+	}
+	base := &writer{schema: schema, opts: opts, present: present, stats: stats, indexStats: indexStats, index: index}
 	data := stream.NewBoolWriter(schema.Id, pb.Stream_DATA, opts)
 	return &boolWriter{base, data}
 }
@@ -31,14 +44,40 @@ func (w *boolWriter) Write(value api.Value) error {
 			return err
 		}
 	}
-	if value.Null {
-		return nil
+	if !value.Null {
+		if err := w.data.Write(value.V); err != nil {
+			return err
+		}
+		if value.V.(bool) {
+			// true count
+			(*w.stats.BucketStatistics).Count[0]++
+		}
+		*w.stats.NumberOfValues++
 	}
-	if err := w.data.Write(value.V); err != nil {
-		return err
+
+	if w.opts.WriteIndex {
+		w.indexInRows++
+		if w.indexInRows >= w.opts.IndexStride {
+			var pp []uint64
+			if w.schema.HasNulls {
+				pp = append(pp, w.present.GetPosition()...)
+			}
+			pp = append(pp, w.data.GetPosition()...)
+			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Positions: pp, Statistics: w.indexStats})
+			// new stats
+			w.indexStats = &pb.ColumnStatistics{BucketStatistics: &pb.BucketStatistics{Count: make([]uint64, 1)},
+				NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+			if w.schema.HasNulls {
+				*w.indexStats.HasNull = true
+			}
+			w.indexInRows = 0
+		}
+		// no bytes on disk index stats
+		if !value.Null {
+			(*w.indexStats.BucketStatistics).Count[0]++
+			*w.indexStats.NumberOfValues++
+		}
 	}
-	// todo: write stats
-	// todo: write index
 	return nil
 }
 
@@ -52,6 +91,10 @@ func (w *boolWriter) Flush() error {
 		return err
 	}
 
+	if w.schema.HasNulls {
+		*w.stats.BytesOnDisk = w.present.Info().GetLength()
+	}
+	*w.stats.BytesOnDisk += w.data.Info().GetLength()
 	w.flushed = true
 	return nil
 }
@@ -102,11 +145,6 @@ type boolReader struct {
 	data *stream.BoolReader
 }
 
-func (r *boolReader) InitIndex(startOffset uint64, length uint64) error {
-	// todo:
-	return nil
-}
-
 func (r *boolReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	if info.GetKind() == pb.Stream_PRESENT {
 		if !r.schema.HasNulls {
@@ -155,7 +193,76 @@ func (r *boolReader) Next() (value api.Value, err error) {
 }
 
 func (r *boolReader) Seek(rowNumber uint64) error {
-	// todo:
+	if !r.opts.HasIndex {
+		return errors.New("no index")
+	}
+
+	var offset uint64
+	if rowNumber < uint64(r.opts.IndexStride) {
+		// from start
+		if err := r.seek(nil); err != nil {
+			return err
+		}
+		offset = rowNumber
+	} else {
+		stride := rowNumber / uint64(r.opts.IndexStride)
+		offset = rowNumber % (stride * uint64(r.opts.IndexStride))
+		if err := r.seek(r.index.GetEntry()[stride-1]); err != nil {
+			return err
+		}
+	}
+
+	for i := 0; i < int(offset); i++ {
+		if _, err := r.Next(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *boolReader) seek(indexEntry *pb.RowIndexEntry) error {
+	if err := r.checkInit(); err != nil {
+		return err
+	}
+
+	// from start
+	if indexEntry == nil {
+		if r.schema.HasNulls {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := r.data.Seek(0, 0, 0, 0); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	pos := indexEntry.GetPositions()
+
+	if !r.schema.HasNulls { // no present
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			return r.data.Seek(pos[0], 0, pos[1], pos[2])
+		}
+		return r.data.Seek(pos[0], pos[1], pos[2], pos[3])
+	}
+
+	if r.opts.CompressionKind == pb.CompressionKind_NONE {
+		if err := r.present.Seek(pos[0], 0, pos[1], pos[2]); err != nil {
+			return err
+		}
+		if err := r.data.Seek(pos[3], 0, pos[4], pos[5]); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if err := r.present.Seek(pos[0], pos[1], pos[2], pos[3]); err != nil {
+		return err
+	}
+	if err := r.data.Seek(pos[4], pos[5], pos[6], pos[7]); err != nil {
+		return err
+	}
 	return nil
 }
 

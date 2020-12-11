@@ -51,5 +51,6 @@ func DefaultWriterOptions() WriterOptions {
 }
 
 func DefaultReaderOptions() ReaderOptions {
-	return ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE, CompressionKind: pb.CompressionKind_ZLIB}
+	return ReaderOptions{RowSize: DEFAULT_ROW_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE, CompressionKind: pb.CompressionKind_ZLIB,
+		IndexStride: DefaultIndexStride}
 }

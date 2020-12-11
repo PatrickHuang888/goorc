@@ -19,6 +19,7 @@ type Reader interface {
 	// Seek seek to row number offset to current stripe
 	// if column is struct (or like)  children, and struct has present stream, then
 	// seek to non-null row that is calculated by parent
+	// next call on Next() will not include current row been seeked
 	Seek(rowNumber uint64) error
 
 	//Children() []Reader

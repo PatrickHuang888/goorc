@@ -37,11 +37,11 @@ func (f float) Flush(out *bytes.Buffer) error {
 	return nil
 }
 
-func (f *float) MarkPosition() {
-	f.positions = append(f.positions, 1)
+func (f *float) ResetPosition() {
+	/*f.positions = append(f.positions, 1)*/
 }
 
-func (f *float) PopPositions() [][]uint64 {
+func (f *float) GetPosition() []uint64 {
 	// todo:
 	/*r := f.positions
 	f.positions = nil
@@ -100,11 +100,11 @@ func (d double) Flush(out *bytes.Buffer) error {
 	return nil
 }
 
-func (d *double) MarkPosition() {
+func (d *double) ResetPosition() {
 	d.positions = append(d.positions, 1)
 }
 
-func (d *double) PopPositions() [][]uint64 {
+func (d *double) GetPosition() []uint64 {
 	/*r := d.positions
 	d.positions = nil
 	return r*/

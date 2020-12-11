@@ -121,15 +121,17 @@ func TestIntV2WithPresents(t *testing.T) {
 func TestBool(t *testing.T) {
 	schema := api.TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
 	wopts := config.DefaultWriterOptions()
+	wopts.IndexStride= 130
+	wopts.WriteIndex= true
 
-	rows := 104
+	rows := encoding.MaxByteRunLength*encoding.MaxBoolRunLength+10
 	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
 		values[i].V = true
 	}
 	values[0].V = false
 	values[45].V = false
-	values[103].V = false
+	values[encoding.MaxByteRunLength*encoding.MaxBoolRunLength+9].V = false
 
 	writer := newBoolWriter(&schema, &wopts).(*boolWriter)
 	for _, v := range values {
@@ -148,8 +150,11 @@ func TestBool(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
+	ropts.IndexStride= 130
+	ropts.HasIndex= true
 
-	reader := newBoolReader(&schema, &ropts, f)
+	reader := newBoolReader(&schema, &ropts, f).(*boolReader)
+	reader.index = writer.index
 	err := reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 
@@ -159,8 +164,30 @@ func TestBool(t *testing.T) {
 			t.Fatalf("%+v", err)
 		}
 	}
-
 	assert.Equal(t, values, vector)
+
+	if err:=reader.Seek(45);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	v, err := reader.Next()
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, false, v.V)
+
+	if err:=reader.Seek(encoding.MaxBoolRunLength*encoding.MaxByteRunLength+8);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	v, err = reader.Next()
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, true, v.V)
+	v, err = reader.Next()
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, false, v.V)
 }
 
 func TestFloat(t *testing.T) {
@@ -368,7 +395,7 @@ func TestByteWithPresents(t *testing.T) {
 	// stats verification at file test?
 }
 
-func TestIndexOnByte(t *testing.T) {
+func TestByteOnIndex(t *testing.T) {
 	rows := 150
 	indexStride := 130
 
@@ -376,7 +403,7 @@ func TestIndexOnByte(t *testing.T) {
 	schema.Encoding = pb.ColumnEncoding_DIRECT
 
 	values := make([]api.Value, rows)
-	for i := 0; i < rows; i++ {
+	for i := 0; i < rows; i++ {  // start from 0
 		values[i].V = byte(i)
 	}
 
@@ -493,7 +520,7 @@ func TestByteOnIndexWithPresents(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	if err := reader.Seek(130); err != nil {
+	if err := reader.Seek(129); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	value, err := reader.Next()

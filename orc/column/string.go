@@ -61,15 +61,7 @@ func (w *stringDirectV2Writer) Write(value api.Value) error {
 	if w.opts.WriteIndex {
 		w.indexInRows++
 		if w.indexInRows >= w.opts.IndexStride {
-			if w.schema.HasNulls {
-				w.present.MarkPosition()
-			}
-			w.data.MarkPosition()
-			w.length.MarkPosition()
-
-			if w.index == nil {
-				w.index = &pb.RowIndex{}
-			}
+			// todo: write index
 			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Statistics: w.indexStats})
 			// new stats
 			// no index statistic bytes on disk, java writer neither
@@ -110,33 +102,6 @@ func (w *stringDirectV2Writer) Flush() error {
 	}
 	*w.stats.BytesOnDisk += w.data.Info().GetLength()
 	*w.stats.BytesOnDisk += w.length.Info().GetLength()
-
-	if w.opts.WriteIndex {
-		var pp [][]uint64
-		if w.schema.HasNulls {
-			pp = w.present.GetPositions()
-			if len(w.index.Entry) != len(pp) {
-				return errors.New("index entry and position error")
-			}
-		}
-
-		dp := w.data.GetPositions()
-		if len(w.index.Entry) != len(dp) {
-			return errors.New("index entry and position error")
-		}
-
-		lp := w.length.GetPositions()
-		if len(w.index.Entry) != len(lp) {
-			return errors.New("index entry and position error")
-		}
-
-		for i, e := range w.index.Entry {
-			e.Positions = append(e.Positions, pp[i]...)
-			e.Positions = append(e.Positions, dp[i]...)
-			e.Positions = append(e.Positions, lp[i]...)
-		}
-	}
-
 	return nil
 }
 
@@ -261,7 +226,8 @@ func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
 }
 
 func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
-	page := rowNumber / uint64(r.opts.IndexStride)
+	// todo:
+	/*page := rowNumber / uint64(r.opts.IndexStride)
 	offset := rowNumber % uint64(r.opts.IndexStride)
 	entry := r.index.Entry[page]
 
@@ -336,7 +302,7 @@ func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
 	}
 	if err := r.data.Seek(entry.Positions[0], entry.Positions[1], lens); err != nil {
 		return err
-	}
+	}*/
 	return nil
 }
 

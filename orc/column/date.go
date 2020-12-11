@@ -7,7 +7,6 @@ import (
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	log "github.com/sirupsen/logrus"
 	"io"
 )
 
@@ -99,20 +98,20 @@ func (c *dateV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 
 	if c.opts.CompressionKind == pb.CompressionKind_NONE {
 		if c.present != nil {
-			if err := c.present.Seek(pos[0], 0, pos[1]); err != nil {
+			if err := c.present.Seek(pos[0], 0, pos[1], pos[2]); err != nil {
 				return err
 			}
 		}
-		if err := c.data.Seek(pos[2], 0, pos[3]); err != nil {
+		if err := c.data.Seek(pos[3], 0, pos[4]); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := c.present.Seek(pos[0], pos[1], pos[2]); err != nil {
+	if err := c.present.Seek(pos[0], pos[1], pos[2], pos[3]); err != nil {
 		return err
 	}
-	if err := c.data.Seek(pos[3], pos[4], pos[5]); err != nil {
+	if err := c.data.Seek(pos[4], pos[5], pos[6]); err != nil {
 		return err
 	}
 	return nil
@@ -191,7 +190,7 @@ func (t *timestampWriter) Write(value api.Value) error {
 			t.indexInRows++
 
 			if t.indexInRows >= t.opts.IndexStride {
-
+				// todo: write index
 				entry := &pb.RowIndexEntry{Statistics: t.indexStats}
 				t.index.Entry = append(t.index.Entry, entry)
 				t.indexStats = &pb.ColumnStatistics{
@@ -242,28 +241,6 @@ func (t *timestampWriter) Flush() error {
 	}
 	*t.stats.BytesOnDisk += t.data.Info().GetLength()
 	*t.stats.BytesOnDisk += t.secondary.Info().GetLength()
-
-	if t.opts.WriteIndex {
-		if t.index == nil {
-			t.index = &pb.RowIndex{}
-		}
-
-		pp := t.present.GetPositions()
-		dp := t.data.GetPositions()
-		sp := t.secondary.GetPositions()
-
-		if len(t.index.Entry) != len(pp) || len(t.index.Entry) != len(dp) || len(t.index.Entry) != len(sp) {
-			log.Errorf("index entry and position error")
-			return nil
-		}
-
-		for i, e := range t.index.Entry {
-			e.Positions = append(e.Positions, pp[i]...)
-			e.Positions = append(e.Positions, dp[i]...)
-			e.Positions = append(e.Positions, sp[i]...)
-		}
-	}
-
 	return nil
 }
 

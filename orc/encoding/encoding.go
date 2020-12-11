@@ -39,11 +39,10 @@ type Encoder interface {
 	// encoder reset after flush
 	Flush(out *bytes.Buffer) error
 
-	MarkPosition()
+	ResetPosition()
 
-	// GetPositions get positions marked previously after stream flush, then clear
-	// maybe not only one position when every mark
-	PopPositions() [][]uint64
+	// GetPositions get current position count
+	GetPosition() []uint64
 
 	Reset()
 }
