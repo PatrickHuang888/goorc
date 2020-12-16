@@ -1,7 +1,6 @@
 package column
 
 import (
-	"fmt"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
@@ -317,7 +316,7 @@ func TestFloat(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }*/
 
-func TestStringDirectV2(t *testing.T) {
+/*func TestStringDirectV2(t *testing.T) {
 	rows := 100
 	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: false}
 
@@ -361,7 +360,7 @@ func TestStringDirectV2(t *testing.T) {
 	}
 
 	assert.Equal(t, values, vector)
-}
+}*/
 
 func TestByteWithPresents(t *testing.T) {
 	rows := 150

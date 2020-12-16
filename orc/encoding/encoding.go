@@ -39,8 +39,6 @@ type Encoder interface {
 	// encoder reset after flush
 	Flush(out *bytes.Buffer) error
 
-	ResetPosition()
-
 	// GetPositions get current position count
 	GetPosition() []uint64
 

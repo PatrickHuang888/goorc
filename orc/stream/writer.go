@@ -59,10 +59,6 @@ func (w *Writer) Write(v interface{}) error {
 		logger.Debugf("stream writer column %d kind %s has written %d values, buffer over chunksize, do compressing...",
 			w.info.GetColumn(), w.info.GetKind().String(), w.count)
 		w.count = 0
-
-		/*if w.opts.WriteIndex {
-			w.encoder.ResetPosition()
-		}*/
 	}
 	return nil
 }

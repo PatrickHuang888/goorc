@@ -21,20 +21,11 @@ func NewBoolEncoder(resetPosition bool) *boolRunLength {
 	return &boolRunLength{brl: NewByteEncoder(false), position: -1, index: -1}
 }
 
-func (e *boolRunLength) ResetPosition() {
-	e.position = 0
-	e.brl.ResetPosition()
-}
-
 func (e *boolRunLength) GetPosition() []uint64 {
 	var r []uint64
-
 	// refactor: operate on byte run length directly
 	r = append(r, uint64(e.brl.position))
 	r = append(r, uint64(e.position))
-
-	e.brl.ResetPosition()
-	e.ResetPosition()
 	return r
 }
 
@@ -48,10 +39,6 @@ func (e *boolRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	value := v.(bool)
 	e.index++
 
-	if e.position != -1 {
-		e.position++
-	}
-
 	if value {
 		e.value |= 1 << byte(7-e.index)
 	}
@@ -62,10 +49,10 @@ func (e *boolRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 		}
 		e.index = -1
 		e.value = 0
+	}
 
-		if e.position != -1 {
-			e.position = 0
-		}
+	if e.position != -1 {
+		e.position= e.index+1
 	}
 	return nil
 }

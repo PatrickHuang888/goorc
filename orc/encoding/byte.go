@@ -20,30 +20,20 @@ func NewByteEncoder(resetPosition bool) *byteRunLength {
 	return &byteRunLength{values: make([]byte, 0, MaxByteRunLength), position: -1}
 }
 
-func (e *byteRunLength) ResetPosition() {
-	e.position = 0
-}
-
 func (e *byteRunLength) GetPosition() []uint64 {
-	r:= []uint64{uint64(e.position)}
-	e.ResetPosition()
-	return r
+	return []uint64{uint64(e.position)}
 }
 
 func (e *byteRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	value := v.(byte)
 	e.values = append(e.values, value)
 
-	if e.position != -1 {
-		e.position++
-	}
-
 	if len(e.values) >= MaxByteRunLength {
 		e.encodeBytes(out, false)
-		// write out, recalculate position
-		if e.position != -1 {
-			e.position = len(e.values)
-		}
+	}
+
+	if e.position != -1 {
+		e.position= len(e.values)
 	}
 	return nil
 }

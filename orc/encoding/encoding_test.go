@@ -42,7 +42,6 @@ func TestByteRunLength(t *testing.T) {
 	//
 	vs := []byte{0x5, 0x5, 0x5, 0x5}
 	buf.Reset()
-	enc.ResetPosition()
 	for i, v := range vs {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
@@ -99,7 +98,6 @@ func TestByteRunLength(t *testing.T) {
 
 	vs = []byte{0x01, 0x02, 0x03, 0x4, 0x05, 0x05, 0x05, 0x05, 0x06, 0x07, 0x08, 0x08, 0x08, 0x09, 0x10}
 	buf.Reset()
-	enc.ResetPosition()
 	for i, v := range vs {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
@@ -121,7 +119,6 @@ func TestByteRunLength(t *testing.T) {
 	assert.Equal(t, vs, values)
 
 	buf.Reset()
-	enc.ResetPosition()
 	for i, v := range vs {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
@@ -141,7 +138,6 @@ func TestByteRunLength(t *testing.T) {
 	vs = append(vs, 0x02, 0x03)
 
 	buf.Reset()
-	enc.ResetPosition()
 	for _, v := range vs {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
@@ -164,7 +160,6 @@ func TestByteRunLength(t *testing.T) {
 		vs = append(vs, byte(i))
 	}
 	buf.Reset()
-	enc.ResetPosition()
 	for i, v := range vs {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
@@ -605,7 +600,6 @@ func TestBoolRunLength(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	enc := NewBoolEncoder(true)
-	enc.ResetPosition()
 	for i, v := range values {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
@@ -657,7 +651,6 @@ func TestBoolRunLength(t *testing.T) {
 	values[99] = true
 
 	buf.Reset()
-	enc.ResetPosition()
 	for i, v := range values {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)

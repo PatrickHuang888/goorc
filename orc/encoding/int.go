@@ -377,19 +377,13 @@ func (e *IntRL2) Encode(v interface{}, out *bytes.Buffer) error {
 }
 
 func (e *IntRL2) GetPosition() []uint64 {
-	r:= []uint64{uint64(e.position)}
-	//e.ResetPosition()
-	return r
+	return []uint64{uint64(e.position)}
 }
 
 func (e *IntRL2) Reset() {
 	e.bitsLeft = 0
 	e.lastByte = 0
 	e.values = e.values[:0]
-}
-
-func (e *IntRL2) ResetPosition() {
-	e.position = 0
 }
 
 func (e *IntRL2) Flush(out *bytes.Buffer) error {
