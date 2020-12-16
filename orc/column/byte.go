@@ -241,21 +241,10 @@ func (c *byteReader) Seek(rowNumber uint64) error {
 		return errors.New("no index")
 	}
 
-	var offset uint64
-	if rowNumber < uint64(c.opts.IndexStride) {
-		// from start
-		if err := c.seek(nil); err != nil {
-			return err
-		}
-		offset = rowNumber
-	} else {
-		stride := rowNumber / uint64(c.opts.IndexStride)
-		offset = rowNumber % (stride * uint64(c.opts.IndexStride))
-		if err := c.seek(c.index.GetEntry()[stride-1]); err != nil {
-			return err
-		}
+	entry, offset := c.reader.getIndexEntryAndOffset(rowNumber)
+	if err := c.seek(entry); err != nil {
+		return err
 	}
-
 	for i := 0; i < int(offset); i++ {
 		if _, err := c.Next(); err != nil {
 			return err

@@ -15,9 +15,9 @@ import (
 )
 
 type reader struct {
-	f orcio.File
+	f      orcio.File
 	schema *api.TypeDescription
-	opts *config.ReaderOptions
+	opts   *config.ReaderOptions
 
 	index *pb.RowIndex
 
@@ -49,6 +49,17 @@ func (r *reader) InitIndex(startOffset uint64, length uint64) error {
 	return proto.Unmarshal(buf, r.index)
 }
 
+func (r *reader) getIndexEntryAndOffset(rowNumber uint64) (entry *pb.RowIndexEntry, offset uint64) {
+	if rowNumber < uint64(r.opts.IndexStride) {
+		offset = rowNumber
+		return
+	}
+	stride := rowNumber / uint64(r.opts.IndexStride)
+	offset = rowNumber % (stride * uint64(r.opts.IndexStride))
+	entry = r.index.GetEntry()[stride-1]
+	return
+}
+
 func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File) (Reader, error) {
 	switch schema.Kind {
 	case pb.Type_SHORT:
@@ -57,7 +68,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		fallthrough
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return &intV2Reader{reader:&reader{f:in, schema: schema, opts: opts}}, nil
+			return &intV2Reader{reader: &reader{f: in, schema: schema, opts: opts}}, nil
 		}
 		return nil, errors.New("not impl")
 
@@ -93,7 +104,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("tinyint column encoding error")
 		}
-		return &byteReader{reader:&reader{f:in, schema: schema, opts: opts}}, nil
+		return &byteReader{reader: &reader{f: in, schema: schema, opts: opts}}, nil
 
 	case pb.Type_BINARY:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
@@ -177,7 +188,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("column encoding error")
 		}
-	//todo:
+		//todo:
 		return nil, errors.New("not impl")
 
 	default:

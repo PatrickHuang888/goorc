@@ -197,21 +197,10 @@ func (r *boolReader) Seek(rowNumber uint64) error {
 		return errors.New("no index")
 	}
 
-	var offset uint64
-	if rowNumber < uint64(r.opts.IndexStride) {
-		// from start
-		if err := r.seek(nil); err != nil {
-			return err
-		}
-		offset = rowNumber
-	} else {
-		stride := rowNumber / uint64(r.opts.IndexStride)
-		offset = rowNumber % (stride * uint64(r.opts.IndexStride))
-		if err := r.seek(r.index.GetEntry()[stride-1]); err != nil {
-			return err
-		}
+	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err := r.seek(entry); err != nil {
+		return err
 	}
-
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err
