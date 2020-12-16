@@ -25,13 +25,15 @@ func TestIntV2(t *testing.T) {
 	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_LONG}
 	schema.Encoding = pb.ColumnEncoding_DIRECT_V2
 
-	rows := 100
+	rows := 1000
 	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
 		values[i].V = int64(i)
 	}
 
 	wopts := config.DefaultWriterOptions()
+	wopts.WriteIndex= true
+	wopts.IndexStride= 200
 	writer := newIntV2Writer(schema, &wopts).(*intWriter)
 	if err = writer.Writes(values); err != nil {
 		t.Fatalf("%+v", err)
@@ -49,7 +51,10 @@ func TestIntV2(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	reader := newIntV2Reader(schema, &ropts, f)
+	ropts.HasIndex= true
+	ropts.IndexStride= 200
+	reader := newIntV2Reader(schema, &ropts, f).(*intV2Reader)
+	reader.reader.index= writer.index
 	err = reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 
@@ -60,6 +65,33 @@ func TestIntV2(t *testing.T) {
 		}
 	}
 	assert.Equal(t, values, vector)
+
+	if err=reader.Seek(300);err!=nil { // less than 512
+		t.Fatalf("%+v", err)
+	}
+	v, err:= reader.Next()
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, int64(300), v.V)
+
+	if err=reader.Seek(600);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	v, err= reader.Next()
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, int64(600), v.V)
+
+	if err=reader.Seek(850);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	v, err= reader.Next()
+	if err!=nil {
+		t.Fatalf("%+v", err)
+	}
+	assert.Equal(t, int64(850), v.V)
 }
 
 func TestIntV2WithPresents(t *testing.T) {

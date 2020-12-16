@@ -29,10 +29,12 @@ func (e *boolRunLength) ResetPosition() {
 func (e *boolRunLength) GetPosition() []uint64 {
 	var r []uint64
 
-	// refactor:
+	// refactor: operate on byte run length directly
 	r = append(r, uint64(e.brl.position))
-
 	r = append(r, uint64(e.position))
+
+	e.brl.ResetPosition()
+	e.ResetPosition()
 	return r
 }
 

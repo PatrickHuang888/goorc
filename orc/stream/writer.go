@@ -60,9 +60,9 @@ func (w *Writer) Write(v interface{}) error {
 			w.info.GetColumn(), w.info.GetKind().String(), w.count)
 		w.count = 0
 
-		if w.opts.WriteIndex {
+		/*if w.opts.WriteIndex {
 			w.encoder.ResetPosition()
-		}
+		}*/
 	}
 	return nil
 }
@@ -227,7 +227,7 @@ func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions
 		cbuf.Reset()
 	}
 
-	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewIntRLV2(signed)}
+	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewIntRLV2(signed, opts.WriteIndex)}
 }
 
 func NewFloatWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {

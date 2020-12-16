@@ -18,7 +18,14 @@ func newIntV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Wri
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
 	}
-	base := &writer{schema: schema, stats: stats, present: present}
+	var indexStats *pb.ColumnStatistics
+	var index *pb.RowIndex
+	if opts.WriteIndex {
+		indexStats = &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
+			IntStatistics: &pb.IntegerStatistics{Sum: new(int64), Minimum: new(int64), Maximum: new(int64)}}
+		index = &pb.RowIndex{}
+	}
+	base := &writer{opts:opts, schema: schema, stats: stats, present: present, index: index, indexStats: indexStats}
 	data := stream.NewIntRLV2Writer(schema.Id, pb.Stream_DATA, opts, true)
 	return &intWriter{base, data}
 }
@@ -44,25 +51,51 @@ func (w *intWriter) Write(value api.Value) error {
 		}
 	}
 
-	if value.Null {
-		return nil
+	if !value.Null {
+		v := value.V.(int64)
+		if err := w.data.Write(v); err != nil {
+			return err
+		}
+		*w.stats.IntStatistics.Sum += v
+		if v < *w.stats.IntStatistics.Minimum {
+			*w.stats.IntStatistics.Minimum = v
+		}
+		if v > *w.stats.IntStatistics.Maximum {
+			*w.stats.IntStatistics.Maximum = v
+		}
+		*w.stats.NumberOfValues++
 	}
 
-	v := value.V.(int64)
-	if err := w.data.Write(v); err != nil {
-		return err
-	}
+	if w.opts.WriteIndex {
+		w.indexInRows++
+		if w.indexInRows >= w.opts.IndexStride {
+			var pp []uint64
+			if w.schema.HasNulls {
+				pp = append(pp, w.present.GetPosition()...)
+			}
+			pp = append(pp, w.data.GetPosition()...)
+			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Positions: pp, Statistics: w.indexStats})
 
-	*w.stats.IntStatistics.Sum += v
-	if v < *w.stats.IntStatistics.Minimum {
-		*w.stats.IntStatistics.Minimum = v
+			// new stats
+			w.indexStats = &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
+				IntStatistics: &pb.IntegerStatistics{Sum: new(int64), Minimum: new(int64), Maximum: new(int64)}}
+			if w.schema.HasNulls {
+				*w.indexStats.HasNull = true
+			}
+			w.indexInRows = 0
+		}
+		if !value.Null {
+			v := value.V.(int64)
+			*w.indexStats.IntStatistics.Sum += v
+			if v < *w.indexStats.IntStatistics.Minimum {
+				*w.indexStats.IntStatistics.Minimum = v
+			}
+			if v > *w.indexStats.IntStatistics.Maximum {
+				*w.indexStats.IntStatistics.Maximum = v
+			}
+			*w.indexStats.NumberOfValues++
+		}
 	}
-	if v > *w.stats.IntStatistics.Maximum {
-		*w.stats.IntStatistics.Maximum = v
-	}
-	*w.stats.NumberOfValues++
-
-	// todo: write index
 	return nil
 }
 
@@ -245,14 +278,22 @@ func (c *intV2Reader) Seek(rowNumber uint64) error {
 		return errors.New("no index")
 	}
 
-	stride := rowNumber / uint64(c.opts.IndexStride)
-	strideOffset := rowNumber % (stride * uint64(c.opts.IndexStride))
-
-	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
-		return err
+	var offset uint64
+	if rowNumber < uint64(c.opts.IndexStride) {
+		// from start
+		if err := c.seek(nil); err != nil {
+			return err
+		}
+		offset = rowNumber
+	} else {
+		stride := rowNumber / uint64(c.opts.IndexStride)
+		offset = rowNumber % (stride * uint64(c.opts.IndexStride))
+		if err := c.seek(c.index.GetEntry()[stride-1]); err != nil {
+			return err
+		}
 	}
 
-	for i := 0; i < int(strideOffset); i++ {
+	for i := 0; i < int(offset); i++ {
 		if _, err := c.Next(); err != nil {
 			return err
 		}

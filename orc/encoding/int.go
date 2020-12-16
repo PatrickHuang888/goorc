@@ -9,24 +9,23 @@ import (
 	"github.com/pkg/errors"
 )
 
-func NewIntRLV2(signed bool) *IntRL2 {
-	return &IntRL2{values: make([]uint64, MAX_INT_RL), signed: signed, offset: -1}
+func NewIntRLV2(signed bool, doPosition bool) *IntRL2 {
+	if doPosition {
+		return &IntRL2{values: make([]uint64, 0, MaxIntRunLength), signed: signed, position: 0}
+	}
+	return &IntRL2{values: make([]uint64, 0, MaxIntRunLength), signed: signed, position: -1}
 }
 
-// int run length encoding v2
+// 64 bit int run length encoding v2
 type IntRL2 struct {
 	lastByte byte // different align when using read/writer, used in r/w
 	bitsLeft int  // used in r/w
 
 	signed bool
 
-	//fixme: make sure indexStride <= MAX_INT_RL
-	markedPosition int
-	positions      []uint64
-	offset         int
+	position int
 
 	values []uint64
-	//buf    *bytes.Buffer
 }
 
 // decode 1 'block' values, not all data in input bufferedReader
@@ -38,11 +37,6 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 	// header from MSB to LSB
 	firstByte, err := in.ReadByte()
 	if err != nil {
-		/*if io.EOF.Error()== err.Error(){
-			return nil, err
-		} else {
-			return nil, errors.WithStack(err)
-		}*/
 		return nil, err
 	}
 
@@ -350,7 +344,7 @@ func (e *IntRL2) writeLeftBits(out *bytes.Buffer) error {
 	return nil
 }
 
-const MAX_INT_RL = 512
+const MaxIntRunLength = 512
 
 func (e *IntRL2) Encode(v interface{}, out *bytes.Buffer) error {
 	var value uint64
@@ -368,209 +362,130 @@ func (e *IntRL2) Encode(v interface{}, out *bytes.Buffer) error {
 		value = vt
 	}
 
-	e.offset++
-	e.values[e.offset] = value
+	e.values = append(e.values, value)
 
-	if e.offset >= MAX_INT_RL-1 {
-		if err := e.write(out, e.values[:e.offset+1]); err != nil {
+	if len(e.values) >= MaxIntRunLength {
+		if err := e.write(out, false); err != nil {
 			return err
 		}
-		logger.Tracef("int encoder write out %d values", e.offset+1)
-		e.offset = -1
 	}
 
+	if e.position != -1 {
+		e.position= len(e.values)
+	}
 	return nil
 }
 
-/*func (d *IntRL2) BufferedSize() int {
-	return d.buf.Len()
-}*/
-
 func (e *IntRL2) GetPosition() []uint64 {
-	/*r := e.positions
-	e.positions = nil
-	e.markedPosition = -1
-	return r*/
-	// todo:
-	return nil
+	r:= []uint64{uint64(e.position)}
+	//e.ResetPosition()
+	return r
 }
 
 func (e *IntRL2) Reset() {
 	e.bitsLeft = 0
 	e.lastByte = 0
-	e.offset = -1
+	e.values = e.values[:0]
 }
 
 func (e *IntRL2) ResetPosition() {
-	// todo:
+	e.position = 0
 }
 
 func (e *IntRL2) Flush(out *bytes.Buffer) error {
-	if e.offset != -1 {
-		if err := e.write(out, e.values[:e.offset+1]); err != nil {
+	if len(e.values) != 0 {
+		logger.Tracef("encoding int rl v2 FLUSH %d values", len(e.values))
+		if err := e.write(out, true); err != nil {
 			return err
 		}
-		logger.Tracef("int encoder flush %d values", e.offset+1)
 	}
 	e.Reset()
 	return nil
 }
 
-/*
-	encoding in MAX_INT_RL values, this can be improved
-*/
-func (e *IntRL2) write(out *bytes.Buffer, values []uint64) error {
-	if len(values) <= MinRepeats {
-		if e.markedPosition != -1 {
-			e.positions = append(e.positions, uint64(e.markedPosition))
-			e.markedPosition = -1
+func (e *IntRL2) write(out *bytes.Buffer, toEnd bool) error {
+	if len(e.values) <= MinRepeats {
+		if err := e.writeDirect(out, true); err != nil {
+			return err
 		}
-		return e.writeDirect(out, true, values)
+		e.values = e.values[:0]
+		return nil
 	}
 
-	var sub byte
-	var subStart int
-
-	for i := 0; i < len(values); { // len(values) will be <= MAX_INT_RL
-		// try repeat first
-		repeat := getRepeat(values, i)
-		if repeat >= 3 {
-			// short repeat
-			if repeat <= 10 {
-				sub = Encoding_SHORT_REPEAT
-				subStart = i
-
-				var v uint64
-				if e.signed {
-					logger.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
-						repeat, UnZigzag(values[i]), i)
-				} else {
-					logger.Tracef("encoding: irl v2 Short Repeat count %d, value %d at index %d",
-						repeat, values[i], i)
-				}
-				v = values[i]
-				i += int(repeat)
-				if err := e.writeShortRepeat(repeat-3, v, out); err != nil {
-					return errors.WithStack(err)
-				}
-
-				if e.markedPosition != -1 {
-					e.positions = append(e.positions, uint64(e.markedPosition-subStart))
-					e.markedPosition = -1
-				}
-				continue
+	repeat := getRepeats(e.values)
+	if repeat >= 3 {
+		// short repeat
+		if repeat <= 10 {
+			if err := writeShortRepeat(repeat-3, e.values[0], out); err != nil {
+				return errors.WithStack(err)
 			}
+			logger.Tracef("encoding, int run length v2 write %d Short Repeat values", repeat)
 
-			// fixed delta 0
-			sub = Encoding_DELTA
-			subStart = i
-
-			b := make([]byte, 8)
-			var n int
-			if e.signed {
-				n = binary.PutVarint(b, UnZigzag(values[i]))
-			} else {
-				n = binary.PutUvarint(b, values[i])
-			}
-			logger.Tracef("encoding: irl v2 Fixed Delta 0 count %d at index %d", repeat, i)
-			i += int(repeat)
-			if err := e.writeDelta(b[:n], 0, repeat, []uint64{}, out); err != nil {
-				return err
-			}
-
-			if e.markedPosition != -1 {
-				e.positions = append(e.positions, uint64(e.markedPosition-subStart))
-				e.markedPosition = -1
-			}
-			continue
+			e.values = e.values[repeat:]
+			return nil
 		}
 
-		// delta, need width should be stable?
-		dv := &deltaValues{}
-		if e.tryDeltaEncoding(values[i:], dv) {
-			sub = Encoding_DELTA
-			subStart = i
-
-			b := make([]byte, 8)
-			var n int
-			if e.signed {
-				n = binary.PutVarint(b, UnZigzag(values[i]))
-			} else {
-				n = binary.PutUvarint(b, values[i])
-			}
-			i += int(dv.length)
-			if err := e.writeDelta(b[:n], dv.base, dv.length, dv.deltas, out); err != nil {
-				return err
-			}
-
-			if e.markedPosition != -1 {
-				e.positions = append(e.positions, uint64(e.markedPosition-subStart))
-				e.markedPosition = -1
-			}
-			continue
-		}
-
-		//var sub byte
-		var pvs patchedValues
+		// fixed delta 0
+		b := make([]byte, 8)
+		var n int
 		if e.signed {
-			// try patch
-			var err error
-			if sub, err = bitsWidthAnalyze(values[i:], &pvs); err != nil {
-				return err
-			}
+			n = binary.PutVarint(b, UnZigzag(e.values[0]))
 		} else {
-			sub = Encoding_DIRECT
+			n = binary.PutUvarint(b, e.values[0])
 		}
-		subStart = i
+		if err := writeDelta(out, b[:n], 0, uint16(repeat), []uint64{}); err != nil {
+			return err
+		}
+		e.values = e.values[repeat:]
+		return nil
+	}
 
-		if sub == Encoding_PATCHED_BASE {
+	// delta, need width should be stable?
+	dv := &deltaValues{}
+	if tryDeltaEncoding(e.signed, e.values, dv) {
+		b := make([]byte, 8)
+		var n int
+		if e.signed {
+			n = binary.PutVarint(b, UnZigzag(e.values[0]))
+		} else {
+			n = binary.PutUvarint(b, e.values[0])
+		}
+		if err := writeDelta(out, b[:n], dv.base, dv.length, dv.deltas); err != nil {
+			return err
+		}
+
+		e.values = e.values[dv.length:]
+		return nil
+	}
+
+	var pvs patchedValues
+	if e.signed {
+		if tryPatch(e.values, &pvs) {
 			if err := e.writePatch(&pvs, out); err != nil {
 				return err
 			}
-			i += pvs.count
-
-			if e.markedPosition != -1 {
-				e.positions = append(e.positions, uint64(e.markedPosition-subStart))
-				e.markedPosition = -1
-			}
-			continue
+			e.values = e.values[pvs.count:]
+			return nil
 		}
+	}
 
-		// len(values) will not over MAX_INT_RL
-		//var scope int
-		l := len(values) - i
-		/*if l >= MAX_INT_RL {
-			scope = MAX_INT_RL
-		} else {
-			scope = l
-		}*/
-
-		// rest all will be direct ?
-		if sub == Encoding_DIRECT {
-			if err := e.writeDirect(out, true, values[i:i+l]); err != nil {
-				return err
-			}
-			i += l
-
-			if e.markedPosition != -1 {
-				e.positions = append(e.positions, uint64(e.markedPosition-subStart))
-				e.markedPosition = -1
-			}
-			continue
+	// rest all will be direct ?
+	if toEnd {
+		if err := e.writeDirect(out, true); err != nil {
+			return err
 		}
-
-		return errors.New("encoding: no sub decided!")
+		e.values = e.values[:0]
 	}
 
 	return nil
 }
 
-func (e *IntRL2) writeDirect(out *bytes.Buffer, widthAlign bool, values []uint64) error {
+func (e *IntRL2) writeDirect(out *bytes.Buffer, widthAlign bool) error {
 	header := make([]byte, 2)
 	header[0] = Encoding_DIRECT << 6
 
 	var width int
-	for _, v := range values {
+	for _, v := range e.values {
 		var w int
 		if widthAlign {
 			w = getAlignedWidth(v)
@@ -587,16 +502,15 @@ func (e *IntRL2) writeDirect(out *bytes.Buffer, widthAlign bool, values []uint64
 		return errors.WithStack(err)
 	}
 	header[0] |= (encodedWidth & 0x1f) << 1 // 5 bit W
-	l := len(values) - 1
+	l := len(e.values) - 1
 	header[0] |= byte(l>>8) & 0x01
 	header[1] = byte(l)
-	logger.Tracef("encoding: int rl v2 Direct width %d values %d ", width, len(values))
 	if _, err := out.Write(header); err != nil {
 		return errors.WithStack(err)
 	}
 
 	e.forgetBits()
-	for _, v := range values {
+	for _, v := range e.values {
 		if err := e.writeBits(v, width, out); err != nil {
 			return err
 		}
@@ -604,6 +518,8 @@ func (e *IntRL2) writeDirect(out *bytes.Buffer, widthAlign bool, values []uint64
 	if err := e.writeLeftBits(out); err != nil {
 		return err
 	}
+
+	logger.Tracef("encoding: int rl v2 Direct width %d values %d ", width, len(e.values))
 	return nil
 }
 
@@ -615,7 +531,7 @@ type deltaValues struct {
 
 // for monotonically increasing or decreasing sequences
 // run length should be at least 3
-func (e *IntRL2) tryDeltaEncoding(values []uint64, dv *deltaValues) bool {
+func tryDeltaEncoding(signed bool, values []uint64, dv *deltaValues) bool {
 	if len(values) <= 2 {
 		return false
 	}
@@ -624,7 +540,7 @@ func (e *IntRL2) tryDeltaEncoding(values []uint64, dv *deltaValues) bool {
 		return false
 	}
 
-	if e.signed {
+	if signed {
 		dv.base = UnZigzag(values[1]) - UnZigzag(values[0])
 
 		v2 := UnZigzag(values[2])
@@ -667,8 +583,8 @@ func (e *IntRL2) tryDeltaEncoding(values []uint64, dv *deltaValues) bool {
 
 	dv.length = 3
 
-	for i := 3; i < len(values) && dv.length < 512; i++ {
-		if e.signed {
+	for i := 3; i < len(values); i++ {
+		if signed {
 			vi := UnZigzag(values[i])
 			vi_1 := UnZigzag(values[i-1])
 			if dv.base >= 0 {
@@ -702,7 +618,6 @@ func (e *IntRL2) tryDeltaEncoding(values []uint64, dv *deltaValues) bool {
 		}
 		dv.length += 1
 	}
-
 	return true
 }
 
@@ -718,20 +633,15 @@ type patchedValues struct {
 	patches []uint64 // patch values, already shifted valuebits
 }
 
-/*func (pvs *patchedValues) toString() string {
-	return fmt.Sprintf("patch: base %d, delta value width %d, pll %d, gapWidth %d, patchWidth %d",
-		pvs.base, pvs.width, len(pvs.patches), pvs.gapWidth, pvs.patchWidth)
-}*/
-
 // analyze bit widths, if return encoding Patch then fill the patchValues, else return encoding Direct
 // todo: patch 0
-func bitsWidthAnalyze(values []uint64, pvs *patchedValues) (sub byte, err error) {
+// todo: try how many values to determine patch
+func tryPatch(values []uint64, pvs *patchedValues) bool {
 	base := UnZigzag(values[0])
 	var count int
 	//baseWidthHist := make([]byte, BITS_SLOTS) // slots for 0 to 64 bits widths
 
-	// max L is 512
-	for i := 1; i < 512 && i < len(values); i++ {
+	for i := 1; i < len(values); i++ {
 		v := UnZigzag(values[i])
 		if v < base {
 			base = v
@@ -788,9 +698,8 @@ func bitsWidthAnalyze(values []uint64, pvs *patchedValues) (sub byte, err error)
 		}
 	}
 
-	logger.Tracef("encoding: int rl possible patch, 90%% width %d and width %d of adjusted values", w, width)
+	logger.Tracef("int rl v2 try patch, 90%% width %d and width %d of adjusted values", w, width)
 	if width > w {
-		sub = Encoding_PATCHED_BASE
 		pvs.base = base
 		pvs.values = deltaValues
 		pvs.width = w
@@ -817,9 +726,10 @@ func bitsWidthAnalyze(values []uint64, pvs *patchedValues) (sub byte, err error)
 		}
 		if len(pvs.patches) > 31 {
 			// fixme: how to handle this
-			return Encoding_UNSET, errors.New("patches max 31")
+			panic("patches max 31")
 		}
 
+		logger.Tracef("int rl v2 will do PATCH %d values", pvs.count)
 		/*for i := 0; i < len(pvs.gaps); i++ {
 			w := byte(getBitsWidth(uint64(pvs.gaps[i])))
 			if pvs.gapWidth < w {
@@ -835,11 +745,10 @@ func bitsWidthAnalyze(values []uint64, pvs *patchedValues) (sub byte, err error)
 		if pvs.gapWidth+pvs.patchWidth > 64 {
 			return Encoding_UNSET, errors.New("encoding: int rl v2 Patch PGW+PW > 64")
 		}*/
-		return
+		return true
 	}
 
-	sub = Encoding_DIRECT
-	return
+	return false
 }
 
 func (e *IntRL2) writePatch(pvs *patchedValues, out *bytes.Buffer) error {
@@ -948,7 +857,7 @@ func writeUints(out *bytes.Buffer, width byte, values []uint64) error {
 }
 
 // first is int64 or uint64 based on signed, length is 9 bit for run length 1 to 512
-func (e *IntRL2) writeDelta(first []byte, deltaBase int64, length uint16, deltas []uint64, out *bytes.Buffer) error {
+func writeDelta(out *bytes.Buffer, first []byte, deltaBase int64, length uint16, deltas []uint64) error {
 	var h1, h2 byte          // 2 byte header
 	h1 = Encoding_DELTA << 6 // 2 bit encoding type
 	// delta width
@@ -962,12 +871,10 @@ func (e *IntRL2) writeDelta(first []byte, deltaBase int64, length uint16, deltas
 	if width == 1 { // delta width no 1?
 		width = 2
 	}
-	//logger.Tracef("encoding: irl v2 Delta length %d, width %d", length, width)
 	w, err := widthEncoding(int(width))
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	logger.Tracef("write delta encoded width %d", w)
 	h1 |= w & 0x1F << 1 // 5 bit for W
 	length -= 1
 	h1 |= byte(length>>8) & 0x01 // 9th bit
@@ -1076,6 +983,7 @@ func (e *IntRL2) writeDelta(first []byte, deltaBase int64, length uint16, deltas
 			return errors.Errorf("width %d not recognized", width)
 		}
 	}
+	logger.Tracef("encoding, int run length v2 write DELTA %d values with delta base %d", length, deltaBase)
 	return nil
 }
 
@@ -1122,18 +1030,21 @@ func getAlignedWidth(x uint64) int {
 	return int(n)
 }
 
-// get repeated count from position i, min return is 1 means no repeat
-// max return is 512 for fixed delta
-func getRepeat(values []uint64, i int) (count uint16) {
-	count = 1
-	for j := 1; j < 512 && i+j < len(values); j++ {
-		if values[i] == values[i+j] {
-			count = uint16(j + 1)
-		} else {
+// find repeats from start
+func getRepeats(values []uint64) int {
+	if len(values) == 0 {
+		panic("find repeats 0 values")
+	}
+	if len(values) == 1 {
+		return 1
+	}
+	i := 1
+	for ; i < len(values); i++ {
+		if values[i] != values[0] {
 			break
 		}
 	}
-	return
+	return i
 }
 
 type repeat struct {
@@ -1172,7 +1083,7 @@ func findRepeatsInBytes(values []byte, minRepeat int) (repeats []repeat) {
 	return
 }
 
-func (e *IntRL2) writeShortRepeat(count uint16, x uint64, out *bytes.Buffer) error {
+func writeShortRepeat(count int, x uint64, out *bytes.Buffer) error {
 	header := byte(count & 0x07)         // count
 	header |= Encoding_SHORT_REPEAT << 6 // encoding
 	var w byte

@@ -25,7 +25,9 @@ func (e *byteRunLength) ResetPosition() {
 }
 
 func (e *byteRunLength) GetPosition() []uint64 {
-	return []uint64{uint64(e.position)}
+	r:= []uint64{uint64(e.position)}
+	e.ResetPosition()
+	return r
 }
 
 func (e *byteRunLength) Encode(v interface{}, out *bytes.Buffer) error {
