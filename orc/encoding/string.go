@@ -2,56 +2,35 @@ package encoding
 
 import (
 	"bytes"
-	"github.com/pkg/errors"
 	"io"
+
+	"github.com/pkg/errors"
 )
 
-type stringContents struct {
-	//contents       []byte
-	markedPosition int
-	positions      []uint64
+type StringContents struct {
 }
 
-func (e *stringContents) Encode(v interface{}, out *bytes.Buffer) error {
+func (e *StringContents) Encode(v interface{}, out *bytes.Buffer) error {
 	bs, ok := v.([]byte)
 	if !ok {
 		return errors.New("string contents encoder need []byte to encoding")
 	}
-	if _, err:= out.Write(bs);err!=nil {
+	if _, err := out.Write(bs); err != nil {
 		return err
 	}
-	e.markedPosition++
 	return nil
 }
 
-/*func (e stringContents) BufferedSize() int {
-	return len(e.contents)
-}*/
-
-func (e *stringContents) Flush(out *bytes.Buffer) error {
-	e.Reset()
+func (e *StringContents) Flush(out *bytes.Buffer) error {
 	return nil
 }
 
-func (e *stringContents) ResetPosition() {
-	e.positions = append(e.positions, uint64(e.markedPosition))
+func (e *StringContents) GetPosition() []uint64 {
+	// fixme: always 0 ??
+	return []uint64{uint64(0)}
 }
 
-func (e *stringContents) GetPosition() []uint64 {
-	/*r := e.positions
-	e.positions = nil
-	return r*/
-	// todo:
-	return nil
-}
-
-func (e *stringContents) Reset() {
-	e.positions = nil
-	e.markedPosition = 0
-}
-
-func NewStringContentsEncoder() Encoder {
-	return &stringContents{}
+func (e *StringContents) Reset() {
 }
 
 func DecodeBytes(in io.Reader, length int) ([]byte, error) {
@@ -61,4 +40,3 @@ func DecodeBytes(in io.Reader, length int) ([]byte, error) {
 	}
 	return value, nil
 }
-

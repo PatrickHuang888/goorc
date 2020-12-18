@@ -2,9 +2,10 @@ package stream
 
 import (
 	"bytes"
-	"github.com/patrickhuang888/goorc/orc/config"
+
 	"github.com/patrickhuang888/goorc/orc/encoding"
-	"github.com/patrickhuang888/goorc/orc/io"
+	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -12,7 +13,7 @@ type StringContentsReader struct {
 	stream *reader
 }
 
-func NewStringContentsReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *StringContentsReader {
+func NewStringContentsReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in orcio.File) *StringContentsReader {
 	return &StringContentsReader{stream: &reader{opts:opts, info: info, buf: &bytes.Buffer{}, in: in, start: start}}
 }
 
@@ -48,15 +49,11 @@ func (r *StringContentsReader) getAllString(byteLengths []uint64) (vs []string, 
 	return
 }
 
-func (r *StringContentsReader) Seek(chunkOffset uint64, offset uint64, lens []uint64) error {
-	if err := r.stream.seek(chunkOffset, offset); err != nil {
+func (r *StringContentsReader) Seek(chunk uint64, chunkOffset uint64, offset uint64) error {
+	logger.Tracef("stream id %d type %s seek to chunk %d, offset %d", r.stream.info.GetColumn(), r.stream.info.GetKind().String(),
+		chunk, chunkOffset)
+	if err := r.stream.seek(chunk, chunkOffset); err != nil {
 		return err
-	}
-
-	for i := 0; i < len(lens); i++ {
-		if _, err := r.NextString(lens[i]); err != nil {
-			return err
-		}
 	}
 	return nil
 }

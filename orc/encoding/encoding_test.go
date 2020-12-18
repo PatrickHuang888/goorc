@@ -2,10 +2,10 @@ package encoding
 
 import (
 	"bytes"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"testing"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -46,8 +46,8 @@ func TestByteRunLength(t *testing.T) {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
-		if i==2 {
-			assert.Equal(t, uint64(3),  enc.GetPosition()[0])
+		if i == 2 {
+			assert.Equal(t, uint64(3), enc.GetPosition()[0])
 		}
 	}
 	if err = enc.Flush(buf); err != nil {
@@ -102,7 +102,7 @@ func TestByteRunLength(t *testing.T) {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
-		if i==4 {
+		if i == 4 {
 			assert.Equal(t, uint64(5), enc.GetPosition()[0])
 		}
 	}
@@ -123,7 +123,7 @@ func TestByteRunLength(t *testing.T) {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
-		if i==11 {
+		if i == 11 {
 			assert.Equal(t, uint64(12), enc.GetPosition()[0])
 		}
 	}
@@ -164,10 +164,10 @@ func TestByteRunLength(t *testing.T) {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("fail %+v", err)
 		}
-		if i==124 {
+		if i == 124 {
 			assert.Equal(t, uint64(125), enc.GetPosition()[0])
 		}
-		if i==130 {
+		if i == 130 {
 			assert.Equal(t, uint64(3), enc.GetPosition()[0])
 		}
 	}
@@ -255,14 +255,14 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	uvalues := vector.([]uint64)
 	assert.Equal(t, 10, len(uvalues))
 	assert.EqualValues(t, uvs, uvalues)
-	enc.Reset()
 
+	enc.Reset()
 	buf.Reset()
 	for i, v := range uvs {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
-		if i==7 {
+		if i == 7 {
 			assert.Equal(t, uint64(8), enc.GetPosition()[0])
 		}
 	}
@@ -395,7 +395,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 
 	uvs = []uint64{6, 7, 8} // width 4
 	enc.Reset()
-	enc.values= uvs
+	enc.values = uvs
 	buf.Reset()
 	if err := enc.writeDirect(buf, false); err != nil {
 		t.Fatalf("%+v", err)
@@ -404,7 +404,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	assert.Nil(t, err)
 	enc.Reset()
 	vector, err = enc.Decode(buf)
-	if err!=nil {
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, uvs, vector.([]uint64))
@@ -417,7 +417,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	for _, v := range values {
 		uvs = append(uvs, Zigzag(v))
 	}
-	enc.values= uvs
+	enc.values = uvs
 	buf.Reset()
 	if err := enc.writeDirect(buf, true); err != nil {
 		t.Fatalf("%+v", err)
@@ -435,7 +435,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	for _, v := range values {
 		uvs = append(uvs, Zigzag(v))
 	}
-	enc.values= uvs
+	enc.values = uvs
 	buf.Reset()
 	if err := enc.writeDirect(buf, false); err != nil {
 		t.Fatalf("%+v", err)
@@ -446,7 +446,6 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	vector, err = enc.Decode(buf)
 	assert.Nil(t, err)
 	assert.Equal(t, values, vector.([]int64))
-
 
 	// test width 16
 	enc.Reset()
@@ -465,7 +464,7 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	uvs = []uint64{0b100_0000_0001, 0b100_0000_0011}
 	enc.Reset()
 	enc.signed = false
-	enc.values= uvs
+	enc.values = uvs
 	buf.Reset()
 	if err := enc.writeDirect(buf, false); err != nil {
 		t.Fatalf("%+v", err)
@@ -604,8 +603,8 @@ func TestBoolRunLength(t *testing.T) {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
-		if i==3 {
-			pp:= enc.GetPosition()
+		if i == 3 {
+			pp := enc.GetPosition()
 			assert.Equal(t, uint64(0), pp[0])
 			assert.Equal(t, uint64(4), pp[1])
 		}
@@ -614,7 +613,6 @@ func TestBoolRunLength(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, encoded, buf.Bytes())
-
 
 	var vs []bool
 	vs, err = DecodeBools(buf, vs)
@@ -655,8 +653,8 @@ func TestBoolRunLength(t *testing.T) {
 		if err = enc.Encode(v, buf); err != nil {
 			t.Fatalf("%+v", err)
 		}
-		if i==99 { // 100
-			pp:= enc.GetPosition()
+		if i == 99 { // 100
+			pp := enc.GetPosition()
 			assert.Equal(t, uint64(12), pp[0]) // byte position
 			assert.Equal(t, uint64(4), pp[1])
 		}
@@ -704,10 +702,10 @@ func TestBoolRunLength(t *testing.T) {
 }
 
 func TestFindRepeats(t *testing.T) {
-	x:= findRepeats([]byte{5,5,5,5}, 3)
+	x := findRepeats([]byte{5, 5, 5, 5}, 3)
 	assert.Equal(t, 0, x)
-	x = findRepeats([]byte{1,5,5,5,5}, 3)
+	x = findRepeats([]byte{1, 5, 5, 5, 5}, 3)
 	assert.Equal(t, 1, x)
-	x = findRepeats([]byte{1,2,3,4,5}, 3)
+	x = findRepeats([]byte{1, 2, 3, 4, 5}, 3)
 	assert.Equal(t, 5, 5)
 }

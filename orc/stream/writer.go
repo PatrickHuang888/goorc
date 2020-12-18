@@ -16,12 +16,6 @@ type Writer struct {
 	encoder encoding.Encoder
 }
 
-// mark position and collect stats, will not invoked when not write index
-/*func (w *Writer) MarkPosition() {
-	w.markPosition()
-	w.encoder.MarkPosition()
-}*/
-
 func (w Writer) GetPosition() []uint64 {
 	if !w.opts.WriteIndex {
 		return []uint64{}
@@ -140,16 +134,6 @@ func (w *writer) reset() {
 	w.positions = w.positions[:0]
 }
 
-func (w *writer) markPosition() {
-	if w.opts.CompressionKind == pb.CompressionKind_NONE {
-		w.positions = append(w.positions, []uint64{uint64(w.buf.Len())})
-		return
-	}
-	w.positions = append(w.positions, []uint64{uint64(w.compressedBuf.Len()), uint64(w.buf.Len())})
-	/*logger.Tracef("stream %s of column %d mark position %d, %d", w.info.GetKind().String(), w.info.GetColumn(),
-	w.positions[len(w.positions)-1][0], w.positions[len(w.positions)-1][1])*/
-}
-
 // used together with flush
 func (w *Writer) WriteOut(out io.Writer) (n int64, err error) {
 	if w.opts.CompressionKind == pb.CompressionKind_NONE {
@@ -208,7 +192,7 @@ func NewStringContentsWriter(id uint32, kind pb.Stream_Kind, opts *config.Writer
 		cbuf.Reset()
 	}
 
-	return &Writer{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, encoding.NewStringContentsEncoder()}
+	return &Writer{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, &encoding.StringContents{}}
 }
 
 func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions, signed bool) *Writer {

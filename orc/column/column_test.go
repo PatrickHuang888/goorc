@@ -1,7 +1,9 @@
 package column
 
 import (
+	"fmt"
 	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
@@ -17,6 +19,7 @@ func init() {
 	logger.SetLevel(log.TraceLevel)
 	encoding.SetLogLevel(log.TraceLevel)
 	stream.SetLogLevel(log.TraceLevel)
+	common.SetLogLevel(log.TraceLevel)
 }
 
 func TestIntV2(t *testing.T) {
@@ -316,7 +319,7 @@ func TestFloat(t *testing.T) {
 	assert.Equal(t, values, batch.Vector)
 }*/
 
-/*func TestStringDirectV2(t *testing.T) {
+func TestStringDirectV2(t *testing.T) {
 	rows := 100
 	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: false}
 
@@ -358,9 +361,53 @@ func TestFloat(t *testing.T) {
 			t.Fatalf("%+v", err)
 		}
 	}
-
 	assert.Equal(t, values, vector)
-}*/
+}
+
+func TestStringDirectV2Index(t *testing.T) {
+	rows := 1000
+	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: false}
+
+	wopts := config.DefaultWriterOptions()
+	wopts.WriteIndex= true
+	wopts.IndexStride= 200
+	schema.Encoding = pb.ColumnEncoding_DIRECT_V2
+	writer := newStringDirectV2Writer(&schema, &wopts).(*stringDirectV2Writer)
+
+	var values []api.Value
+	var value api.Value
+	for i := 0; i < rows; i++ {
+		value.V = fmt.Sprintf("string %d", i)
+		if err := writer.Write(value); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		values = append(values, value)
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	bb := make([]byte, 10240)
+	f := orcio.NewMockFile(bb)
+	if _, err := writer.WriteOut(f); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	ropts := config.DefaultReaderOptions()
+	ropts.IndexStride= 200
+	ropts.HasIndex= true
+	reader := newStringDirectV2Reader(&ropts, &schema, f).(*stringDirectV2Reader)
+	reader.index= writer.index
+	err := reader.InitStream(writer.data.Info(), 0)
+	assert.Nil(t, err)
+	err = reader.InitStream(writer.length.Info(), writer.data.Info().GetLength())
+	assert.Nil(t, err)
+
+	err= reader.Seek(300)
+	assert.Nil(t, err)
+	v, err:=reader.Next()
+	assert.Nil(t, err)
+	assert.Equal(t, "string 300", v.V)
+}
 
 func TestByteWithPresents(t *testing.T) {
 	rows := 150
