@@ -37,12 +37,9 @@ func (r *ByteReader) Next() (v byte, err error) {
 }
 
 func (r *ByteReader) Seek(chunkOffset uint64, offset uint64, valueOffset uint64) error {
-	logger.Tracef("byte stream %s of column %d seek to chunk %d, decompressed offset %d, value offset %d",
-		r.stream.info.GetKind().String(), r.stream.info.GetColumn(), chunkOffset, offset, valueOffset)
 	if err := r.stream.seek(chunkOffset, offset); err != nil {
 		return err
 	}
-
 	r.values = r.values[:0]
 	r.consumed = 0
 	for i := 0; i < int(valueOffset); i++ {

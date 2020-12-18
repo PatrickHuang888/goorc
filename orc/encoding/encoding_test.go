@@ -644,7 +644,6 @@ func TestBoolRunLength(t *testing.T) {
 	}
 	assert.Equal(t, values, vs[:100])
 
-	//
 	values[44] = true
 	values[99] = true
 

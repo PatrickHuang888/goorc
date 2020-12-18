@@ -50,8 +50,6 @@ func (r *StringContentsReader) getAllString(byteLengths []uint64) (vs []string, 
 }
 
 func (r *StringContentsReader) Seek(chunk uint64, chunkOffset uint64, offset uint64) error {
-	logger.Tracef("stream id %d type %s seek to chunk %d, offset %d", r.stream.info.GetColumn(), r.stream.info.GetKind().String(),
-		chunk, chunkOffset)
 	if err := r.stream.seek(chunk, chunkOffset); err != nil {
 		return err
 	}

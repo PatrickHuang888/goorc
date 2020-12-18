@@ -16,7 +16,6 @@ func NewFloatEncoder() Encoder {
 }
 
 type float struct {
-	positions []uint64
 }
 
 func (f float) Encode(v interface{}, out *bytes.Buffer) error {
@@ -37,20 +36,13 @@ func (f float) Flush(out *bytes.Buffer) error {
 	return nil
 }
 
-func (f *float) ResetPosition() {
-	/*f.positions = append(f.positions, 1)*/
-}
-
 func (f *float) GetPosition() []uint64 {
-	// todo:
-	/*r := f.positions
-	f.positions = nil
-	return r*/
-	return nil
+	// rethink:
+	return []uint64{0}
 }
 
 func (f *float) Reset() {
-	f.positions = f.positions[:0]
+	//
 }
 
 func DecodeFloat(in io.Reader) (float32, error) {
@@ -67,7 +59,6 @@ func DecodeDouble(in io.Reader) (float64, error) {
 	if _, err := io.ReadFull(in, bb); err != nil {
 		return 0, errors.WithStack(err)
 	}
-	// !!
 	v := math.Float64frombits(binary.BigEndian.Uint64(bb))
 	//v := math.Float64frombits(binary.LittleEndian.Uint64(bb))
 	return v, nil
@@ -78,7 +69,6 @@ func NewDoubleEncoder() Encoder {
 }
 
 type double struct {
-	positions []uint64
 }
 
 func (d double) Encode(v interface{}, out *bytes.Buffer) error {
@@ -100,18 +90,10 @@ func (d double) Flush(out *bytes.Buffer) error {
 	return nil
 }
 
-func (d *double) ResetPosition() {
-	d.positions = append(d.positions, 1)
-}
-
 func (d *double) GetPosition() []uint64 {
-	/*r := d.positions
-	d.positions = nil
-	return r*/
-	// todo:
-	return nil
+	return []uint64{0}
 }
 
 func (d *double) Reset() {
-	d.positions = d.positions[:0]
+	//
 }
