@@ -406,65 +406,70 @@ func (e *IntRL2) write(out *bytes.Buffer, toEnd bool) error {
 		return nil
 	}
 
-	repeat := getRepeats(e.values)
-	if repeat >= 3 { // repeat
-		// short repeat
-		if repeat <= 10 {
-			if err := writeShortRepeat(repeat-3, e.values[0], out); err != nil {
-				return errors.WithStack(err)
-			}
-			logger.Tracef("encoding, int run length v2 write %d Short Repeat values", repeat)
-		}else {
-
-			// fixed delta 0
-			b := make([]byte, 8)
-			var n int
-			if e.signed {
-				n = binary.PutVarint(b, UnZigzag(e.values[0]))
+	for len(e.values)!=0 {
+		repeat := getRepeats(e.values)
+		if repeat >= 3 { // repeat
+			// short repeat
+			if repeat <= 10 {
+				if err := writeShortRepeat(repeat-3, e.values[0], out); err != nil {
+					return errors.WithStack(err)
+				}
+				logger.Tracef("encoding, int run length v2 write %d Short Repeat values", repeat)
 			} else {
-				n = binary.PutUvarint(b, e.values[0])
-			}
-			if err := writeDelta(out, b[:n], 0, uint16(repeat), []uint64{}); err != nil {
-				return err
-			}
-		}
-		e.values = e.values[repeat:]
 
-	}else {
-
-		// delta, need width should be stable?
-		dv := &deltaValues{}
-		if tryDeltaEncoding(e.signed, e.values, dv) {
-			b := make([]byte, 8)
-			var n int
-			if e.signed {
-				n = binary.PutVarint(b, UnZigzag(e.values[0]))
-			} else {
-				n = binary.PutUvarint(b, e.values[0])
+				// fixed delta 0
+				b := make([]byte, 8)
+				var n int
+				if e.signed {
+					n = binary.PutVarint(b, UnZigzag(e.values[0]))
+				} else {
+					n = binary.PutUvarint(b, e.values[0])
+				}
+				if err := writeDelta(out, b[:n], 0, uint16(repeat), []uint64{}); err != nil {
+					return err
+				}
 			}
-			if err := writeDelta(out, b[:n], dv.base, dv.length, dv.deltas); err != nil {
-				return err
-			}
+			e.values = e.values[repeat:]
 
-			e.values = e.values[dv.length:]
+		} else {
 
-		}else { // try patch
-			var pvs patchedValues
-			if e.signed {
-				if tryPatch(e.values, &pvs) {
-					if err := e.writePatch(&pvs, out); err != nil {
-						return err
+			// delta, need width should be stable?
+			dv := &deltaValues{}
+			if tryDeltaEncoding(e.signed, e.values, dv) {
+				b := make([]byte, 8)
+				var n int
+				if e.signed {
+					n = binary.PutVarint(b, UnZigzag(e.values[0]))
+				} else {
+					n = binary.PutUvarint(b, e.values[0])
+				}
+				if err := writeDelta(out, b[:n], dv.base, dv.length, dv.deltas); err != nil {
+					return err
+				}
+
+				e.values = e.values[dv.length:]
+
+			} else { // try patch
+				var pvs patchedValues
+				if e.signed {
+					if tryPatch(e.values, &pvs) {
+						if err := e.writePatch(&pvs, out); err != nil {
+							return err
+						}
+						e.values = e.values[pvs.count:]
 					}
-					e.values = e.values[pvs.count:]
+				}
+			}
+
+			// rethink: rest all will be direct ?
+			if toEnd && len(e.values) != 0 {
+				if err := e.writeDirect(out, true); err != nil {
+					return err
 				}
 			}
 		}
-
-		// rethink: rest all will be direct ?
-		if toEnd && len(e.values)!=0{
-			if err := e.writeDirect(out, true); err != nil {
-				return err
-			}
+		if !toEnd {
+			break
 		}
 	}
 	return nil

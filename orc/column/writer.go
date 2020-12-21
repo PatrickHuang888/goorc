@@ -22,9 +22,9 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		return nil, errors.New("encoding not impl")
 
 	case pb.Type_FLOAT:
-		w = newFloatWriter(schema, opts)
+		w = newFloatWriter(schema, opts, false)
 	case pb.Type_DOUBLE:
-		//writer = newDoubleWriter(schema, opts)
+		w = newFloatWriter(schema, opts, true)
 
 	case pb.Type_CHAR:
 		fallthrough

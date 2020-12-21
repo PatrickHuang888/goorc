@@ -9,7 +9,6 @@ import (
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -206,40 +205,24 @@ type stringDirectV2Reader struct {
 }
 
 func (s *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
-	if info.GetKind() == pb.Stream_PRESENT {
-		fp, err := s.f.Clone()
-		if err != nil {
-			return err
-		}
-		if _, err := fp.Seek(int64(startOffset), io.SeekStart); err != nil {
-			return err
-		}
-		s.present = stream.NewBoolReader(s.opts, info, startOffset, fp)
-		return nil
+	f, err := s.f.Clone()
+	if err != nil {
+		return err
 	}
-	if info.GetKind() == pb.Stream_DATA {
-		fd, err := s.f.Clone()
-		if err != nil {
-			return err
-		}
-		if _, err := fd.Seek(int64(startOffset), io.SeekStart); err != nil {
-			return err
-		}
-		s.data = stream.NewStringContentsReader(s.opts, info, startOffset, fd)
-		return nil
+	if _, err := f.Seek(int64(startOffset), io.SeekStart); err != nil {
+		return err
 	}
-	if info.GetKind() == pb.Stream_LENGTH {
-		fl, err := s.f.Clone()
-		if err != nil {
-			return err
-		}
-		if _, err := fl.Seek(int64(startOffset), io.SeekStart); err != nil {
-			return err
-		}
-		s.length = stream.NewIntRLV2Reader(s.opts, info, startOffset, false, fl)
-		return nil
+
+	switch info.GetKind() {
+	case pb.Stream_PRESENT:
+		s.present = stream.NewBoolReader(s.opts, info, startOffset, f)
+	case pb.Stream_DATA:
+		s.data = stream.NewStringContentsReader(s.opts, info, startOffset, f)
+	case pb.Stream_LENGTH:
+		s.length = stream.NewIntRLV2Reader(s.opts, info, startOffset, false, f)
+	default:
+		errors.New("stream kind not unknown")
 	}
-	log.Warnf("stream %s not recognized", info.GetKind())
 	return nil
 }
 

@@ -142,30 +142,25 @@ func newByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, f or
 }
 
 func (c *byteReader) InitStream(info *pb.Stream, startOffset uint64) error {
-	if info.GetKind() == pb.Stream_PRESENT {
+	f, err := c.f.Clone()
+	if err != nil {
+		return err
+	}
+	switch info.GetKind() {
+	case pb.Stream_PRESENT:
 		if !c.schema.HasNulls {
 			return errors.New("column schema has no nulls")
 		}
-		ic, err := c.f.Clone()
-		if err != nil {
-			return err
-		}
-		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
-		ic.Seek(int64(startOffset), 0)
-		return nil
+		c.present = stream.NewBoolReader(c.opts, info, startOffset, f)
+	case pb.Stream_DATA:
+		c.data = stream.NewByteReader(c.opts, info, startOffset, f)
+	default:
+		errors.New("stream kind error")
 	}
-
-	if info.GetKind() == pb.Stream_DATA {
-		ic, err := c.f.Clone()
-		if err != nil {
-			return err
-		}
-		c.data = stream.NewByteReader(c.opts, info, startOffset, ic)
-		ic.Seek(int64(startOffset), 0)
-		return nil
+	if _, err = f.Seek(int64(startOffset), 0); err != nil {
+		return err
 	}
-
-	return errors.New("stream kind error")
+	return nil
 }
 
 func (c *byteReader) Next() (value api.Value, err error) {

@@ -2,17 +2,17 @@ package column
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
+	"github.com/patrickhuang888/goorc/pb/pb"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
-	"testing"
-
-	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
 func init() {
@@ -34,8 +34,8 @@ func TestIntV2(t *testing.T) {
 	}
 
 	wopts := config.DefaultWriterOptions()
-	wopts.WriteIndex= true
-	wopts.IndexStride= 200
+	wopts.WriteIndex = true
+	wopts.IndexStride = 200
 	writer := newIntV2Writer(schema, &wopts).(*intWriter)
 	if err = writer.Writes(values); err != nil {
 		t.Fatalf("%+v", err)
@@ -53,10 +53,10 @@ func TestIntV2(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	ropts.HasIndex= true
-	ropts.IndexStride= 200
+	ropts.HasIndex = true
+	ropts.IndexStride = 200
 	reader := newIntV2Reader(schema, &ropts, f).(*intV2Reader)
-	reader.reader.index= writer.index
+	reader.reader.index = writer.index
 	err = reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 
@@ -68,29 +68,29 @@ func TestIntV2(t *testing.T) {
 	}
 	assert.Equal(t, values, vector)
 
-	if err=reader.Seek(300);err!=nil { // less than 512
+	if err = reader.Seek(300); err != nil { // less than 512
 		t.Fatalf("%+v", err)
 	}
-	v, err:= reader.Next()
-	if err!=nil {
+	v, err := reader.Next()
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, int64(300), v.V)
 
-	if err=reader.Seek(600);err!=nil {
+	if err = reader.Seek(600); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	v, err= reader.Next()
-	if err!=nil {
+	v, err = reader.Next()
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, int64(600), v.V)
 
-	if err=reader.Seek(850);err!=nil {
+	if err = reader.Seek(850); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	v, err= reader.Next()
-	if err!=nil {
+	v, err = reader.Next()
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, int64(850), v.V)
@@ -155,10 +155,10 @@ func TestIntV2WithPresents(t *testing.T) {
 func TestBool(t *testing.T) {
 	schema := api.TypeDescription{Id: 0, Kind: pb.Type_BOOLEAN}
 	wopts := config.DefaultWriterOptions()
-	wopts.IndexStride= 130
-	wopts.WriteIndex= true
+	wopts.IndexStride = 130
+	wopts.WriteIndex = true
 
-	rows := encoding.MaxByteRunLength*encoding.MaxBoolRunLength+10
+	rows := encoding.MaxByteRunLength*encoding.MaxBoolRunLength + 10
 	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
 		values[i].V = true
@@ -184,8 +184,8 @@ func TestBool(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	ropts.IndexStride= 130
-	ropts.HasIndex= true
+	ropts.IndexStride = 130
+	ropts.HasIndex = true
 
 	reader := newBoolReader(&schema, &ropts, f).(*boolReader)
 	reader.index = writer.index
@@ -200,7 +200,7 @@ func TestBool(t *testing.T) {
 	}
 	assert.Equal(t, values, vector)
 
-	if err:=reader.Seek(45);err!=nil {
+	if err := reader.Seek(45); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	v, err := reader.Next()
@@ -209,7 +209,7 @@ func TestBool(t *testing.T) {
 	}
 	assert.Equal(t, false, v.V)
 
-	if err:=reader.Seek(encoding.MaxBoolRunLength*encoding.MaxByteRunLength+8);err!=nil {
+	if err := reader.Seek(encoding.MaxBoolRunLength*encoding.MaxByteRunLength + 8); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	v, err = reader.Next()
@@ -234,7 +234,7 @@ func TestFloat(t *testing.T) {
 	for i := 0; i < rows; i++ {
 		values[i].V = float32(i)
 	}
-	writer := newFloatWriter(&schema, &wopts).(*floatWriter)
+	writer := newFloatWriter(&schema, &wopts, false).(*floatWriter)
 	for _, v := range values {
 		if err := writer.Write(v); err != nil {
 			t.Fatalf("%+v", err)
@@ -260,64 +260,8 @@ func TestFloat(t *testing.T) {
 			t.Fatalf("%+v", err)
 		}
 	}
-
 	assert.Equal(t, values, vector)
 }
-
-/*func TestDoubleColumnWithPresents(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_DOUBLE, HasNulls: true}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
-
-	rows := 100
-	values := make([]float64, rows)
-	for i := 0; i < rows; i++ {
-		values[i] = float64(i)+0.11
-	}
-	presents := make([]bool, rows)
-	for i := 0; i < rows; i++ {
-		presents[i] = true
-	}
-	presents[0] = false
-	values[0] = 0
-	presents[45] = false
-	values[45] = 0
-	presents[98] = false
-	values[98] = 0
-
-	batch.Presents = presents
-	batch.Vector = values
-
-	writer := newDoubleWriter(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, rows, n)
-
-	ropts := orc.DefaultReaderOptions()
-	batch = schema.CreateReaderBatch(ropts)
-	presentBs := &bufSeeker{writer.present.buf}
-	pKind := pb.Stream_PRESENT
-	pLength_ := uint64(writer.present.buf.Len())
-	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
-
-	dataBs := &bufSeeker{writer.data.buf}
-	dKind := pb.Stream_DATA
-	dLength := uint64(writer.data.buf.Len())
-	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := orc.newDoubleStreamReader(ropts, dInfo, 0, dataBs)
-
-	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &orc.doubleReader{treeReader: cr, data: data}
-	err = reader.next(batch)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, presents, batch.Presents)
-	assert.Equal(t, values, batch.Vector)
-}*/
 
 func TestStringDirectV2(t *testing.T) {
 	rows := 100
@@ -369,8 +313,8 @@ func TestStringDirectV2Index(t *testing.T) {
 	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRING, HasNulls: false}
 
 	wopts := config.DefaultWriterOptions()
-	wopts.WriteIndex= true
-	wopts.IndexStride= 200
+	wopts.WriteIndex = true
+	wopts.IndexStride = 200
 	schema.Encoding = pb.ColumnEncoding_DIRECT_V2
 	writer := newStringDirectV2Writer(&schema, &wopts).(*stringDirectV2Writer)
 
@@ -393,18 +337,18 @@ func TestStringDirectV2Index(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	ropts.IndexStride= 200
-	ropts.HasIndex= true
+	ropts.IndexStride = 200
+	ropts.HasIndex = true
 	reader := newStringDirectV2Reader(&ropts, &schema, f).(*stringDirectV2Reader)
-	reader.index= writer.index
+	reader.index = writer.index
 	err := reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 	err = reader.InitStream(writer.length.Info(), writer.data.Info().GetLength())
 	assert.Nil(t, err)
 
-	err= reader.Seek(300)
+	err = reader.Seek(300)
 	assert.Nil(t, err)
-	v, err:=reader.Next()
+	v, err := reader.Next()
 	assert.Nil(t, err)
 	assert.Equal(t, "string 300", v.V)
 }
@@ -481,7 +425,7 @@ func TestByteOnIndex(t *testing.T) {
 	schema.Encoding = pb.ColumnEncoding_DIRECT
 
 	values := make([]api.Value, rows)
-	for i := 0; i < rows; i++ {  // start from 0
+	for i := 0; i < rows; i++ { // start from 0
 		values[i].V = byte(i)
 	}
 
