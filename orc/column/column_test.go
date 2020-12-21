@@ -36,7 +36,7 @@ func TestIntV2(t *testing.T) {
 	wopts := config.DefaultWriterOptions()
 	wopts.WriteIndex = true
 	wopts.IndexStride = 200
-	writer := newIntV2Writer(schema, &wopts).(*intWriter)
+	writer := newIntV2Writer(schema, &wopts, BitsBigInt).(*intWriter)
 	if err = writer.Writes(values); err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -55,7 +55,9 @@ func TestIntV2(t *testing.T) {
 	ropts := config.DefaultReaderOptions()
 	ropts.HasIndex = true
 	ropts.IndexStride = 200
-	reader := newIntV2Reader(schema, &ropts, f).(*intV2Reader)
+	r, err:=NewReader(schema, &ropts, f)
+	assert.Nil(t, err)
+	reader:= r.(*intV2Reader)
 	reader.reader.index = writer.index
 	err = reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
@@ -118,7 +120,7 @@ func TestIntV2WithPresents(t *testing.T) {
 	values[102].Null = true
 	values[102].V = nil
 
-	writer := newIntV2Writer(schema, &wopts).(*intWriter)
+	writer := newIntV2Writer(schema, &wopts, BitsBigInt).(*intWriter)
 	if err := writer.Writes(values); err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -135,8 +137,9 @@ func TestIntV2WithPresents(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	reader := newIntV2Reader(schema, &ropts, f)
-	var err error
+	r, err := NewReader(schema, &ropts, f)
+	assert.Nil(t, err)
+	reader:= r.(*intV2Reader)
 	err = reader.InitStream(writer.present.Info(), 0)
 	assert.Nil(t, err)
 	err = reader.InitStream(writer.data.Info(), writer.present.Info().GetLength())
@@ -250,8 +253,10 @@ func TestFloat(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	reader := NewFloatReader(&schema, &ropts, f)
-	err := reader.InitStream(writer.data.Info(), 0)
+	r, err := NewReader(&schema, &ropts, f)
+	assert.Nil(t, err)
+	reader:= r.(*floatReader)
+	err = reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 
 	vector := make([]api.Value, rows)

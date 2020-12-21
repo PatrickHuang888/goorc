@@ -3,19 +3,11 @@ package column
 import (
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
-	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	"io"
 )
-
-func NewFloatReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &floatReader{reader: &reader{schema: schema, opts: opts, f: f}, is64: false}
-}
-func NewDoubleReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &floatReader{reader: &reader{schema: schema, opts: opts, f: f}, is64: true}
-}
 
 type floatReader struct {
 	*reader

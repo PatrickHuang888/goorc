@@ -29,8 +29,6 @@ func (r *reader) String() string {
 	fmt.Fprintf(&sb, "id %d, ", r.schema.Id)
 	fmt.Fprintf(&sb, "kind %stream, ", r.schema.Kind.String())
 	fmt.Fprintf(&sb, "encoding %s, ", r.schema.Encoding.String())
-	//fmt.Fprintf(&sb, "number of rows %d, ", r.numberOfRows)
-	//fmt.Fprintf(&sb, "read cursor %d", r.cursor)
 	return sb.String()
 }
 
@@ -63,23 +61,31 @@ func (r *reader) getIndexEntryAndOffset(rowNumber uint64) (entry *pb.RowIndexEnt
 func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File) (Reader, error) {
 	switch schema.Kind {
 	case pb.Type_SHORT:
-		fallthrough
-	case pb.Type_INT:
-		fallthrough
-	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return &intV2Reader{reader: &reader{f: in, schema: schema, opts: opts}}, nil
+			return &intV2Reader{reader: &reader{f: in, schema: schema, opts: opts}, bits: BitsSmallInt}, nil
 		}
 		return nil, errors.New("not impl")
-
+	case pb.Type_INT:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			return &intV2Reader{reader: &reader{f: in, schema: schema, opts: opts}, bits: BitsInt}, nil
+		}
+		return nil, errors.New("not impl")
+	case pb.Type_LONG:
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			return &intV2Reader{reader: &reader{f: in, schema: schema, opts: opts}, bits: BitsBigInt}, nil
+		}
+		return nil, errors.New("not impl")
 	case pb.Type_FLOAT:
-	// todo:
+		if schema.Encoding != pb.ColumnEncoding_DIRECT {
+			return nil, errors.New("column encoding error")
+		}
+		return &floatReader{reader: &reader{f: in, schema: schema, opts: opts}, is64: false}, nil
 
 	case pb.Type_DOUBLE:
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("column encoding error")
 		}
-		//return NewDoubleReader(schema, opts, in, numberOfRows), nil
+		return &floatReader{reader: &reader{f: in, schema: schema, opts: opts}, is64: true}, nil
 
 	case pb.Type_STRING:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
@@ -88,7 +94,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		}
 		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
 			return nil, errors.New("not impl")
-			//s.columnReaders[schema.Id] = &stringDictV2Reader{treeReader: c}
+			// todo:
 			break
 		}
 		return nil, errors.New("column encoding error")
@@ -97,8 +103,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("bool column encoding error")
 		}
-		return nil, errors.New("not impl")
-		//s.columnReaders[schema.Id] = &boolReader{treeReader: c}
+		return &boolReader{reader:&reader{f:in, schema: schema, opts: opts}}, nil
 
 	case pb.Type_BYTE: // tinyint
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
@@ -113,7 +118,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		}
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			return nil, errors.New("not impl")
-			//s.columnReaders[schema.Id] = &binaryV2Reader{treeReader: c}
+			// todo:
 			break
 		}
 		return nil, errors.New("binary column encoding error")
@@ -150,7 +155,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		}
 
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//s.columnReaders[schema.Id] = &timestampV2Reader{treeReader: c}
+			// todo:
 			return nil, errors.New("not impl")
 			break
 		}
@@ -160,6 +165,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
+		// todo:
 		return NewStructReader(schema, opts, in), nil
 
 	case pb.Type_LIST:

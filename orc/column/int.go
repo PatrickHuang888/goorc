@@ -3,14 +3,13 @@ package column
 import (
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
-	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	"io"
 )
 
-func newIntV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+func newIntV2Writer(schema *api.TypeDescription, opts *config.WriterOptions, bits int) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
 		IntStatistics: &pb.IntegerStatistics{Minimum: new(int64), Maximum: new(int64), Sum: new(int64)}}
 	var present *stream.Writer
@@ -25,14 +24,21 @@ func newIntV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Wri
 			IntStatistics: &pb.IntegerStatistics{Sum: new(int64), Minimum: new(int64), Maximum: new(int64)}}
 		index = &pb.RowIndex{}
 	}
-	base := &writer{opts:opts, schema: schema, stats: stats, present: present, index: index, indexStats: indexStats}
+	base := &writer{opts: opts, schema: schema, stats: stats, present: present, index: index, indexStats: indexStats}
 	data := stream.NewIntRLV2Writer(schema.Id, pb.Stream_DATA, opts, true)
-	return &intWriter{base, data}
+	return &intWriter{base, data, bits}
 }
+
+const (
+	BitsSmallInt = 16
+	BitsInt      = 32
+	BitsBigInt   = 64
+)
 
 type intWriter struct {
 	*writer
 	data *stream.Writer
+	bits int
 }
 
 func (w *intWriter) Writes(values []api.Value) error {
@@ -51,8 +57,17 @@ func (w *intWriter) Write(value api.Value) error {
 		}
 	}
 
+	var v int64
 	if !value.Null {
-		v := value.V.(int64)
+		switch w.bits {
+		case BitsSmallInt:
+			v = int64(value.V.(int16))
+		case BitsInt:
+			v = int64(value.V.(int32))
+		case BitsBigInt:
+			v = value.V.(int64)
+		}
+
 		if err := w.data.Write(v); err != nil {
 			return err
 		}
@@ -85,7 +100,6 @@ func (w *intWriter) Write(value api.Value) error {
 			w.indexInRows = 0
 		}
 		if !value.Null {
-			v := value.V.(int64)
 			*w.indexStats.IntStatistics.Sum += v
 			if v < *w.indexStats.IntStatistics.Minimum {
 				*w.indexStats.IntStatistics.Minimum = v
@@ -161,14 +175,10 @@ func (w *intWriter) Reset() {
 	w.data.Reset()
 }
 
-func newIntV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &intV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
-}
-
 type intV2Reader struct {
 	*reader
-
 	data *stream.IntRLV2Reader
+	bits int
 }
 
 func (c *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
@@ -204,24 +214,34 @@ func (c *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("stream unknown")
 }
 
-func (c *intV2Reader) Next() (value api.Value, err error) {
-	if err = c.checkInit(); err != nil {
+func (r *intV2Reader) Next() (value api.Value, err error) {
+	if err = r.checkInit(); err != nil {
 		return
 	}
 
 	// if parent struct has nulls then child like int's schema will not has nulls ?
-	if c.schema.HasNulls {
+	if r.schema.HasNulls {
 		var p bool
-		if p, err = c.present.Next(); err != nil {
+		if p, err = r.present.Next(); err != nil {
 			return
 		}
 		value.Null = !p
 	}
 
 	if !value.Null {
-		value.V, err = c.data.NextInt64()
-		if err != nil {
+		var v int64
+		if v, err = r.data.NextInt64(); err != nil {
 			return
+		}
+		switch r.bits {
+		case BitsSmallInt:
+			value.V = int16(v)
+		case BitsInt:
+			value.V = int32(v)
+		case BitsBigInt:
+			value.V = v
+		default:
+			errors.New("reader bits error")
 		}
 	}
 	return

@@ -11,12 +11,20 @@ import (
 func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Writer, err error) {
 	switch schema.Kind {
 	case pb.Type_SHORT:
-		fallthrough
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			w = newIntV2Writer(schema, opts, BitsSmallInt)
+			break
+		}
+		return nil, errors.New("encoding not impl")
 	case pb.Type_INT:
-		fallthrough
+		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
+			w = newIntV2Writer(schema, opts, BitsInt)
+			break
+		}
+		return nil, errors.New("encoding not impl")
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			w = newIntV2Writer(schema, opts)
+			w = newIntV2Writer(schema, opts, BitsBigInt)
 			break
 		}
 		return nil, errors.New("encoding not impl")
@@ -162,4 +170,3 @@ func (w writer) GetIndex() *pb.RowIndex {
 func (w writer) GetStats() *pb.ColumnStatistics {
 	return w.stats
 }
-
