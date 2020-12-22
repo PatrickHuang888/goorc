@@ -45,7 +45,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		}
 
 		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-			//writer = newStringDictV2Writer(schema, opts)
+			// todo:
 			break
 		}
 
@@ -55,7 +55,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
-		//writer = newBoolWriter(schema, opts)
+		w = newBoolWriter(schema, opts)
 
 	case pb.Type_BYTE:
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
@@ -65,7 +65,7 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 
 	case pb.Type_BINARY:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//writer = newBinaryDirectV2Writer(schema, opts)
+			// todo:
 			break
 		}
 
@@ -73,21 +73,21 @@ func CreateWriter(schema *api.TypeDescription, opts *config.WriterOptions) (w Wr
 
 	case pb.Type_DECIMAL:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//writer = newDecimal64DirectV2Writer(schema, opts)
+			// todo:
 			break
 		}
 		return nil, errors.New("encoding not impl")
 
 	case pb.Type_DATE:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			//writer = newDateDirectV2Writer(schema, opts)
+			// todo:
 			break
 		}
 		return nil, errors.New("encoding not impl")
 
 	case pb.Type_TIMESTAMP:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			w = newTimestampV2Writer(schema, opts)
+			// todo:
 			break
 		}
 		return nil, errors.New("encoding not impl")

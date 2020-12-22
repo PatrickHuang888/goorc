@@ -55,9 +55,9 @@ func TestIntV2(t *testing.T) {
 	ropts := config.DefaultReaderOptions()
 	ropts.HasIndex = true
 	ropts.IndexStride = 200
-	r, err:=NewReader(schema, &ropts, f)
+	r, err := NewReader(schema, &ropts, f)
 	assert.Nil(t, err)
-	reader:= r.(*intV2Reader)
+	reader := r.(*intV2Reader)
 	reader.reader.index = writer.index
 	err = reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
@@ -139,7 +139,7 @@ func TestIntV2WithPresents(t *testing.T) {
 	ropts := config.DefaultReaderOptions()
 	r, err := NewReader(schema, &ropts, f)
 	assert.Nil(t, err)
-	reader:= r.(*intV2Reader)
+	reader := r.(*intV2Reader)
 	err = reader.InitStream(writer.present.Info(), 0)
 	assert.Nil(t, err)
 	err = reader.InitStream(writer.data.Info(), writer.present.Info().GetLength())
@@ -255,7 +255,7 @@ func TestFloat(t *testing.T) {
 	ropts := config.DefaultReaderOptions()
 	r, err := NewReader(&schema, &ropts, f)
 	assert.Nil(t, err)
-	reader:= r.(*floatReader)
+	reader := r.(*floatReader)
 	err = reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 

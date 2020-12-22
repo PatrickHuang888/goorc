@@ -165,8 +165,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
-		// todo:
-		return NewStructReader(schema, opts, in), nil
+		return &structReader{&reader{schema: schema, opts: opts, f:in}}, nil
 
 	case pb.Type_LIST:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
