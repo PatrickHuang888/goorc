@@ -9,29 +9,15 @@ import (
 	"github.com/pkg/errors"
 )
 
-func NewIntRLV2(signed bool, doPosition bool) *IntRL2 {
-	if doPosition {
-		return &IntRL2{values: make([]uint64, 0, MaxIntRunLength), signed: signed, position: 0}
-	}
-	return &IntRL2{values: make([]uint64, 0, MaxIntRunLength), signed: signed, position: -1}
-}
-
-// 64 bit int run length encoding v2
-type IntRL2 struct {
-	lastByte byte // different align when using read/writer, used in r/w
-	bitsLeft int  // used in r/w
-
-	signed bool
-
-	position int
-
-	values []uint64
+type IntRLV2Decoder struct {
+	lastByte byte
+	bitsLeft int
+	Signed bool
 }
 
 // decode 1 'block' values, not all data in input bufferedReader
 // if d.singed return []int64, else return []uint64
-// if EOF empty slices
-func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
+func (d *IntRLV2Decoder) Decode(in BufferedReader) (interface{}, error) {
 	var values []uint64
 
 	// header from MSB to LSB
@@ -87,7 +73,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 
 	case Encoding_PATCHED_BASE:
 		// rethink: according to base value is a signed smallest value, patch should always signed?
-		if !d.signed {
+		if !d.Signed {
 			return nil, errors.New("decoding: int rl v2 patch signed setting should not false")
 		}
 
@@ -113,7 +99,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 
 		var ubase uint64
 		var base int64
-		if d.signed {
+		if d.Signed {
 			base, err = binary.ReadVarint(in)
 			if err != nil {
 				return nil, errors.WithStack(err)
@@ -132,7 +118,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 			return nil, errors.WithStack(err)
 		}
 
-		if d.signed {
+		if d.Signed {
 			values = append(values, Zigzag(base+deltaBase))
 		} else {
 			if deltaBase >= 0 {
@@ -146,7 +132,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 		d.forgetBits()
 		for i := 2; i < length; i++ {
 			if width == 0 { //fixed delta
-				if d.signed {
+				if d.Signed {
 					values = append(values, Zigzag(base+deltaBase))
 				} else {
 					if deltaBase >= 0 {
@@ -160,7 +146,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 				if err != nil {
 					return nil, err
 				}
-				if d.signed {
+				if d.Signed {
 					prev := UnZigzag(values[len(values)-1])
 					if deltaBase >= 0 {
 						values = append(values, Zigzag(prev+int64(delta)))
@@ -182,7 +168,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 		return nil, errors.Errorf("decoding: int rl v2 encoding sub %d not recognized", sub)
 	}
 
-	if d.signed {
+	if d.Signed {
 		var vs []int64
 		for _, v := range values {
 			vs = append(vs, UnZigzag(v))
@@ -193,7 +179,7 @@ func (d *IntRL2) Decode(in BufferedReader) (interface{}, error) {
 	}
 }
 
-func (d *IntRL2) readPatched(in BufferedReader, firstByte byte) ([]uint64, error) {
+func (d *IntRLV2Decoder) readPatched(in BufferedReader, firstByte byte) ([]uint64, error) {
 	var values []uint64
 
 	mark := len(values)
@@ -281,7 +267,7 @@ func (d *IntRL2) readPatched(in BufferedReader, firstByte byte) ([]uint64, error
 	return values, nil
 }
 
-func (d *IntRL2) readBits(in io.ByteReader, bits int) (value uint64, err error) {
+func (d *IntRLV2Decoder) readBits(in io.ByteReader, bits int) (value uint64, err error) {
 	hasBits := d.bitsLeft
 	data := uint64(d.lastByte)
 	for ; hasBits < bits; hasBits += 8 {
@@ -295,22 +281,43 @@ func (d *IntRL2) readBits(in io.ByteReader, bits int) (value uint64, err error) 
 
 	d.bitsLeft = hasBits - bits
 	value = data >> uint(d.bitsLeft)
-	//leadZeros := uint(8 - rle.bitsLeft)
 
 	// clear leadZeros
 	mask := (uint64(1) << d.bitsLeft) - 1
 	d.lastByte = byte(data & mask)
-
-	//rle.lastByte = (byte(data) << leadZeros) >> leadZeros
 	return
 }
 
-func (d *IntRL2) forgetBits() {
+func (d *IntRLV2Decoder) forgetBits() {
 	d.bitsLeft = 0
 	d.lastByte = 0
 }
 
-func (e *IntRL2) writeBits(value uint64, bits int, out *bytes.Buffer) (err error) {
+func NewIntRLV2(signed bool, doPosition bool) Encoder {
+	if doPosition {
+		return &intRLV2Encoder{values: make([]uint64, 0, MaxIntRunLength), signed: signed, position: 0}
+	}
+	return &intRLV2Encoder{values: make([]uint64, 0, MaxIntRunLength), signed: signed, position: -1}
+}
+
+// 64 bit int run length encoding v2
+type intRLV2Encoder struct {
+	lastByte byte // different align when using read/writer, used in r/w
+	bitsLeft int  // used in r/w
+
+	signed bool
+
+	position int
+
+	values []uint64
+}
+
+func (d *intRLV2Encoder) forgetBits() {
+	d.bitsLeft = 0
+	d.lastByte = 0
+}
+
+func (e *intRLV2Encoder) writeBits(value uint64, bits int, out *bytes.Buffer) (err error) {
 	totalBits := e.bitsLeft + bits
 	if totalBits > 64 {
 		return errors.New("write bits > 64")
@@ -334,7 +341,7 @@ func (e *IntRL2) writeBits(value uint64, bits int, out *bytes.Buffer) (err error
 	return
 }
 
-func (e *IntRL2) writeLeftBits(out *bytes.Buffer) error {
+func (e *intRLV2Encoder) writeLeftBits(out *bytes.Buffer) error {
 	if e.bitsLeft != 0 {
 		b := e.lastByte << (8 - e.bitsLeft) // last align to msb
 		if err := out.WriteByte(b); err != nil {
@@ -346,7 +353,7 @@ func (e *IntRL2) writeLeftBits(out *bytes.Buffer) error {
 
 const MaxIntRunLength = 512
 
-func (e *IntRL2) Encode(v interface{}, out *bytes.Buffer) error {
+func (e *intRLV2Encoder) Encode(v interface{}, out *bytes.Buffer) error {
 	var value uint64
 	if e.signed {
 		vt, ok := v.(int64)
@@ -376,28 +383,22 @@ func (e *IntRL2) Encode(v interface{}, out *bytes.Buffer) error {
 	return nil
 }
 
-func (e *IntRL2) GetPosition() []uint64 {
+func (e *intRLV2Encoder) GetPosition() []uint64 {
 	return []uint64{uint64(e.position)}
 }
 
-func (e *IntRL2) Reset() {
-	e.bitsLeft = 0
-	e.lastByte = 0
-	e.values = e.values[:0]
-}
-
-func (e *IntRL2) Flush(out *bytes.Buffer) error {
+func (e *intRLV2Encoder) Flush(out *bytes.Buffer) error {
 	if len(e.values) != 0 {
 		logger.Tracef("encoding int rl v2 FLUSH %d values", len(e.values))
 		if err := e.write(out, true); err != nil {
 			return err
 		}
 	}
-	e.Reset()
+	e.forgetBits()
 	return nil
 }
 
-func (e *IntRL2) write(out *bytes.Buffer, toEnd bool) error {
+func (e *intRLV2Encoder) write(out *bytes.Buffer, toEnd bool) error {
 	if len(e.values) <= MinRepeats {
 		if err := e.writeDirect(out, true); err != nil {
 			return err
@@ -475,7 +476,7 @@ func (e *IntRL2) write(out *bytes.Buffer, toEnd bool) error {
 	return nil
 }
 
-func (e *IntRL2) writeDirect(out *bytes.Buffer, widthAlign bool) error {
+func (e *intRLV2Encoder) writeDirect(out *bytes.Buffer, widthAlign bool) error {
 	header := make([]byte, 2)
 	header[0] = Encoding_DIRECT << 6
 
@@ -747,7 +748,7 @@ func tryPatch(values []uint64, pvs *patchedValues) bool {
 	return false
 }
 
-func (e *IntRL2) writePatch(pvs *patchedValues, out *bytes.Buffer) error {
+func (e *intRLV2Encoder) writePatch(pvs *patchedValues, out *bytes.Buffer) error {
 	// write header
 	header := make([]byte, 4)
 	header[0] = Encoding_PATCHED_BASE << 6

@@ -42,7 +42,6 @@ type Encoder interface {
 	// GetPositions get current position count
 	GetPosition() []uint64
 
-	Reset()
 }
 
 type BufferedReader interface {

@@ -13,7 +13,7 @@ type byteRunLength struct {
 	values   []byte
 }
 
-func NewByteEncoder(resetPosition bool) *byteRunLength {
+func NewByteEncoder(resetPosition bool) Encoder {
 	if resetPosition {
 		return &byteRunLength{values: make([]byte, 0, MaxByteRunLength), position: 0}
 	}
@@ -43,10 +43,6 @@ func (e *byteRunLength) Flush(out *bytes.Buffer) error {
 		e.encodeBytes(out, true)
 	}
 	return nil
-}
-
-func (e *byteRunLength) Reset() {
-	e.values = e.values[:0]
 }
 
 func (e *byteRunLength) encodeBytes(out *bytes.Buffer, toEnd bool) {

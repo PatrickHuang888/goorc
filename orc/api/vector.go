@@ -2,8 +2,9 @@ package api
 
 import (
 	"fmt"
-	"github.com/patrickhuang888/goorc/pb/pb"
 	"time"
+
+	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
 type ColumnVector struct {
@@ -15,29 +16,6 @@ type ColumnVector struct {
 	Children []ColumnVector
 }
 
-func (batch ColumnVector) Len() int {
-	if batch.Kind != pb.Type_STRUCT {
-		return len(batch.Vector)
-	}
-	// todo: struct/list/...
-	return 0
-}
-
-func (batch ColumnVector) Cap() int  {
-	if batch.Kind != pb.Type_STRUCT {
-		return cap(batch.Vector)
-	}
-	// todo:
-	return 0
-}
-
-func (batch *ColumnVector) Reset()  {
-	batch.Vector = batch.Vector[:0]
-	for _, v := range batch.Children {
-		v.Vector = v.Vector[:0]
-	}
-}
-
 type Value struct {
 	Null bool
 	V    interface{}
@@ -46,15 +24,6 @@ type Value struct {
 type ByteValue struct {
 	Null bool
 	V    byte
-}
-
-func ValueToByteValue(bv *ByteValue, v *Value) {
-
-}
-
-type batchInternal struct {
-	*ColumnVector
-	presentsFromParent bool // for struct writer
 }
 
 /*func (cv ColumnVector) check() error {
@@ -100,21 +69,7 @@ func (d Decimal64) Float64() float64 {
 	return float64(d.Precision) * float64(10*d.Scale)
 }
 
-/*type Decimal64Column struct {
-	col
-	Vector []Decimal64
-}
-
-func (*Decimal64Column) T() pb.Type_Kind {
-	return pb.Type_DECIMAL
-}
-func (dc *Decimal64Column) Rows() int {
-	return len(dc.Vector)
-}
-func (dc *Decimal64Column) reset() {
-	dc.Vector = dc.Vector[:0]
-}*/
-
+// enhance: UTC
 type Date time.Time
 
 func NewDate(year int, month time.Month, day int) Date {
@@ -125,16 +80,17 @@ func (d *Date) String() string {
 	return time.Time(*d).Format("2006-01-02")
 }
 
-func FromDays(days int64) Date {
-	d := time.Duration(days * 24 * int64(time.Hour))
+func FromDays(days int32) Date {
+	d := time.Duration(int64(days) * 24 * int64(time.Hour))
 	t := Date(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC).Add(d))
 	return t
 }
 
 // days from 1970, Jan, 1 UTC
-func ToDays(d Date) int64 {
+func ToDays(d Date) int32 {
+	// time.Time(d).UTC() ??
 	s := time.Time(d).Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
-	return int64(s.Hours() / 24)
+	return int32(s.Hours() / 24)
 }
 
 // todo: timezone
@@ -165,108 +121,3 @@ func GetTimestamp(t time.Time) Timestamp {
 	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
 	return Timestamp{t.UTC().Unix() - base, uint32(t.Nanosecond())}
 }
-
-/*func (*TimestampColumn) T() pb.Type_Kind {
-	return pb.Type_TIMESTAMP
-}
-
-func (tc *TimestampColumn) Rows() int {
-	return len(tc.Vector)
-}
-
-func (tc *TimestampColumn) reset() {
-	tc.col.reset()
-	tc.Vector = tc.Vector[:0]
-}*/
-
-/*type FloatColumn struct {
-	col
-	Vector []float32
-}
-
-func (*FloatColumn) T() pb.Type_Kind {
-	return pb.Type_FLOAT
-}
-func (fc *FloatColumn) reset() {
-	fc.col.reset()
-	fc.Vector = fc.Vector[:0]
-}
-func (fc *FloatColumn) Rows() int {
-	return len(fc.Vector)
-}
-
-type DoubleColumn struct {
-	col
-	Vector []float64
-}
-
-func (DoubleColumn) T() pb.Type_Kind {
-	return pb.Type_DOUBLE
-}
-
-func (c *DoubleColumn) reset() {
-	c.col.reset()
-	c.Vector = c.Vector[:0]
-}
-
-func (c DoubleColumn) Rows() int {
-	return len(c.Vector)
-}
-
-type StringColumn struct {
-	col
-	encoding string
-	Vector   []string
-}
-
-func (c StringColumn) Rows() int {
-	return len(c.Vector)
-}
-
-func (StringColumn) T() pb.Type_Kind {
-	return pb.Type_STRING
-}
-
-func (c *StringColumn) reset() {
-	c.col.reset()
-	c.Vector = c.Vector[:0]
-}*/
-
-/*type Struct struct {
-	Presents []bool
-	Children []*ColumnVector
-}*/
-
-/*type ListColumn struct {
-	col
-	Child ColumnVector
-}
-
-func (ListColumn) T() pb.Type_Kind {
-	return pb.Type_LIST
-}*/
-
-/*func (lc *ListColumn) Rows() int {
-	return lc.Child.Rows()
-}*/
-
-/*// todo:
-type MapColumn struct {
-	col
-	vector map[ColumnVector]ColumnVector
-}
-
-func (*MapColumn) T() pb.Type_Kind {
-	return pb.Type_MAP
-}
-
-// todo:
-type UnionColumn struct {
-	col
-	tags   []int
-	fields []ColumnVector
-}
-
-func (*UnionColumn) T() pb.Type_Kind {
-	return pb.Type_UNION
-}*/

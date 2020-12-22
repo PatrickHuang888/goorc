@@ -14,11 +14,11 @@ type boolRunLength struct {
 	position int
 }
 
-func NewBoolEncoder(resetPosition bool) *boolRunLength {
+func NewBoolEncoder(resetPosition bool) Encoder {
 	if resetPosition {
-		return &boolRunLength{brl: NewByteEncoder(true), position: 0, index: -1}
+		return &boolRunLength{brl: NewByteEncoder(true).(*byteRunLength), position: 0, index: -1}
 	}
-	return &boolRunLength{brl: NewByteEncoder(false), position: -1, index: -1}
+	return &boolRunLength{brl: NewByteEncoder(false).(*byteRunLength), position: -1, index: -1}
 }
 
 func (e *boolRunLength) GetPosition() []uint64 {
@@ -29,11 +29,6 @@ func (e *boolRunLength) GetPosition() []uint64 {
 	return r
 }
 
-func (e *boolRunLength) Reset() {
-	e.value = 0
-	e.index = -1
-	e.brl.Reset()
-}
 
 func (e *boolRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	value := v.(bool)
@@ -52,7 +47,7 @@ func (e *boolRunLength) Encode(v interface{}, out *bytes.Buffer) error {
 	}
 
 	if e.position != -1 {
-		e.position= e.index+1
+		e.position = e.index + 1
 	}
 	return nil
 }
@@ -66,8 +61,7 @@ func (e *boolRunLength) Flush(out *bytes.Buffer) error {
 	if err := e.brl.Flush(out); err != nil {
 		return err
 	}
-	// rethink:
-	e.Reset()
+	e.index = -1
 	return nil
 }
 

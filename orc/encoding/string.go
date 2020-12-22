@@ -7,10 +7,14 @@ import (
 	"github.com/pkg/errors"
 )
 
-type StringContents struct {
+func NewStringContentsEncoder() Encoder {
+	return &stringContents{}
 }
 
-func (e *StringContents) Encode(v interface{}, out *bytes.Buffer) error {
+type stringContents struct {
+}
+
+func (e *stringContents) Encode(v interface{}, out *bytes.Buffer) error {
 	bs, ok := v.([]byte)
 	if !ok {
 		return errors.New("string contents encoder need []byte to encoding")
@@ -21,16 +25,13 @@ func (e *StringContents) Encode(v interface{}, out *bytes.Buffer) error {
 	return nil
 }
 
-func (e *StringContents) Flush(out *bytes.Buffer) error {
+func (e *stringContents) Flush(out *bytes.Buffer) error {
 	return nil
 }
 
-func (e *StringContents) GetPosition() []uint64 {
+func (e *stringContents) GetPosition() []uint64 {
 	// fixme: always 0 ??
 	return []uint64{uint64(0)}
-}
-
-func (e *StringContents) Reset() {
 }
 
 func DecodeBytes(in io.Reader, length int) ([]byte, error) {

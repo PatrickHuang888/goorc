@@ -2,17 +2,132 @@ package column
 
 import (
 	"errors"
+	"io"
+
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
-	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	"io"
 )
 
-func NewDateV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &dateV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
+func newDateV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
+		DateStatistics: &pb.DateStatistics{Minimum: new(int32), Maximum: new(int32)}}
+	var present *stream.Writer
+	if schema.HasNulls {
+		*stats.HasNull = true
+		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
+	}
+	var indexStats *pb.ColumnStatistics
+	var index *pb.RowIndex
+	if opts.WriteIndex {
+		indexStats = &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
+			DateStatistics: &pb.DateStatistics{Minimum: new(int32), Maximum: new(int32)}}
+		index = &pb.RowIndex{}
+	}
+	base := &writer{schema: schema, opts: opts, stats: stats, present: present, indexStats: indexStats, index: index}
+	data := stream.NewIntRLV2Writer(schema.Id, pb.Stream_DATA, opts, true)
+	return &byteWriter{base, data}
 }
+
+type dateV2Writer struct {
+	*writer
+	data *stream.Writer
+}
+
+func (w *dateV2Writer) Write(value api.Value) error {
+	if w.schema.HasNulls {
+		if err := w.present.Write(!value.Null); err != nil {
+			return err
+		}
+	}
+
+	if !value.Null {
+		if err := w.data.Write(value.V); err != nil {
+			return err
+		}
+		*w.stats.BinaryStatistics.Sum++
+		*w.stats.NumberOfValues++ // makeSure:
+	}
+
+	if w.opts.WriteIndex {
+		w.indexInRows++
+		if w.indexInRows >= w.opts.IndexStride {
+			var pp []uint64
+			if w.schema.HasNulls {
+				pp = append(pp, w.present.GetPosition()...)
+			}
+			pp = append(pp, w.data.GetPosition()...)
+			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Positions: pp, Statistics: w.indexStats})
+
+			// new stats
+			w.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+			if w.schema.HasNulls {
+				*w.indexStats.HasNull = true
+			}
+			w.indexInRows = 0
+		}
+		// fixme: does not write index statistic bytes on disk, java impl either
+		if !value.Null {
+			*w.indexStats.BinaryStatistics.Sum++
+			*w.indexStats.NumberOfValues++
+		}
+	}
+	return nil
+}
+
+func (w *dateV2Writer) Flush() error {
+	if w.schema.HasNulls {
+		if err := w.present.Flush(); err != nil {
+			return err
+		}
+	}
+	if err := w.data.Flush(); err != nil {
+		return err
+	}
+
+	if w.schema.HasNulls {
+		*w.stats.BytesOnDisk = w.present.Info().GetLength()
+	}
+	*w.stats.BytesOnDisk += w.data.Info().GetLength()
+	w.flushed = true
+	return nil
+}
+
+func (w *dateV2Writer) WriteOut(out io.Writer) (n int64, err error) {
+	var pn, dn int64
+	if w.schema.HasNulls {
+		if pn, err = w.present.WriteOut(out); err != nil {
+			return
+		}
+	}
+	if dn, err = w.data.WriteOut(out); err != nil {
+		return
+	}
+	return pn + dn, nil
+}
+
+func (w dateV2Writer) GetStreamInfos() []*pb.Stream {
+	if w.schema.HasNulls {
+		return []*pb.Stream{w.present.Info(), w.data.Info()}
+	}
+	return []*pb.Stream{w.data.Info()}
+}
+
+func (w *dateV2Writer) Reset() {
+	if w.schema.HasNulls {
+		w.present.Reset()
+	}
+	w.data.Reset()
+}
+
+func (w dateV2Writer) Size() int {
+	if w.schema.HasNulls {
+		return w.present.Size() + w.data.Size()
+	}
+	return w.data.Size()
+}
+
 
 type dateV2Reader struct {
 	*reader
@@ -21,37 +136,27 @@ type dateV2Reader struct {
 }
 
 func (c *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
-
-	if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
-		err := errors.New("encoding direct not impl")
+	ic, err := c.f.Clone()
+	if err != nil {
 		return err
+	}
+	if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
+		return err
+	}
+
+	if c.schema.Encoding != pb.ColumnEncoding_DIRECT_V2 {
+		return errors.New("encoding error")
 	}
 
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err := c.f.Clone()
-		if err != nil {
-			return err
-		}
-		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
-			return err
-		}
 		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
 		return nil
 	}
-
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err := c.f.Clone()
-		if err != nil {
-			return err
-		}
-		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
-			return err
-		}
 		c.data = stream.NewIntRLV2Reader(c.opts, info, startOffset, true, ic)
 		return err
 	}
-
-	return errors.New("stream unknown")
+	return errors.New("stream kind unknown")
 }
 
 func (c *dateV2Reader) Next() (value api.Value, err error) {
@@ -282,7 +387,7 @@ func newTimestampV2Writer(schema *api.TypeDescription, opts *config.WriterOption
 		TimestampStatistics: &pb.TimestampStatistics{Minimum: new(int64), MinimumUtc: new(int64), Maximum: new(int64), MaximumUtc: new(int64)}}
 	var present *stream.Writer
 	if schema.HasNulls {
-		*stats.HasNull= true
+		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
 	}
 	data := stream.NewIntRLV2Writer(schema.Id, pb.Stream_DATA, opts, true)

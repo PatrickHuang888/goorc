@@ -37,7 +37,6 @@ func (w Writer) Info() *pb.Stream {
 
 func (w *Writer) Reset() {
 	w.reset()
-	w.encoder.Reset()
 }
 
 func (w *Writer) Write(v interface{}) error {
@@ -192,7 +191,7 @@ func NewStringContentsWriter(id uint32, kind pb.Stream_Kind, opts *config.Writer
 		cbuf.Reset()
 	}
 
-	return &Writer{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, &encoding.StringContents{}}
+	return &Writer{&writer{buf: buf, compressedBuf: cbuf, info: info, opts: opts}, encoding.NewStringContentsEncoder()}
 }
 
 func NewIntRLV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions, signed bool) *Writer {
@@ -227,4 +226,18 @@ func NewFloatWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions, 
 	}else {
 		return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewFloatEncoder()}
 	}
+}
+
+func NewDateV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer  {
+	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
+	buf.Reset()
+
+	var cbuf *bytes.Buffer
+	if opts.CompressionKind != pb.CompressionKind_NONE {
+		cbuf = bytes.NewBuffer(make([]byte, opts.ChunkSize))
+		cbuf.Reset()
+	}
+
+	// return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewDate}
+	return nil
 }

@@ -17,11 +17,12 @@ type IntRLV2Reader struct {
 	uvalues []uint64
 	pos     int
 
-	decoder *encoding.IntRL2
+	decoder *encoding.IntRLV2Decoder
 }
 
 func NewIntRLV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, signed bool, in io.File) *IntRLV2Reader {
-	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}, decoder: encoding.NewIntRLV2(signed, false), signed: signed}
+	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in},
+		decoder: &encoding.IntRLV2Decoder{Signed:signed}, signed: signed}
 }
 
 func (r *IntRLV2Reader) NextInt64() (int64, error) {

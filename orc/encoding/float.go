@@ -41,10 +41,6 @@ func (f *float) GetPosition() []uint64 {
 	return []uint64{0}
 }
 
-func (f *float) Reset() {
-	//
-}
-
 func DecodeFloat(in io.Reader) (float32, error) {
 	bb := make([]byte, 4)
 	if _, err := io.ReadFull(in, bb); err != nil {
