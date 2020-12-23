@@ -136,7 +136,7 @@ func (w boolWriter) Size() int {
 	return w.data.Size()
 }
 
-func newBoolReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+func NewBoolReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
 	return &boolReader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 

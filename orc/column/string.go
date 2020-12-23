@@ -194,7 +194,7 @@ func (w stringDirectV2Writer) Size() int {
 	return w.data.Size() + w.length.Size()
 }
 
-func newStringDirectV2Reader(opts *config.ReaderOptions, schema *api.TypeDescription, f orcio.File) Reader {
+func NewStringDirectV2Reader(opts *config.ReaderOptions, schema *api.TypeDescription, f orcio.File) Reader {
 	return &stringDirectV2Reader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 

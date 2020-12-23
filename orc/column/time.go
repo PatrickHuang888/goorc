@@ -2,11 +2,11 @@ package column
 
 import (
 	"errors"
-	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"io"
 
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )

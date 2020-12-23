@@ -3,6 +3,7 @@ package column
 import (
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
@@ -173,6 +174,10 @@ func (w intWriter) GetStats() *pb.ColumnStatistics {
 func (w *intWriter) Reset() {
 	w.reset()
 	w.data.Reset()
+}
+
+func NewIntV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File, bits int) Reader {
+	return &intV2Reader{reader: &reader{f: f, schema: schema, opts: opts}, bits: bits}
 }
 
 type intV2Reader struct {

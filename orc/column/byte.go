@@ -137,7 +137,7 @@ type byteReader struct {
 	data *stream.ByteReader
 }
 
-func newByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+func NewByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
 	return &byteReader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 

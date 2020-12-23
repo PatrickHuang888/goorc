@@ -58,57 +58,56 @@ func (r *reader) getIndexEntryAndOffset(rowNumber uint64) (entry *pb.RowIndexEnt
 	return
 }
 
-func (r *reader) seekPresent(indexEntry *pb.RowIndexEntry) error  {
+func (r *reader) seekPresent(indexEntry *pb.RowIndexEntry) error {
 	var chunk, chunkOffset, offset1, offset2 uint64
 	if indexEntry != nil {
 		pos := indexEntry.Positions
 		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-				chunkOffset = pos[0]
-				offset1 = pos[1]
-				offset2 = pos[2]
+			chunkOffset = pos[0]
+			offset1 = pos[1]
+			offset2 = pos[2]
 		} else {
-				chunk = pos[0]
-				chunkOffset = pos[1]
-				offset1 = pos[2]
-				offset2 = pos[3]
+			chunk = pos[0]
+			chunkOffset = pos[1]
+			offset1 = pos[2]
+			offset2 = pos[3]
 		}
 	}
 	return r.present.Seek(chunk, chunkOffset, offset1, offset2)
 }
 
-
 func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File) (Reader, error) {
 	switch schema.Kind {
 	case pb.Type_SHORT:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return &intV2Reader{reader: &reader{f: in, schema: schema, opts: opts}, bits: BitsSmallInt}, nil
+			return NewIntV2Reader(schema, opts, in, BitsSmallInt), nil
 		}
 		return nil, errors.New("not impl")
 	case pb.Type_INT:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return &intV2Reader{reader: &reader{f: in, schema: schema, opts: opts}, bits: BitsInt}, nil
+			return NewIntV2Reader(schema, opts, in, BitsInt), nil
 		}
 		return nil, errors.New("not impl")
 	case pb.Type_LONG:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return &intV2Reader{reader: &reader{f: in, schema: schema, opts: opts}, bits: BitsBigInt}, nil
+			return NewIntV2Reader(schema, opts, in, BitsBigInt), nil
 		}
 		return nil, errors.New("not impl")
 	case pb.Type_FLOAT:
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("column encoding error")
 		}
-		return &floatReader{reader: &reader{f: in, schema: schema, opts: opts}, is64: false}, nil
+		return NewFloatReader(schema, opts, in, false), nil
 
 	case pb.Type_DOUBLE:
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("column encoding error")
 		}
-		return &floatReader{reader: &reader{f: in, schema: schema, opts: opts}, is64: true}, nil
+		return NewFloatReader(schema, opts, in, true), nil
 
 	case pb.Type_STRING:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return newStringDirectV2Reader(opts, schema, in), nil
+			return NewStringDirectV2Reader(opts, schema, in), nil
 			break
 		}
 		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
@@ -122,13 +121,13 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("bool column encoding error")
 		}
-		return &boolReader{reader:&reader{f:in, schema: schema, opts: opts}}, nil
+		return NewBoolReader(schema, opts, in), nil
 
 	case pb.Type_BYTE: // tinyint
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("tinyint column encoding error")
 		}
-		return &byteReader{reader: &reader{f: in, schema: schema, opts: opts}}, nil
+		return NewByteReader(schema, opts, in), nil
 
 	case pb.Type_BINARY:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
@@ -161,8 +160,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 			return nil, errors.New("not impl")
 		}
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return nil, errors.New("not impl")
-			//return NewDateV2Reader(schema, opts, in, numberOfRows), nil
+			return NewDateV2Reader(schema, opts, in), nil
 		}
 		return nil, errors.New("column encoding error")
 
@@ -184,7 +182,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
-		return &structReader{&reader{schema: schema, opts: opts, f:in}}, nil
+		return &structReader{&reader{schema: schema, opts: opts, f: in}}, nil
 
 	case pb.Type_LIST:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
