@@ -12,7 +12,7 @@ import (
 
 func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64), BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
-	var present *stream.Writer
+	var present stream.Writer
 	if schema.HasNulls {
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
@@ -30,7 +30,7 @@ func newByteWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writ
 
 type byteWriter struct {
 	*writer
-	data *stream.Writer
+	data stream.Writer
 }
 
 func (w *byteWriter) Write(value api.Value) error {

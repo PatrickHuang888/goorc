@@ -19,7 +19,7 @@ func newStringDirectV2Writer(schema *api.TypeDescription, opts *config.WriterOpt
 	stats := &pb.ColumnStatistics{StringStatistics: &pb.StringStatistics{
 		Maximum: new(string), Minimum: new(string), Sum: new(int64), LowerBound: new(string), UpperBound: new(string)},
 		NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
-	var present *stream.Writer
+	var present stream.Writer
 	if schema.HasNulls {
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
@@ -39,8 +39,8 @@ func newStringDirectV2Writer(schema *api.TypeDescription, opts *config.WriterOpt
 
 type stringDirectV2Writer struct {
 	*writer
-	data   *stream.Writer
-	length *stream.Writer
+	data   stream.Writer
+	length stream.Writer
 }
 
 func (w *stringDirectV2Writer) Write(value api.Value) error {

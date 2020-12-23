@@ -689,62 +689,8 @@ func TestColumnDecimal64WithPresents(t *testing.T) {
 
 	assert.Equal(t, presents, batch.Presents)
 	assert.Equal(t, vector, batch.Vector)
-}
-
-func TestColumnDateWithPresents(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_DATE, HasNulls: true}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
-
-	rows := 100
-	values := make([]orc.Date, rows)
-	for i := 0; i < rows; i++ {
-		values[i] = orc.NewDate(2020, time.February, i%30)
-	}
-	presents := make([]bool, rows)
-	for i := 0; i < rows; i++ {
-		presents[i] = true
-	}
-	presents[0] = false
-	values[0] = orc.Date{}
-	presents[45] = false
-	values[45] = orc.Date{}
-	presents[98] = false
-	values[98] = orc.Date{}
-
-	batch.Presents = presents
-	batch.Vector = values
-
-	writer := newDateDirectV2Writer(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, rows, n)
-
-	ropts := orc.DefaultReaderOptions()
-	batch = schema.CreateReaderBatch(ropts)
-	presentBs := &bufSeeker{writer.present.buf}
-	pKind := pb.Stream_PRESENT
-	pLength_ := uint64(writer.present.buf.Len())
-	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
-
-	dataBs := &bufSeeker{writer.data.buf}
-	dKind := pb.Stream_DATA
-	dLength := uint64(writer.data.buf.Len())
-	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := orc.newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
-
-	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &orc.dateV2Reader{treeReader: cr, data: data}
-	err = reader.next(batch)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, presents, batch.Presents[:100])
-	assert.Equal(t, values, batch.Vector)
 }*/
+
 
 func TestColumnTimestampWithPresents(t *testing.T) {
 	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_TIMESTAMP, HasNulls: true}

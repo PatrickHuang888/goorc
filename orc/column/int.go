@@ -13,7 +13,7 @@ import (
 func newIntV2Writer(schema *api.TypeDescription, opts *config.WriterOptions, bits int) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
 		IntStatistics: &pb.IntegerStatistics{Minimum: new(int64), Maximum: new(int64), Sum: new(int64)}}
-	var present *stream.Writer
+	var present stream.Writer
 	if schema.HasNulls {
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
@@ -38,7 +38,7 @@ const (
 
 type intWriter struct {
 	*writer
-	data *stream.Writer
+	data stream.Writer
 	bits int
 }
 

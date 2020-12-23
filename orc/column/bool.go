@@ -13,7 +13,7 @@ import (
 func newBoolWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{BucketStatistics: &pb.BucketStatistics{Count: make([]uint64, 1)},
 		NumberOfValues: new(uint64), BytesOnDisk: new(uint64), HasNull: new(bool)}
-	var present *stream.Writer
+	var present stream.Writer
 	if schema.HasNulls {
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
 		*stats.HasNull = true
@@ -35,7 +35,7 @@ func newBoolWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writ
 
 type boolWriter struct {
 	*writer
-	data *stream.Writer
+	data stream.Writer
 }
 
 func (w *boolWriter) Write(value api.Value) error {

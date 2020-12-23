@@ -146,7 +146,7 @@ func (r floatReader) checkStreams() error {
 func newFloatWriter(schema *api.TypeDescription, opts *config.WriterOptions, is64 bool) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
 		DoubleStatistics: &pb.DoubleStatistics{Sum: new(float64), Maximum: new(float64), Minimum: new(float64)}}
-	var present *stream.Writer
+	var present stream.Writer
 	if schema.HasNulls {
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
@@ -165,7 +165,7 @@ func newFloatWriter(schema *api.TypeDescription, opts *config.WriterOptions, is6
 
 type floatWriter struct {
 	*writer
-	data *stream.Writer
+	data stream.Writer
 	is64 bool
 }
 

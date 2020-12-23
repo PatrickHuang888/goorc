@@ -21,7 +21,7 @@ func TestNoCompression(t *testing.T) {
 
 	wopts := &config.WriterOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_NONE}
 	id := uint32(0)
-	sw := NewByteWriter(id, pb.Stream_DATA, wopts)
+	sw := NewByteWriter(id, pb.Stream_DATA, wopts).(*writer)
 
 	for _, v := range data {
 		if err = sw.Write(v); err != nil {
@@ -71,7 +71,7 @@ func TestCompression(t *testing.T) {
 
 	opts := config.DefaultWriterOptions()
 	id := uint32(0)
-	w := NewByteWriter(id, pb.Stream_DATA, &opts)
+	w := NewByteWriter(id, pb.Stream_DATA, &opts).(*writer)
 
 	for _, v := range data {
 		if err = w.Write(v); err != nil {
@@ -120,7 +120,7 @@ func TestBoolWithCompression(t *testing.T) {
 
 	opts := config.DefaultWriterOptions()
 	id := uint32(0)
-	w := NewBoolWriter(id, pb.Stream_DATA, &opts)
+	w := NewBoolWriter(id, pb.Stream_DATA, &opts).(*writer)
 
 	for _, v := range data {
 		if err = w.Write(v); err != nil {
@@ -167,7 +167,7 @@ func TestMultiChunkWithCompression(t *testing.T) {
 	// expand to several chunks
 	opts := &config.WriterOptions{ChunkSize: 60, CompressionKind: pb.CompressionKind_ZLIB}
 	id := uint32(0)
-	w := NewByteWriter(id, pb.Stream_DATA, opts)
+	w := NewByteWriter(id, pb.Stream_DATA, opts).(*writer)
 
 	for _, v := range data {
 		if err = w.Write(v); err != nil {

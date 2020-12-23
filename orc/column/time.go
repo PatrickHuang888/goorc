@@ -15,7 +15,7 @@ import (
 func NewDateV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
 		DateStatistics: &pb.DateStatistics{Minimum: new(int32), Maximum: new(int32)}}
-	var present *stream.Writer
+	var present stream.Writer
 	if schema.HasNulls {
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
@@ -34,7 +34,7 @@ func NewDateV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Wr
 
 type dateV2Writer struct {
 	*writer
-	data *stream.Writer
+	data stream.Writer
 }
 
 func (w *dateV2Writer) Write(value api.Value) error {
@@ -257,7 +257,7 @@ func (r dateV2Reader) checkInit() error {
 func NewTimestampV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
 		TimestampStatistics: &pb.TimestampStatistics{Minimum: new(int64), MinimumUtc: new(int64), Maximum: new(int64), MaximumUtc: new(int64)}}
-	var present *stream.Writer
+	var present stream.Writer
 	if schema.HasNulls {
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
@@ -277,8 +277,8 @@ func NewTimestampV2Writer(schema *api.TypeDescription, opts *config.WriterOption
 
 type timestampWriter struct {
 	*writer
-	data      *stream.Writer
-	secondary *stream.Writer
+	data      stream.Writer
+	secondary stream.Writer
 }
 
 func (w *timestampWriter) Write(value api.Value) error {

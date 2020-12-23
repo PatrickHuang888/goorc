@@ -88,7 +88,7 @@ func (c *structReader) Close() {
 func newStructWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{BucketStatistics: &pb.BucketStatistics{Count: make([]uint64, 1)},
 		NumberOfValues: new(uint64), BytesOnDisk: new(uint64), HasNull: new(bool)}
-	var present *stream.Writer
+	var present stream.Writer
 	if schema.HasNulls {
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)

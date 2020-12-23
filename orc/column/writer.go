@@ -133,7 +133,7 @@ type writer struct {
 
 	stats *pb.ColumnStatistics
 
-	present *stream.Writer
+	present stream.Writer
 
 	children []Writer
 
