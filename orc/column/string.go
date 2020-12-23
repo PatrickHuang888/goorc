@@ -257,6 +257,10 @@ func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
 }
 
 func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
+	if err := r.checkInit(); err != nil {
+		return err
+	}
+
 	if !r.opts.HasIndex {
 		return errors.New("no index")
 	}
@@ -273,76 +277,48 @@ func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
 	return nil
 }
 
-func (r *stringDirectV2Reader) seek(entry *pb.RowIndexEntry) error {
-	if err := r.checkInit(); err != nil {
-		return err
-	}
-
-	// from start
-	if entry == nil {
-		if r.schema.HasNulls {
-			if err := r.present.Seek(0, 0, 0, 0); err != nil {
-				return err
-			}
-		}
-		if err := r.data.Seek(0, 0, 0); err != nil {
+func (r *stringDirectV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
+	if r.schema.HasNulls {
+		if err := r.seekPresent(indexEntry); err != nil {
 			return err
 		}
-		if err := r.length.Seek(0, 0, 0); err != nil {
-			return err
-		}
-		return nil
 	}
-
-	var presentChunk, presentChunkOffset, presentOffset1, presentOffset2 uint64
 	var dataChunk, dataChunkOffset, dataOffset uint64
 	var lengthChunk, lengthChunkOffset, lengthOffset uint64
-	if r.opts.CompressionKind == pb.CompressionKind_NONE {
-		if r.schema.HasNulls {
-			presentChunkOffset = entry.Positions[0]
-			presentOffset1 = entry.Positions[1]
-			presentOffset2 = entry.Positions[2]
-			dataChunkOffset = entry.Positions[3]
-			dataOffset = entry.Positions[4]
-			lengthChunkOffset = entry.Positions[5]
-			lengthOffset = entry.Positions[6]
+	if indexEntry != nil {
+		pos := indexEntry.Positions
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			if r.schema.HasNulls {
+				dataChunkOffset = pos[3]
+				dataOffset = pos[4]
+				lengthChunkOffset = indexEntry.Positions[5]
+				lengthOffset = indexEntry.Positions[6]
+			} else {
+				dataChunkOffset = pos[0]
+				dataOffset = pos[1]
+				lengthChunkOffset = indexEntry.Positions[2]
+				lengthOffset = indexEntry.Positions[3]
+			}
 
 		} else {
-			dataChunkOffset = entry.Positions[0]
-			dataOffset = entry.Positions[1]
-			lengthChunkOffset = entry.Positions[2]
-			lengthOffset = entry.Positions[3]
-		}
-
-	} else { // compression
-		if r.schema.HasNulls {
-			presentChunk = entry.Positions[0]
-			presentChunkOffset = entry.Positions[1]
-			presentOffset1 = entry.Positions[2]
-			presentOffset2 = entry.Positions[3]
-			dataChunk = entry.Positions[4]
-			dataChunkOffset = entry.Positions[5]
-			dataOffset = entry.Positions[6]
-			lengthChunk = entry.Positions[7]
-			lengthChunkOffset = entry.Positions[8]
-			lengthOffset = entry.Positions[9]
-
-		} else {
-			dataChunk = entry.Positions[0]
-			dataChunkOffset = entry.Positions[1]
-			dataOffset = entry.Positions[2]
-			lengthChunk = entry.Positions[3]
-			lengthChunkOffset = entry.Positions[4]
-			lengthOffset = entry.Positions[5]
+			if r.schema.HasNulls {
+				dataChunk = pos[4]
+				dataChunkOffset = pos[5]
+				dataOffset = pos[6]
+				lengthChunk = indexEntry.Positions[7]
+				lengthChunkOffset = indexEntry.Positions[8]
+				lengthOffset = indexEntry.Positions[9]
+			} else {
+				dataChunk = pos[0]
+				dataChunkOffset = pos[1]
+				dataOffset = pos[2]
+				lengthChunk = indexEntry.Positions[3]
+				lengthChunkOffset = indexEntry.Positions[4]
+				lengthOffset = indexEntry.Positions[5]
+			}
 		}
 	}
-
-	if r.schema.HasNulls {
-		if err := r.present.Seek(presentChunk, presentChunkOffset, presentOffset1, presentOffset2); err != nil {
-			return err
-		}
-	}
-	if err := r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
+	if err:= r.data.Seek(dataChunk, dataChunkOffset, dataOffset);err!=nil {
 		return err
 	}
 	if err := r.length.Seek(lengthChunk, lengthChunkOffset, lengthOffset); err != nil {

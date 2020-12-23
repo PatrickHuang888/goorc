@@ -185,55 +185,44 @@ func (c *byteReader) Next() (value api.Value, err error) {
 	return
 }
 
-func (c *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
-	if err := c.checkInit(); err != nil {
-		return err
+func (r *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
+	if r.schema.HasNulls {
+		if err := r.seekPresent(indexEntry); err != nil {
+			return err
+		}
 	}
-
-	// from start
-	if indexEntry == nil {
-		if c.schema.HasNulls {
-			if err := c.present.Seek(0, 0, 0, 0); err != nil {
-				return err
+	var dataChunk, dataChunkOffset, dataOffset uint64
+	if indexEntry != nil {
+		pos := indexEntry.Positions
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			if r.schema.HasNulls {
+				dataChunkOffset = pos[3]
+				dataOffset = pos[4]
+			} else {
+				dataChunkOffset = pos[0]
+				dataOffset = pos[1]
+			}
+		} else {
+			if r.schema.HasNulls {
+				dataChunk = pos[4]
+				dataChunkOffset = pos[5]
+				dataOffset = pos[6]
+			} else {
+				dataChunk = pos[0]
+				dataChunkOffset = pos[1]
+				dataOffset = pos[2]
 			}
 		}
-		if err := c.data.Seek(0, 0, 0); err != nil {
-			return err
-		}
-		return nil
 	}
-
-	pos := indexEntry.GetPositions()
-
-	if !c.schema.HasNulls {
-		if c.opts.CompressionKind == pb.CompressionKind_NONE {
-			return c.data.Seek(pos[0], 0, pos[1])
-		}
-		return c.data.Seek(pos[0], pos[1], pos[2])
-	}
-
-	if c.opts.CompressionKind == pb.CompressionKind_NONE {
-		if err := c.present.Seek(pos[0], 0, pos[1], pos[2]); err != nil {
-			return err
-		}
-		if err := c.data.Seek(pos[3], 0, pos[4]); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	if err := c.present.Seek(pos[0], pos[1], pos[2], pos[3]); err != nil {
-		return err
-	}
-	if err := c.data.Seek(pos[4], pos[5], pos[6]); err != nil {
-		return err
-	}
-	return nil
+	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset)
 }
 
 func (c *byteReader) Seek(rowNumber uint64) error {
 	if !c.opts.HasIndex {
 		return errors.New("no index")
+	}
+	if err := c.checkInit(); err != nil {
+		return err
 	}
 
 	entry, offset := c.reader.getIndexEntryAndOffset(rowNumber)

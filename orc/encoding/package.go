@@ -3,6 +3,7 @@ package encoding
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -47,6 +48,15 @@ type Encoder interface {
 type BufferedReader interface {
 	io.ByteReader
 	io.Reader
+}
+
+type DateDecoder interface {
+	Decode(in BufferedReader) (dates []api.Date, err error)
+}
+
+type IntDecoder interface {
+	DecodeInt(in BufferedReader) (values []int64, err error)
+	DecodeUInt(in BufferedReader) (values []uint64, err error)
 }
 
 /*type intRunLengthV1 struct {

@@ -58,6 +58,25 @@ func (r *reader) getIndexEntryAndOffset(rowNumber uint64) (entry *pb.RowIndexEnt
 	return
 }
 
+func (r *reader) seekPresent(indexEntry *pb.RowIndexEntry) error  {
+	var chunk, chunkOffset, offset1, offset2 uint64
+	if indexEntry != nil {
+		pos := indexEntry.Positions
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+				chunkOffset = pos[0]
+				offset1 = pos[1]
+				offset2 = pos[2]
+		} else {
+				chunk = pos[0]
+				chunkOffset = pos[1]
+				offset1 = pos[2]
+				offset2 = pos[3]
+		}
+	}
+	return r.present.Seek(chunk, chunkOffset, offset1, offset2)
+}
+
+
 func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File) (Reader, error) {
 	switch schema.Kind {
 	case pb.Type_SHORT:

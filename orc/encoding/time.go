@@ -5,8 +5,12 @@ import (
 	"github.com/patrickhuang888/goorc/orc/api"
 )
 
+func NewDateV2Encoder(doPositioning bool) Encoder {
+	return &dateV2Encoder{NewIntRLV2(true, doPositioning)}
+}
+
 type dateV2Encoder struct {
-	intEncoder *intRLV2Encoder
+	intEncoder Encoder
 }
 
 func (e *dateV2Encoder) Encode(v interface{}, out *bytes.Buffer) error {
@@ -24,4 +28,23 @@ func (e *dateV2Encoder) Flush(out *bytes.Buffer) error {
 
 func (e dateV2Encoder) GetPosition() []uint64 {
 	return e.intEncoder.GetPosition()
+}
+
+func NewDateV2DeCoder() DateDecoder {
+	return &dateV2Decoder{NewIntDecoder(true)}
+}
+
+type dateV2Decoder struct {
+	intDecoder IntDecoder
+}
+
+func (d *dateV2Decoder) Decode(in BufferedReader) (dates []api.Date, err error) {
+	days, err := d.intDecoder.DecodeInt(in)
+	if err != nil {
+		return
+	}
+	for _, v := range days {
+		dates = append(dates, api.FromDays(int32(v)))
+	}
+	return
 }

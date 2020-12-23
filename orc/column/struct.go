@@ -45,34 +45,17 @@ func (c *structReader) Next() (value api.Value, err error) {
 }
 
 func (r *structReader) seek(indexEntry *pb.RowIndexEntry) error {
-	if err := r.checkInit(); err != nil {
-		return err
-	}
-
 	if r.schema.HasNulls {
-		var presentChunk, presentChunkOffset, presentOffset1, presentOffset2 uint64
-		if indexEntry != nil {
-			pp := indexEntry.Positions
-
-			if r.opts.CompressionKind == pb.CompressionKind_NONE {
-				presentChunkOffset = pp[0]
-				presentOffset1 = pp[1]
-				presentOffset2 = pp[2]
-			} else {
-				presentChunk = pp[0]
-				presentChunkOffset = pp[1]
-				presentOffset1 = pp[2]
-				presentOffset2 = pp[3]
-			}
-		}
-		if err := r.present.Seek(presentChunk, presentChunkOffset, presentOffset1, presentOffset2); err != nil {
-			return err
-		}
+		return r.seekPresent(indexEntry)
 	}
 	return nil
 }
 
 func (r *structReader) Seek(rowNumber uint64) error {
+	if err := r.checkInit(); err != nil {
+		return err
+	}
+
 	if !r.opts.HasIndex {
 		return errors.New("no index")
 	}

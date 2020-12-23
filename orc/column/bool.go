@@ -24,7 +24,7 @@ func newBoolWriter(schema *api.TypeDescription, opts *config.WriterOptions) Writ
 		indexStats = &pb.ColumnStatistics{BucketStatistics: &pb.BucketStatistics{Count: make([]uint64, 1)},
 			HasNull: new(bool), NumberOfValues: new(uint64), BytesOnDisk: new(uint64)}
 		if schema.HasNulls {
-			*indexStats.HasNull= true
+			*indexStats.HasNull = true
 		}
 		index = &pb.RowIndex{}
 	}
@@ -193,6 +193,10 @@ func (r *boolReader) Next() (value api.Value, err error) {
 }
 
 func (r *boolReader) Seek(rowNumber uint64) error {
+	if err := r.checkInit(); err != nil {
+		return err
+	}
+
 	if !r.opts.HasIndex {
 		return errors.New("no index")
 	}
@@ -210,49 +214,40 @@ func (r *boolReader) Seek(rowNumber uint64) error {
 }
 
 func (r *boolReader) seek(indexEntry *pb.RowIndexEntry) error {
-	if err := r.checkInit(); err != nil {
-		return err
+	if r.schema.HasNulls {
+		if err := r.seekPresent(indexEntry); err != nil {
+			return err
+		}
 	}
 
-	// from start
-	if indexEntry == nil {
-		if r.schema.HasNulls {
-			if err := r.present.Seek(0, 0, 0, 0); err != nil {
-				return err
+	var dataChunk, dataChunkOffset, dataOffset1, dataOffset2 uint64
+	if indexEntry != nil {
+		pos := indexEntry.Positions
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			if r.schema.HasNulls {
+				dataChunkOffset = pos[3]
+				dataOffset1 = pos[4]
+				dataOffset2 = pos[5]
+			} else {
+				dataChunkOffset = pos[0]
+				dataOffset1 = pos[1]
+				dataOffset2 = pos[2]
+			}
+		} else {
+			if r.schema.HasNulls {
+				dataChunk = pos[4]
+				dataChunkOffset = pos[5]
+				dataOffset1 = pos[6]
+				dataOffset2 = pos[7]
+			} else {
+				dataChunk = pos[0]
+				dataChunkOffset = pos[1]
+				dataOffset1 = pos[2]
+				dataOffset2 = pos[3]
 			}
 		}
-		if err := r.data.Seek(0, 0, 0, 0); err != nil {
-			return err
-		}
-		return nil
 	}
-
-	pos := indexEntry.GetPositions()
-
-	if !r.schema.HasNulls { // no present
-		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-			return r.data.Seek(pos[0], 0, pos[1], pos[2])
-		}
-		return r.data.Seek(pos[0], pos[1], pos[2], pos[3])
-	}
-
-	if r.opts.CompressionKind == pb.CompressionKind_NONE {
-		if err := r.present.Seek(pos[0], 0, pos[1], pos[2]); err != nil {
-			return err
-		}
-		if err := r.data.Seek(pos[3], 0, pos[4], pos[5]); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	if err := r.present.Seek(pos[0], pos[1], pos[2], pos[3]); err != nil {
-		return err
-	}
-	if err := r.data.Seek(pos[4], pos[5], pos[6], pos[7]); err != nil {
-		return err
-	}
-	return nil
+	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset1, dataOffset2)
 }
 
 func (r *boolReader) Close() {

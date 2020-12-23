@@ -79,57 +79,35 @@ func (r *floatReader) seek(indexEntry *pb.RowIndexEntry) error {
 		return err
 	}
 
-	// from start
-	if indexEntry == nil {
-		if r.schema.HasNulls {
-			if err := r.present.Seek(0, 0, 0, 0); err != nil {
-				return err
+	if r.schema.HasNulls {
+		if err := r.seekPresent(indexEntry); err != nil {
+			return err
+		}
+	}
+	var dataChunk, dataChunkOffset, dataOffset uint64
+	if indexEntry != nil {
+		pos := indexEntry.Positions
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			if r.schema.HasNulls {
+				dataChunkOffset = pos[3]
+				dataOffset = pos[4]
+			} else {
+				dataChunkOffset = pos[0]
+				dataOffset = pos[1]
+			}
+		} else {
+			if r.schema.HasNulls {
+				dataChunk = pos[4]
+				dataChunkOffset = pos[5]
+				dataOffset = pos[6]
+			} else {
+				dataChunk = pos[0]
+				dataChunkOffset = pos[1]
+				dataOffset = pos[2]
 			}
 		}
-		if err := r.data.Seek(0, 0, 0); err != nil {
-			return err
-		}
-		return nil
 	}
-
-	var presentChunk, presentChunkOffset, presentOffset1, presentOffset2 uint64
-	var dataChunk, dataChunkOffset, dataOffset uint64
-	pos := indexEntry.GetPositions()
-	if r.opts.CompressionKind == pb.CompressionKind_NONE {
-		if r.schema.HasNulls {
-			presentChunkOffset = pos[0]
-			presentOffset1 = pos[1]
-			presentOffset2 = pos[2]
-			dataChunkOffset = pos[3]
-			dataOffset = pos[4]
-		} else {
-			dataChunkOffset = pos[0]
-			dataOffset = pos[1]
-		}
-	} else {
-		if r.schema.HasNulls {
-			presentChunk = pos[0]
-			presentChunkOffset = pos[1]
-			presentOffset1 = pos[2]
-			presentOffset2 = pos[3]
-			dataChunk = pos[4]
-			dataChunkOffset = pos[5]
-			dataOffset = pos[6]
-		} else {
-			dataChunk = pos[0]
-			dataChunkOffset = pos[1]
-			dataOffset = pos[2]
-		}
-	}
-	if r.schema.HasNulls {
-		if err := r.present.Seek(presentChunk, presentChunkOffset, presentOffset1, presentOffset2); err != nil {
-			return err
-		}
-	}
-	if err := r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
-		return err
-	}
-	return nil
+	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset)
 }
 
 func (c floatReader) checkInit() error {

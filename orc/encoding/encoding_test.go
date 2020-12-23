@@ -244,18 +244,17 @@ func TestDouble(test *testing.T) {
 func TestIntRunLengthV2_Delta(t *testing.T) {
 	var err error
 	enc := NewIntRLV2(false, true).(*intRLV2Encoder)
-	dec := &IntRLV2Decoder{Signed: false}
+	dec := NewIntDecoder(false).(*intRLV2Decoder)
 
 	uvs := []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
 	bs := []byte{0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46}
 	buf := bytes.NewBuffer(bs)
-	vector, err := dec.Decode(buf)
+	uvector, err := dec.DecodeUInt(buf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	uvalues := vector.([]uint64)
-	assert.Equal(t, 10, len(uvalues))
-	assert.EqualValues(t, uvs, uvalues)
+	assert.Equal(t, 10, len(uvector))
+	assert.EqualValues(t, uvs, uvector)
 
 	buf.Reset()
 	for i, v := range uvs {
@@ -281,10 +280,10 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	if err = enc.Flush(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	dec.Signed= true
-	vector, err = dec.Decode(buf)
+	dec.signed= true
+	vector, err := dec.DecodeInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, vs, vector.([]int64))
+	assert.Equal(t, vs, vector)
 
 	// fixed delta 0
 	vs = []int64{-2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2}
@@ -296,10 +295,10 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	dec.Signed= true
-	vector, err = dec.Decode(buf)
+	dec.signed= true
+	vector, err = dec.DecodeInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, vs, vector.([]int64))
+	assert.Equal(t, vs, vector)
 
 	// over 512 numbers with uint
 	logger.Info("encoding 1000 uint...")
@@ -315,17 +314,17 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	uvalues = uvalues[:0]
-	dec.Signed= false
+	var uvalues []uint64
+	dec.signed= false
 	for {
-		vector, err = dec.Decode(buf)
+		uvector, err = dec.DecodeUInt(buf)
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 			t.Fatalf("%+v", err)
 		}
-		uvalues = append(uvalues, vector.([]uint64)...)
+		uvalues = append(uvalues, uvector...)
 	}
 	assert.Equal(t, uvs, uvalues)
 
@@ -343,23 +342,23 @@ func TestIntRunLengthV2_Delta(t *testing.T) {
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
 
-	dec.Signed= true
+	dec.signed= true
 	var values []int64
 	for {
-		vector, err = dec.Decode(buf)
+		vector, err = dec.DecodeInt(buf)
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 		}
-		values = append(values, vector.([]int64)...)
+		values = append(values, vector...)
 	}
 	assert.Equal(t, vs, values)
 }
 
 func TestIntRunLengthV2Direct(t *testing.T) {
 	enc := NewIntRLV2(false, false).(*intRLV2Encoder)
-	dec := &IntRLV2Decoder{Signed: false}
+	dec := NewIntDecoder(false).(*intRLV2Decoder)
 	buf := &bytes.Buffer{}
 
 	//uint
@@ -374,9 +373,9 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	assert.Equal(t, encoded, buf.Bytes())
-	vector, err := dec.Decode(buf)
+	uvector, err := dec.DecodeUInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, uvs, vector.([]uint64))
+	assert.Equal(t, uvs, uvector)
 
 	uvs = []uint64{999, 900203003, 688888888, 857340643}
 	buf.Reset()
@@ -387,9 +386,9 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	vector, err = dec.Decode(buf)
+	uvector, err = dec.DecodeUInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, uvs, vector.([]uint64))
+	assert.Equal(t, uvs, uvector)
 
 	uvs = []uint64{6, 7, 8} // width 4
 	enc.values = uvs
@@ -399,11 +398,11 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	vector, err = dec.Decode(buf)
+	uvector, err = dec.DecodeUInt(buf)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, uvs, vector.([]uint64))
+	assert.Equal(t, uvs, uvector)
 
 	// int
 	enc.signed = true
@@ -418,10 +417,10 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	dec.Signed= true
-	vector, err = dec.Decode(buf)
+	dec.signed= true
+	vector, err := dec.DecodeInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, values, vector.([]int64))
+	assert.Equal(t, values, vector)
 
 	values = []int64{6, 7, 8} // width 5 after zigzag ?
 	uvs = uvs[:0]
@@ -435,9 +434,9 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	vector, err = dec.Decode(buf)
+	vector, err = dec.DecodeInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, values, vector.([]int64))
+	assert.Equal(t, values, vector)
 
 	// test width 16
 	uvalue := uint64(0x5ff)
@@ -447,10 +446,10 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	assert.Nil(t, err)
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	dec.Signed= false
-	vector, err = dec.Decode(buf)
+	dec.signed= false
+	uvector, err = dec.DecodeUInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, []uint64{uvalue}, vector.([]uint64))
+	assert.Equal(t, []uint64{uvalue}, uvector)
 
 	// test width 11
 	uvs = []uint64{0b100_0000_0001, 0b100_0000_0011}
@@ -462,16 +461,16 @@ func TestIntRunLengthV2Direct(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	dec.Signed= false
-	if vector, err = dec.Decode(buf); err != nil {
+	dec.signed= false
+	if uvector, err = dec.DecodeUInt(buf); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	assert.Equal(t, uvs, vector.([]uint64))
+	assert.Equal(t, uvs, uvector)
 }
 
 func TestIntRunLengthV2Patch(t *testing.T) {
 	enc := NewIntRLV2(true, false)
-	dec := &IntRLV2Decoder{Signed: true}
+	dec := NewIntDecoder(true).(*intRLV2Decoder)
 
 	values := []int64{2030, 2000, 2020, 1000000, 2040, 2050, 2060, 2070, 2080, 2090, 2100, 2110, 2120, 2130,
 		2140, 2150, 2160, 2170, 2180, 2190}
@@ -479,9 +478,9 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 		0x64, 0x6e, 0x78, 0x82, 0x8c, 0x96, 0xa0, 0xaa, 0xb4, 0xbe, 0xfc, 0xe8}
 	buf := bytes.NewBuffer(bs)
 
-	vector, err := dec.Decode(buf)
+	vector, err := dec.DecodeInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, values, vector.([]int64))
+	assert.Equal(t, values, vector)
 
 	buf.Reset()
 	for _, v := range values {
@@ -503,23 +502,23 @@ func TestIntRunLengthV2Patch(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	if vector, err = dec.Decode(buf); err != nil {
+	if vector, err = dec.DecodeInt(buf); err != nil {
 		t.Fatalf("decoding error %+v", err)
 	}
-	assert.Equal(t, values, vector.([]int64))
+	assert.Equal(t, values, vector)
 }
 
 func TestIntRunLengthV2(t *testing.T) {
 	enc := NewIntRLV2(false, false).(*intRLV2Encoder)
-	dec := IntRLV2Decoder{Signed: false}
+	dec := NewIntDecoder(false).(*intRLV2Decoder)
 	buf := &bytes.Buffer{}
 
 	//short repeat
 	bs := []byte{0x0a, 0x27, 0x10}
-	vector, err := dec.Decode(bytes.NewBuffer(bs))
+	uvector, err := dec.DecodeUInt(bytes.NewBuffer(bs))
 	assert.Nil(t, err)
-	assert.Equal(t, 5, len(vector.([]uint64)))
-	assert.Equal(t, uint64(10000), vector.([]uint64)[0])
+	assert.Equal(t, 5, len(uvector))
+	assert.Equal(t, uint64(10000), uvector[0])
 
 	enc.signed = true
 	values := make([]int64, 10)
@@ -532,20 +531,20 @@ func TestIntRunLengthV2(t *testing.T) {
 	}
 	err = enc.Flush(buf)
 	assert.Nil(t, err)
-	dec.Signed= true
-	vector, err = dec.Decode(buf)
+	dec.signed= true
+	vector, err := dec.DecodeInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, values, vector.([]int64))
+	assert.Equal(t, values, vector)
 
 	// direct
 	uvalues := []uint64{23713, 43806, 57005, 48879}
 	bs = []byte{0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef}
 	enc.signed = false
 	buf = bytes.NewBuffer(bs)
-	dec.Signed= false
-	vector, err = dec.Decode(buf)
+	dec.signed= false
+	uvector, err = dec.DecodeUInt(buf)
 	assert.Nil(t, err)
-	assert.Equal(t, uvalues, vector.([]uint64))
+	assert.Equal(t, uvalues, uvector)
 }
 
 func TestZigzag(t *testing.T) {

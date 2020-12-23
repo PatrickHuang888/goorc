@@ -2,6 +2,7 @@ package column
 
 import (
 	"errors"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"io"
 
 	"github.com/patrickhuang888/goorc/orc/api"
@@ -10,7 +11,7 @@ import (
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
-func newDateV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+func NewDateV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
 	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
 		DateStatistics: &pb.DateStatistics{Minimum: new(int32), Maximum: new(int32)}}
 	var present *stream.Writer
@@ -128,15 +129,17 @@ func (w dateV2Writer) Size() int {
 	return w.data.Size()
 }
 
+func NewDateV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+	return &dateV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
+}
 
 type dateV2Reader struct {
 	*reader
-	present *stream.BoolReader
-	data    *stream.IntRLV2Reader
+	data stream.DateReader
 }
 
-func (c *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
-	ic, err := c.f.Clone()
+func (r *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+	ic, err := r.f.Clone()
 	if err != nil {
 		return err
 	}
@@ -144,108 +147,91 @@ func (c *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 		return err
 	}
 
-	if c.schema.Encoding != pb.ColumnEncoding_DIRECT_V2 {
+	if r.schema.Encoding != pb.ColumnEncoding_DIRECT_V2 {
 		return errors.New("encoding error")
 	}
 
 	if info.GetKind() == pb.Stream_PRESENT {
-		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
 		return nil
 	}
 	if info.GetKind() == pb.Stream_DATA {
-		c.data = stream.NewIntRLV2Reader(c.opts, info, startOffset, true, ic)
+		r.data = stream.NewDateV2Reader(r.opts, info, startOffset, ic)
 		return err
 	}
 	return errors.New("stream kind unknown")
 }
 
-func (c *dateV2Reader) Next() (value api.Value, err error) {
-	/*vector := (*vec).([]api.Date)
-	vector = vector[:0]
+func (r *dateV2Reader) Next() (value api.Value, err error) {
+	if err = r.checkInit(); err != nil {
+		return
+	}
 
-	if !pFromParent {
-		if err = c.nextPresents(presents); err != nil {
+	if r.schema.HasNulls {
+		var p bool
+		if p, err = r.present.Next(); err != nil {
+			return
+		}
+		value.Null = !p
+	}
+
+	if !value.Null {
+		value.V, err = r.data.Next()
+		if err != nil {
 			return
 		}
 	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(*presents) == 0 || (len(*presents) != 0 && (*presents)[i]) {
-			var v int64
-			v, err = c.data.NextInt64()
-			if err != nil {
-				return
-			}
-			vector = append(vector, api.FromDays(v))
-		} else {
-			vector = append(vector, api.Date{})
-		}
-
-		c.cursor++
-	}
-
-	*vec = vector
-	rows = len(vector)*/
 	return
 }
 
-func (c *dateV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
-	pos := indexEntry.GetPositions()
-
-	if c.present == nil {
-		if c.opts.CompressionKind == pb.CompressionKind_NONE {
-			return c.data.Seek(pos[0], 0, pos[1])
-		}
-
-		return c.data.Seek(pos[0], pos[1], pos[2])
-	}
-
-	if c.opts.CompressionKind == pb.CompressionKind_NONE {
-		if c.present != nil {
-			if err := c.present.Seek(pos[0], 0, pos[1], pos[2]); err != nil {
-				return err
-			}
-		}
-		if err := c.data.Seek(pos[3], 0, pos[4]); err != nil {
+func (r *dateV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
+	if r.schema.HasNulls {
+		if err := r.seekPresent(indexEntry); err != nil {
 			return err
 		}
-		return nil
 	}
-
-	if err := c.present.Seek(pos[0], pos[1], pos[2], pos[3]); err != nil {
-		return err
+	var dataChunk, dataChunkOffset, dataOffset uint64
+	if indexEntry != nil {
+		pos := indexEntry.Positions
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			if r.schema.HasNulls {
+				dataChunkOffset = pos[3]
+				dataOffset = pos[4]
+			} else {
+				dataChunkOffset = pos[0]
+				dataOffset = pos[1]
+			}
+		} else {
+			if r.schema.HasNulls {
+				dataChunk = pos[4]
+				dataChunkOffset = pos[5]
+				dataOffset = pos[6]
+			} else {
+				dataChunk = pos[0]
+				dataChunkOffset = pos[1]
+				dataOffset = pos[2]
+			}
+		}
 	}
-	if err := c.data.Seek(pos[4], pos[5], pos[6]); err != nil {
-		return err
-	}
-	return nil
+	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset)
 }
 
-func (c *dateV2Reader) Seek(rowNumber uint64) error {
-	if !c.opts.HasIndex {
+func (r *dateV2Reader) Seek(rowNumber uint64) error {
+	if err := r.checkInit(); err != nil {
+		return err
+	}
+	if !r.opts.HasIndex {
 		return errors.New("no index")
 	}
 
-	stride := rowNumber / uint64(c.opts.IndexStride)
-	offsetInStride := rowNumber % (stride * uint64(c.opts.IndexStride))
-
-	if err := c.seek(c.index.GetEntry()[stride]); err != nil {
+	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err := r.seek(entry); err != nil {
 		return err
 	}
-
-	//c.cursor = stride * c.opts.IndexStride
-
-	for i := 0; i < int(offsetInStride); i++ {
-		if c.present != nil {
-			if _, err := c.present.Next(); err != nil {
-				return err
-			}
-		}
-		if _, err := c.data.NextInt64(); err != nil {
+	for i := 0; i < int(offset); i++ {
+		if _, err := r.Next(); err != nil {
 			return err
 		}
-		//c.cursor++
 	}
 	return nil
 }
@@ -255,6 +241,16 @@ func (c *dateV2Reader) Close() {
 		c.present.Close()
 	}
 	c.data.Close()
+}
+
+func (r dateV2Reader) checkInit() error {
+	if r.data == nil {
+		return errors.New("stream data not initialized!")
+	}
+	if r.schema.HasNulls && r.present == nil {
+		return errors.New("stream present not initialized!")
+	}
+	return nil
 }
 
 type timestampWriter struct {

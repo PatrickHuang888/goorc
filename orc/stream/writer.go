@@ -223,12 +223,14 @@ func NewFloatWriter(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions, 
 
 	if is64 {
 		return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewDoubleEncoder()}
-	}else {
+	} else {
 		return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewFloatEncoder()}
 	}
 }
 
-func NewDateV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer  {
+func NewDateV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions) *Writer {
+	info := &pb.Stream{Kind: &kind, Column: &id, Length: new(uint64)}
+
 	buf := bytes.NewBuffer(make([]byte, opts.ChunkSize))
 	buf.Reset()
 
@@ -238,6 +240,5 @@ func NewDateV2Writer(id uint32, kind pb.Stream_Kind, opts *config.WriterOptions)
 		cbuf.Reset()
 	}
 
-	// return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewDate}
-	return nil
+	return &Writer{&writer{info: info, buf: buf, compressedBuf: cbuf, opts: opts}, encoding.NewDateV2Encoder(opts.WriteIndex)}
 }

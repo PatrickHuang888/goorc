@@ -79,20 +79,20 @@ func (r *reader) Read(p []byte) (n int, err error) {
 	return
 }
 
-// offset seek to specific chunk and cuncompressedOffset in that chunk
+// seek seeking to specific chunk and chunkOffset in that chunk
 // if NONE_COMPRESSION, offset just stream offset, and uncompressedOffset should be 0
-func (r *reader) seek(chunkOffset uint64, offset uint64) error {
+func (r *reader) seek(chunk uint64, chunkOffset uint64) error {
 	logger.Tracef("seeking, stream %s of column %d seek to chunk %d, decompressed offset %d",
-		r.info.GetKind().String(), r.info.GetColumn(), chunkOffset, offset)
+		r.info.GetKind().String(), r.info.GetColumn(), chunk, chunkOffset)
 	r.buf.Reset()
-	if _, err := r.in.Seek(int64(r.start+chunkOffset), io.SeekStart); err != nil {
+	if _, err := r.in.Seek(int64(r.start+chunk), io.SeekStart); err != nil {
 		return err
 	}
-	r.readLength = chunkOffset
+	r.readLength = chunk
 	if err := r.readAChunk(); err != nil {
 		return err
 	}
-	r.buf.Next(int(offset))
+	r.buf.Next(int(chunkOffset))
 	return nil
 }
 
