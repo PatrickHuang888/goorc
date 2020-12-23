@@ -21,11 +21,6 @@ type Value struct {
 	V    interface{}
 }
 
-type ByteValue struct {
-	Null bool
-	V    byte
-}
-
 /*func (cv ColumnVector) check() error {
 	if cv.Kind == pb.Type_STRUCT && cv.Presents != nil {
 		var presentCounts int
@@ -93,31 +88,39 @@ func ToDays(d Date) int32 {
 	return int32(s.Hours() / 24)
 }
 
-// todo: timezone
 type Timestamp struct {
+	Loc *time.Location
 	Seconds int64
 	Nanos   uint32
 }
 
-func (ts Timestamp) Time(loc *time.Location) time.Time {
+func (t Timestamp) Time() time.Time {
+	loc:= t.Loc
 	if loc == nil {
 		loc = time.UTC
 	}
 	base := time.Date(2015, time.January, 1, 0, 0, 0, 0, loc).Unix()
-	return time.Unix(base+ts.Seconds, int64(ts.Nanos)).In(loc)
+	return time.Unix(base+t.Seconds, int64(t.Nanos)).In(loc)
 }
 
-func (ts Timestamp) GetMilliSeconds() int64 {
-	// todo:
-	return 0
+func (t Timestamp) GetMilliSeconds() int64 {
+	loc:= t.Loc
+	if loc==nil {
+		loc= time.UTC
+	}
+	var ms int64
+	baseSec := time.Date(2015, time.January, 1, 0, 0, 0, 0, loc).Unix()
+	ms = (t.Seconds - baseSec) * 1_000
+	ms += int64(t.Nanos / 1_000)
+	return ms
 }
 
-func (ts Timestamp) GetMilliSecondsUtc() int64 {
-	// todo:
-	return 0
+func (t Timestamp) GetMilliSecondsUtc() int64 {
+	base := time.Date(2015, time.January, 1, 0, 0, 0, 0, time.UTC).Unix()
+	return base+t.Time().Unix()+int64(t.Nanos/1_000)
 }
 
 func GetTimestamp(t time.Time) Timestamp {
 	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	return Timestamp{t.UTC().Unix() - base, uint32(t.Nanosecond())}
+	return Timestamp{t.Location(), t.Unix() - base, uint32(t.Nanosecond())}
 }

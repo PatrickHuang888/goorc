@@ -3,6 +3,7 @@ package column
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/common"
@@ -190,7 +191,7 @@ func TestBool(t *testing.T) {
 	ropts.IndexStride = 130
 	ropts.HasIndex = true
 
-	reader := newBoolReader(&schema, &ropts, f).(*boolReader)
+	reader := NewBoolReader(&schema, &ropts, f).(*boolReader)
 	reader.index = writer.index
 	err := reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
@@ -298,7 +299,7 @@ func TestStringDirectV2(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	reader := newStringDirectV2Reader(&ropts, &schema, f)
+	reader := NewStringDirectV2Reader(&ropts, &schema, f)
 	err := reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
 	err = reader.InitStream(writer.length.Info(), writer.data.Info().GetLength())
@@ -344,7 +345,7 @@ func TestStringDirectV2Index(t *testing.T) {
 	ropts := config.DefaultReaderOptions()
 	ropts.IndexStride = 200
 	ropts.HasIndex = true
-	reader := newStringDirectV2Reader(&ropts, &schema, f).(*stringDirectV2Reader)
+	reader := NewStringDirectV2Reader(&ropts, &schema, f).(*stringDirectV2Reader)
 	reader.index = writer.index
 	err := reader.InitStream(writer.data.Info(), 0)
 	assert.Nil(t, err)
@@ -391,7 +392,7 @@ func TestByteWithPresents(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	reader := newByteReader(schema, &ropts, f)
+	reader := NewByteReader(schema, &ropts, f)
 
 	if err := reader.InitStream(writer.present.Info(), 0); err != nil {
 		t.Fatalf("%+v", err)
@@ -456,7 +457,7 @@ func TestByteOnIndex(t *testing.T) {
 	ropts := config.DefaultReaderOptions()
 	ropts.HasIndex = true
 	ropts.IndexStride = indexStride
-	reader := newByteReader(schema, &ropts, f).(*byteReader)
+	reader := NewByteReader(schema, &ropts, f).(*byteReader)
 	reader.index = writer.index
 	if err := reader.InitStream(writer.data.Info(), 0); err != nil {
 		t.Fatalf("%+v", err)
@@ -538,7 +539,7 @@ func TestByteOnIndexWithPresents(t *testing.T) {
 	ropts.HasIndex = true
 	ropts.IndexStride = indexStride
 
-	reader := newByteReader(schema, &ropts, f).(*byteReader)
+	reader := NewByteReader(schema, &ropts, f).(*byteReader)
 	reader.index = writer.index
 	if err := reader.InitStream(writer.present.Info(), 0); err != nil {
 		t.Fatalf("%+v", err)
@@ -743,71 +744,58 @@ func TestColumnDateWithPresents(t *testing.T) {
 	}
 	assert.Equal(t, presents, batch.Presents[:100])
 	assert.Equal(t, values, batch.Vector)
-}
+}*/
 
 func TestColumnTimestampWithPresents(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_TIMESTAMP, HasNulls: true}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_TIMESTAMP, HasNulls: true}
+	wopts := config.DefaultWriterOptions()
 
 	rows := 100
 
-	vector := make([]orc.Timestamp, rows)
+	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
-		vector[i] = orc.GetTimestamp(time.Now())
+		values[i].V = api.GetTimestamp(time.Now())
 	}
+	values[0].Null = true
+	values[0].V= nil
+	values[45].Null = true
+	values[45].V= nil
+	values[99].Null = true
+	values[99].V= nil
 
-	presents := make([]bool, rows)
-	for i := 0; i < rows; i++ {
-		presents[i] = true
+	writer := NewTimestampV2Writer(schema, &wopts).(*timestampWriter)
+	for _, v := range values {
+		if err:=writer.Write(v);err!=nil {
+			t.Fatalf("%+v", err)
+		}
 	}
-	presents[0] = false
-	presents[45] = false
-	presents[99] = false
+	err:=writer.Flush()
+	assert.Nil(t, err)
 
-	vector[0]= orc.Timestamp{}
-	vector[45]= orc.Timestamp{}
-	vector[99]= orc.Timestamp{}
+	bb := make([]byte, 500)
+	f := orcio.NewMockFile(bb)
 
-	batch.Presents = presents
-	batch.Vector = vector
-
-	writer := newTimestampDirectV2Writer(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, rows, n)
-
-	ropts := orc.DefaultReaderOptions()
-	batch = schema.CreateReaderBatch(ropts)
-
-	presentBs := &bufSeeker{writer.present.buf}
-	pKind := pb.Stream_PRESENT
-	pLength_ := uint64(writer.present.buf.Len())
-	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
-
-	dataBs := &bufSeeker{writer.data.buf}
-	dKind := pb.Stream_DATA
-	dLength := uint64(writer.data.buf.Len())
-	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := orc.newLongV2StreamReader(ropts, dInfo, 0, dataBs, true)
-
-	secondaryBs := &bufSeeker{writer.secondary.buf}
-	sKind := pb.Stream_SECONDARY
-	sLength := uint64(writer.secondary.buf.Len())
-	sInfo := &pb.Stream{Column: &schema.Id, Kind: &sKind, Length: &sLength}
-	secondary := orc.newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, false)
-
-	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &orc.timestampV2Reader{treeReader: cr, data: data, secondary: secondary}
-
-	err = reader.next(batch)
-	if err != nil {
+	if _, err := writer.WriteOut(f); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	assert.Equal(t, presents, batch.Presents)
-	assert.Equal(t, vector, batch.Vector)
-}*/
+	ropts := config.DefaultReaderOptions()
+	reader:= NewTimestampV2Reader(schema, &ropts, f, nil)
+
+	err= reader.InitStream(writer.present.Info(), 0)
+	assert.Nil(t, err)
+	err = reader.InitStream(writer.data.Info(), writer.present.Info().GetLength())
+	assert.Nil(t, err)
+	err= reader.InitStream(writer.secondary.Info(), writer.present.Info().GetLength()+writer.data.Info().GetLength())
+	assert.Nil(t, err)
+
+	var vector []api.Value
+	for i:=0; i<rows; i++ {
+		v, err:= reader.Next()
+		if err!=nil {
+			t.Fatalf("%+v", err)
+		}
+		vector= append(vector, v)
+	}
+	assert.Equal(t, values, vector)
+}

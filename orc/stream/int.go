@@ -9,6 +9,7 @@ import (
 	"github.com/pkg/errors"
 )
 
+// refactoring: type public and new factory func
 type IntRLV2Reader struct {
 	stream *reader
 
@@ -17,12 +18,12 @@ type IntRLV2Reader struct {
 	uvalues []uint64
 	pos     int
 
-	decoder *encoding.IntRLV2Decoder
+	decoder encoding.IntDecoder
 }
 
 func NewIntRLV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, signed bool, in io.File) *IntRLV2Reader {
 	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in},
-		decoder: &encoding.IntRLV2Decoder{Signed: signed}, signed: signed}
+		decoder: encoding.NewIntDecoder(signed), signed: signed}
 }
 
 func (r *IntRLV2Reader) NextInt64() (v int64, err error) {

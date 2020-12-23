@@ -64,6 +64,10 @@ func (r *floatReader) Next() (value api.Value, err error) {
 }
 
 func (r *floatReader) Seek(rowNumber uint64) error {
+	if err := r.checkInit(); err != nil {
+		return err
+	}
+
 	if !r.opts.HasIndex {
 		return errors.New("no index")
 	}
@@ -81,10 +85,6 @@ func (r *floatReader) Seek(rowNumber uint64) error {
 }
 
 func (r *floatReader) seek(indexEntry *pb.RowIndexEntry) error {
-	if err := r.checkInit(); err != nil {
-		return err
-	}
-
 	if r.schema.HasNulls {
 		if err := r.seekPresent(indexEntry); err != nil {
 			return err
@@ -218,13 +218,14 @@ func (w *floatWriter) Write(value api.Value) error {
 		if !value.Null {
 			v := value.V.(float64)
 			*w.indexStats.DoubleStatistics.Sum += v
-			*w.indexStats.NumberOfValues++
 			if v < *w.indexStats.DoubleStatistics.Minimum {
 				*w.indexStats.DoubleStatistics.Minimum = v
 			}
 			if v > *w.indexStats.DoubleStatistics.Maximum {
 				*w.indexStats.DoubleStatistics.Maximum = v
 			}
+
+			*w.indexStats.NumberOfValues++
 		}
 	}
 	return nil
