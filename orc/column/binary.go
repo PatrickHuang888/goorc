@@ -190,17 +190,13 @@ func (r *binaryV2Reader) Next() (value api.Value, err error) {
 		value.Null = !p
 	}
 
-	hasValue := true
-	if r.schema.HasNulls && value.Null {
-		hasValue = false
-	}
-	if hasValue {
+	if !value.Null {
 		var l uint64
 		l, err = r.length.NextUInt64()
 		if err != nil {
 			return
 		}
-		if value.V, err = r.data.NextString(l); err != nil {
+		if value.V, err = r.data.NextBytes(l); err != nil {
 			return
 		}
 	}

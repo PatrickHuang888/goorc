@@ -2,16 +2,14 @@ package column
 
 import (
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
+	"github.com/patrickhuang888/goorc/pb/pb"
 	"io"
 	"strings"
-
-	"github.com/golang/protobuf/proto"
-	"github.com/patrickhuang888/goorc/pb/pb"
-	"github.com/pkg/errors"
 )
 
 type reader struct {
@@ -76,146 +74,3 @@ func (r *reader) seekPresent(indexEntry *pb.RowIndexEntry) error {
 	return r.present.Seek(chunk, chunkOffset, offset1, offset2)
 }
 
-func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio.File) (Reader, error) {
-	switch schema.Kind {
-	case pb.Type_SHORT:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return NewIntV2Reader(schema, opts, in, BitsSmallInt), nil
-		}
-		return nil, errors.New("not impl")
-	case pb.Type_INT:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return NewIntV2Reader(schema, opts, in, BitsInt), nil
-		}
-		return nil, errors.New("not impl")
-	case pb.Type_LONG:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return NewIntV2Reader(schema, opts, in, BitsBigInt), nil
-		}
-		return nil, errors.New("not impl")
-	case pb.Type_FLOAT:
-		if schema.Encoding != pb.ColumnEncoding_DIRECT {
-			return nil, errors.New("column encoding error")
-		}
-		return NewFloatReader(schema, opts, in, false), nil
-
-	case pb.Type_DOUBLE:
-		if schema.Encoding != pb.ColumnEncoding_DIRECT {
-			return nil, errors.New("column encoding error")
-		}
-		return NewFloatReader(schema, opts, in, true), nil
-
-	case pb.Type_STRING:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return NewStringDirectV2Reader(opts, schema, in), nil
-			break
-		}
-		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-			return nil, errors.New("not impl")
-			// todo:
-			break
-		}
-		return nil, errors.New("column encoding error")
-
-	case pb.Type_BOOLEAN:
-		if schema.Encoding != pb.ColumnEncoding_DIRECT {
-			return nil, errors.New("bool column encoding error")
-		}
-		return NewBoolReader(schema, opts, in), nil
-
-	case pb.Type_BYTE: // tinyint
-		if schema.Encoding != pb.ColumnEncoding_DIRECT {
-			return nil, errors.New("tinyint column encoding error")
-		}
-		return NewByteReader(schema, opts, in), nil
-
-	case pb.Type_BINARY:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT {
-			return nil, errors.New("not impl")
-			break
-		}
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return nil, errors.New("not impl")
-			// todo:
-			break
-		}
-		return nil, errors.New("binary column encoding error")
-
-	case pb.Type_DECIMAL:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT {
-			// todo:
-			return nil, errors.New("not impl")
-			break
-		}
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return nil, errors.New("not impl")
-			//s.columnReaders[schema.Id] = &decimal64DirectV2Reader{treeReader: c}
-			break
-		}
-		return nil, errors.New("column encoding error")
-
-	case pb.Type_DATE:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT {
-			// todo:
-			return nil, errors.New("not impl")
-		}
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return NewDateV2Reader(schema, opts, in), nil
-		}
-		return nil, errors.New("column encoding error")
-
-	case pb.Type_TIMESTAMP:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT {
-			// todo:
-			return nil, errors.New("not impl")
-			break
-		}
-
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// todo:
-			return nil, errors.New("not impl")
-			break
-		}
-		return nil, errors.New("column encoding error")
-
-	case pb.Type_STRUCT:
-		if schema.Encoding != pb.ColumnEncoding_DIRECT {
-			return nil, errors.New("encoding error")
-		}
-		return &structReader{&reader{schema: schema, opts: opts, f: in}}, nil
-
-	case pb.Type_LIST:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT {
-			// todo:
-			return nil, errors.New("not impl")
-		}
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// todo:
-
-		}
-		return nil, errors.New("encoding error")
-
-	case pb.Type_MAP:
-		if schema.Encoding == pb.ColumnEncoding_DIRECT {
-			// todo:
-			return nil, errors.New("not impl")
-		}
-		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// todo:
-			break
-		}
-		return nil, errors.New("encoding error")
-
-	case pb.Type_UNION:
-		if schema.Encoding != pb.ColumnEncoding_DIRECT {
-			return nil, errors.New("column encoding error")
-		}
-		//todo:
-		return nil, errors.New("not impl")
-
-	default:
-		return nil, errors.New("type unknown")
-	}
-
-	return nil, nil
-}

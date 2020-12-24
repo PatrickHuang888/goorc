@@ -2,16 +2,18 @@ package orc
 
 import (
 	"bytes"
+	"io"
+
 	"github.com/golang/protobuf/proto"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/column"
 	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
-	"io"
 )
 
 type stripeWriter struct {
@@ -158,7 +160,7 @@ func newStripeWriter(out io.Writer, offset uint64, schemas []*api.TypeDescriptio
 	var writers []column.Writer
 	for _, schema := range schemas {
 		var w column.Writer
-		if w, err = column.CreateWriter(schema, opts); err != nil {
+		if w, err = column.NewWriter(schema, opts); err != nil {
 			return
 		}
 		writers = append(writers, w)
@@ -282,20 +284,20 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 
 // a stripe is typically  ~200MB
 func (stripe *stripeReader) next(batch *api.ColumnVector) (end bool, err error) {
-	schema:= stripe.schemas[batch.Id]
-	i:= 0
+	schema := stripe.schemas[batch.Id]
+	i := 0
 	for ; stripe.cursor+uint64(i) < stripe.numberOfRows && len(batch.Vector) < cap(batch.Vector); i++ {
 		var v api.Value
-		if v, err = stripe.columnReaders[batch.Id].Next();err != nil {
+		if v, err = stripe.columnReaders[batch.Id].Next(); err != nil {
 			return
 		}
 		batch.Vector = append(batch.Vector, v)
 
-		for i:=0; i<len(batch.Children); i++ {
+		for i := 0; i < len(batch.Children); i++ {
 			var childValue api.Value
-			if schema.HasNulls && schema.Kind == pb.Type_STRUCT{
+			if schema.HasNulls && schema.Kind == pb.Type_STRUCT {
 				if v.Null {
-					childValue.Null= true
+					childValue.Null = true
 				}
 			}
 			if !childValue.Null {
@@ -308,7 +310,7 @@ func (stripe *stripeReader) next(batch *api.ColumnVector) (end bool, err error) 
 	}
 	stripe.cursor += uint64(i)
 	logger.Debugf("stripe %d column %d has cursor %d", stripe.index, batch.Id, stripe.cursor)
-	end= stripe.cursor+1>=stripe.numberOfRows
+	end = stripe.cursor+1 >= stripe.numberOfRows
 	return
 }
 
