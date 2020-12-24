@@ -567,67 +567,7 @@ func TestByteOnIndexWithPresents(t *testing.T) {
 	assert.Equal(t, byte(140), value.V)
 }
 
-/*func TestColumnBinaryV2WithPresents(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_BINARY, HasNulls: true}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
-
-	rows := 100
-	values := make([][]byte, rows)
-	for i := 0; i < rows; i++ {
-		values[i] = []byte{0b1101, byte(i)}
-	}
-	presents := make([]bool, rows)
-	for i := 0; i < rows; i++ {
-		presents[i] = true
-	}
-	presents[0] = false
-	values[0] = nil
-	presents[45] = false
-	values[45] = nil
-	presents[98] = false
-	values[98] = nil
-
-	batch.Presents = presents
-	batch.Vector = values
-
-	writer := newBinaryDirectV2Writer(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, rows, n)
-
-	ropts := orc.DefaultReaderOptions()
-	batch = schema.CreateReaderBatch(ropts)
-	presentBs := &bufSeeker{writer.present.buf}
-	pKind := pb.Stream_PRESENT
-	pLength_ := uint64(writer.present.buf.Len())
-	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
-
-	dataBs := &bufSeeker{writer.data.buf}
-	dKind := pb.Stream_DATA
-	dLength := uint64(writer.data.buf.Len())
-	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := orc.newStringContentsStreamReader(ropts, dInfo, 0, dataBs)
-
-	lengthBs := &bufSeeker{writer.length.buf}
-	lKind := pb.Stream_LENGTH
-	lLength := uint64(writer.length.buf.Len())
-	lInfo := &pb.Stream{Column: &schema.Id, Kind: &lKind, Length: &lLength}
-	length := orc.newLongV2StreamReader(ropts, lInfo, 0, lengthBs, false)
-
-	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &orc.binaryV2Reader{treeReader: cr, data: data, length: length}
-	err = reader.next(batch)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, presents, batch.Presents[:100])
-	assert.Equal(t, values, batch.Vector)
-}
-
+/*
 func TestColumnDecimal64WithPresents(t *testing.T) {
 	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_DECIMAL, HasNulls: true}
 	wopts := orc.DefaultWriterOptions()

@@ -3,86 +3,55 @@ package column
 import (
 	"io"
 
+	"github.com/pkg/errors"
+
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	"github.com/pkg/errors"
 )
 
-const (
-	MaxByteLength = 1024
-)
-
-func newStringDirectV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
-	stats := &pb.ColumnStatistics{StringStatistics: &pb.StringStatistics{
-		Maximum: new(string), Minimum: new(string), Sum: new(int64), LowerBound: new(string), UpperBound: new(string)},
-		NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+func NewBinaryV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
+	stats := &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
+		BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
 	var present stream.Writer
 	if schema.HasNulls {
 		*stats.HasNull = true
 		present = stream.NewBoolWriter(schema.Id, pb.Stream_PRESENT, opts)
 	}
-	var index *pb.RowIndex
 	var indexStats *pb.ColumnStatistics
+	var index *pb.RowIndex
 	if opts.WriteIndex {
+		indexStats = &pb.ColumnStatistics{NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64),
+			BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}}
 		index = &pb.RowIndex{}
-		indexStats = &pb.ColumnStatistics{NumberOfValues: new(uint64), BytesOnDisk: new(uint64), HasNull: new(bool),
-			StringStatistics: &pb.StringStatistics{Maximum: new(string), Minimum: new(string), Sum: new(int64), LowerBound: new(string), UpperBound: new(string)}}
 	}
-	base := &writer{schema: schema, opts: opts, stats: stats, present: present, index: index, indexStats: indexStats}
+	base := &writer{schema: schema, opts: opts, stats: stats, present: present, indexStats: indexStats, index: index}
 	data := stream.NewStringContentsWriter(schema.Id, pb.Stream_DATA, opts)
 	length := stream.NewIntRLV2Writer(schema.Id, pb.Stream_LENGTH, opts, false)
-	return &stringDirectV2Writer{base, data, length}
+	return &binaryV2Writer{base, data, length}
 }
 
-type stringDirectV2Writer struct {
+type binaryV2Writer struct {
 	*writer
 	data   stream.Writer
 	length stream.Writer
 }
 
-func (w *stringDirectV2Writer) Write(value api.Value) error {
+func (w *binaryV2Writer) Write(value api.Value) error {
 	if w.schema.HasNulls {
 		if err := w.present.Write(!value.Null); err != nil {
 			return err
 		}
 	}
 
-	var dataLength int
 	if !value.Null {
-		s, ok := value.V.(string)
-		if !ok {
-			return errors.New("string column writing, value should be string")
-		}
-		// string encoded in utf-8
-		data := []byte(s)
-		dataLength = len(data)
-		if err := w.data.Write(data); err != nil {
+		if err := w.data.Write(value.V); err != nil {
 			return err
 		}
-		if err := w.length.Write(uint64(dataLength)); err != nil {
-			return err
-		}
-
+		*w.stats.BinaryStatistics.Sum++
 		*w.stats.NumberOfValues++
-		*w.stats.StringStatistics.Sum += int64(dataLength)
-		if dataLength >= MaxByteLength {
-			if s < *w.stats.StringStatistics.LowerBound {
-				*w.stats.StringStatistics.LowerBound = s
-			}
-			if s > *w.stats.StringStatistics.UpperBound {
-				*w.stats.StringStatistics.UpperBound = s
-			}
-		} else {
-			if s < *w.stats.StringStatistics.Minimum {
-				*w.stats.StringStatistics.Minimum = s
-			}
-			if s > *w.stats.StringStatistics.Maximum {
-				*w.stats.StringStatistics.Maximum = s
-			}
-		}
 	}
 
 	if w.opts.WriteIndex {
@@ -94,42 +63,26 @@ func (w *stringDirectV2Writer) Write(value api.Value) error {
 			}
 			pp = append(pp, w.data.GetPosition()...)
 			pp = append(pp, w.length.GetPosition()...)
-			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Statistics: w.indexStats, Positions: pp})
+			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Positions: pp, Statistics: w.indexStats})
+
 			// new stats
-			w.indexStats = &pb.ColumnStatistics{StringStatistics: &pb.StringStatistics{
-				Maximum: new(string), Minimum: new(string), Sum: new(int64), LowerBound: new(string), UpperBound: new(string)},
-				NumberOfValues: new(uint64), HasNull: new(bool)}
+			w.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
 			if w.schema.HasNulls {
 				*w.indexStats.HasNull = true
 			}
 			w.indexInRows = 0
 		}
-
 		if !value.Null {
+			*w.indexStats.BinaryStatistics.Sum++
 			*w.indexStats.NumberOfValues++
-			*w.indexStats.StringStatistics.Sum += int64(dataLength)
-			s := value.V.(string)
-			if dataLength >= MaxByteLength {
-				if s < *w.indexStats.StringStatistics.LowerBound {
-					*w.indexStats.StringStatistics.LowerBound = s
-				}
-				if s > *w.indexStats.StringStatistics.UpperBound {
-					*w.indexStats.StringStatistics.UpperBound = s
-				}
-			} else {
-				if s < *w.indexStats.StringStatistics.Minimum {
-					*w.indexStats.StringStatistics.Minimum = s
-				}
-				if s > *w.indexStats.StringStatistics.Maximum {
-					*w.indexStats.StringStatistics.Maximum = s
-				}
-			}
 		}
 	}
 	return nil
 }
 
-func (w *stringDirectV2Writer) Flush() error {
+func (w *binaryV2Writer) Flush() error {
+	w.flushed = true
+
 	if w.schema.HasNulls {
 		if err := w.present.Flush(); err != nil {
 			return err
@@ -147,12 +100,10 @@ func (w *stringDirectV2Writer) Flush() error {
 	}
 	*w.stats.BytesOnDisk += w.data.Info().GetLength()
 	*w.stats.BytesOnDisk += w.length.Info().GetLength()
-
-	w.flushed = true
 	return nil
 }
 
-func (w *stringDirectV2Writer) WriteOut(out io.Writer) (int64, error) {
+func (w *binaryV2Writer) WriteOut(out io.Writer) (n int64, err error) {
 	var pn int64
 	if w.schema.HasNulls {
 		var err error
@@ -171,15 +122,15 @@ func (w *stringDirectV2Writer) WriteOut(out io.Writer) (int64, error) {
 	return pn + dn + ln, nil
 }
 
-func (w stringDirectV2Writer) GetStreamInfos() []*pb.Stream {
+func (w binaryV2Writer) GetStreamInfos() []*pb.Stream {
 	if w.schema.HasNulls {
 		return []*pb.Stream{w.present.Info(), w.data.Info(), w.length.Info()}
 	}
 	return []*pb.Stream{w.data.Info(), w.length.Info()}
 }
 
-func (w *stringDirectV2Writer) Reset() {
-	w.writer.reset()
+func (w *binaryV2Writer) Reset() {
+	w.reset()
 	if w.schema.HasNulls {
 		w.present.Reset()
 	}
@@ -187,25 +138,25 @@ func (w *stringDirectV2Writer) Reset() {
 	w.length.Reset()
 }
 
-func (w stringDirectV2Writer) Size() int {
+func (w binaryV2Writer) Size() int {
 	if w.schema.HasNulls {
 		return w.present.Size() + w.data.Size() + w.length.Size()
 	}
 	return w.data.Size() + w.length.Size()
 }
 
-func NewStringDirectV2Reader(opts *config.ReaderOptions, schema *api.TypeDescription, f orcio.File) Reader {
-	return &stringDirectV2Reader{reader: &reader{opts: opts, schema: schema, f: f}}
+func NewBinaryV2Reader(opts *config.ReaderOptions, schema *api.TypeDescription, f orcio.File) Reader {
+	return &binaryV2Reader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 
-type stringDirectV2Reader struct {
+type binaryV2Reader struct {
 	*reader
 	data   *stream.StringContentsReader
 	length *stream.IntRLV2Reader
 }
 
-func (s *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
-	f, err := s.f.Clone()
+func (r *binaryV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+	f, err := r.f.Clone()
 	if err != nil {
 		return err
 	}
@@ -215,18 +166,18 @@ func (s *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) e
 
 	switch info.GetKind() {
 	case pb.Stream_PRESENT:
-		s.present = stream.NewBoolReader(s.opts, info, startOffset, f)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 	case pb.Stream_DATA:
-		s.data = stream.NewStringContentsReader(s.opts, info, startOffset, f)
+		r.data = stream.NewStringContentsReader(r.opts, info, startOffset, f)
 	case pb.Stream_LENGTH:
-		s.length = stream.NewIntRLV2Reader(s.opts, info, startOffset, false, f)
+		r.length = stream.NewIntRLV2Reader(r.opts, info, startOffset, false, f)
 	default:
 		errors.New("stream kind not unknown")
 	}
 	return nil
 }
 
-func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
+func (r *binaryV2Reader) Next() (value api.Value, err error) {
 	if err = r.checkInit(); err != nil {
 		return
 	}
@@ -256,7 +207,7 @@ func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
+func (r *binaryV2Reader) Seek(rowNumber uint64) error {
 	if err := r.checkInit(); err != nil {
 		return err
 	}
@@ -277,7 +228,7 @@ func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
 	return nil
 }
 
-func (r *stringDirectV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
+func (r *binaryV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 	if r.schema.HasNulls {
 		if err := r.seekPresent(indexEntry); err != nil {
 			return err
@@ -318,7 +269,7 @@ func (r *stringDirectV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 			}
 		}
 	}
-	if err:= r.data.Seek(dataChunk, dataChunkOffset, dataOffset);err!=nil {
+	if err := r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
 		return err
 	}
 	if err := r.length.Seek(lengthChunk, lengthChunkOffset, lengthOffset); err != nil {
@@ -327,7 +278,7 @@ func (r *stringDirectV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 	return nil
 }
 
-func (r *stringDirectV2Reader) Close() {
+func (r *binaryV2Reader) Close() {
 	if r.schema.HasNulls {
 		r.present.Close()
 	}
@@ -335,7 +286,7 @@ func (r *stringDirectV2Reader) Close() {
 	r.length.Close()
 }
 
-func (r stringDirectV2Reader) checkInit() error {
+func (r binaryV2Reader) checkInit() error {
 	if r.schema.HasNulls {
 		if r.present == nil {
 			return errors.New("present stream not initialized")
