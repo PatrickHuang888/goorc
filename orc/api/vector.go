@@ -57,11 +57,15 @@ type Decimal64 struct {
 }
 
 func (d Decimal64) String() string {
-	return fmt.Sprintf("precision %d, scale %d", d.Precision, d.Scale)
+	return fmt.Sprintf("%f", d.Float64())
 }
 
 func (d Decimal64) Float64() float64 {
-	return float64(d.Precision) * float64(10*d.Scale)
+	if d.Scale >0 {
+		return float64(d.Precision) * float64(10*d.Scale)
+	}else {
+		return float64(d.Precision)/float64(10*d.Scale)
+	}
 }
 
 // enhance: UTC

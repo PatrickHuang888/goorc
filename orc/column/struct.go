@@ -179,10 +179,8 @@ func (w structWriter) GetStreamInfos() []*pb.Stream {
 	return nil
 }
 
-func (w structWriter) Reset() {
-	if w.schema.HasNulls {
-		w.reset()
-	}
+func (w *structWriter) Reset() {
+	w.reset()
 }
 
 func (w structWriter) Size() int {

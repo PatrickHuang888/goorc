@@ -1122,3 +1122,34 @@ func writeShortRepeat(count int, x uint64, out *bytes.Buffer) error {
 	}
 	return nil
 }
+
+func NewVarint64Encoder() Encoder {
+	return &varint64Encoder{}
+}
+
+type varint64Encoder struct {
+}
+
+func (e *varint64Encoder) Encode(v interface{}, out *bytes.Buffer) error {
+	value := v.(int64)
+	bb := make([]byte, 10)
+	c := binary.PutVarint(bb, value)
+	if _, err:=out.Write(bb[:c]);err!=nil {
+		return err
+	}
+	return nil
+}
+
+func (e *varint64Encoder) Flush(out *bytes.Buffer) error {
+	//
+	return nil
+}
+
+func (e *varint64Encoder) GetPosition() []uint64 {
+	return []uint64{1}
+}
+
+func DecodeVarInt64(in BufferedReader) (value int64, err error) {
+	value, err = binary.ReadVarint(in)
+	return
+}

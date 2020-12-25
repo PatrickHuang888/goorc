@@ -29,7 +29,7 @@ func NewDateV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Wr
 	}
 	base := &writer{schema: schema, opts: opts, stats: stats, present: present, indexStats: indexStats, index: index}
 	data := stream.NewIntRLV2Writer(schema.Id, pb.Stream_DATA, opts, true)
-	return &byteWriter{base, data}
+	return &dateV2Writer{base, data}
 }
 
 type dateV2Writer struct {
@@ -44,12 +44,20 @@ func (w *dateV2Writer) Write(value api.Value) error {
 		}
 	}
 
+	var days int32
 	if !value.Null {
-		if err := w.data.Write(value.V); err != nil {
+		date:= value.V.(api.Date)
+		days= api.ToDays(date)
+		if err := w.data.Write(int64(days)); err != nil {
 			return err
 		}
-		*w.stats.BinaryStatistics.Sum++
-		*w.stats.NumberOfValues++ // makeSure:
+		if days < w.stats.DateStatistics.GetMinimum() {
+			*w.stats.DateStatistics.Minimum= days
+		}
+		if days > w.stats.DateStatistics.GetMaximum() {
+			*w.stats.DateStatistics.Maximum= days
+		}
+		*w.stats.NumberOfValues++
 	}
 
 	if w.opts.WriteIndex {
@@ -63,15 +71,20 @@ func (w *dateV2Writer) Write(value api.Value) error {
 			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Positions: pp, Statistics: w.indexStats})
 
 			// new stats
-			w.indexStats = &pb.ColumnStatistics{BinaryStatistics: &pb.BinaryStatistics{Sum: new(int64)}, NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+			w.indexStats = &pb.ColumnStatistics{DateStatistics: &pb.DateStatistics{Minimum: new(int32), Maximum: new(int32)},
+				NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
 			if w.schema.HasNulls {
 				*w.indexStats.HasNull = true
 			}
 			w.indexInRows = 0
 		}
-		// fixme: does not write index statistic bytes on disk, java impl either
 		if !value.Null {
-			*w.indexStats.BinaryStatistics.Sum++
+			if days < w.stats.DateStatistics.GetMinimum() {
+				*w.stats.DateStatistics.Minimum= days
+			}
+			if days > w.stats.DateStatistics.GetMaximum() {
+				*w.stats.DateStatistics.Maximum= days
+			}
 			*w.indexStats.NumberOfValues++
 		}
 	}
@@ -117,9 +130,7 @@ func (w dateV2Writer) GetStreamInfos() []*pb.Stream {
 }
 
 func (w *dateV2Writer) Reset() {
-	if w.schema.HasNulls {
-		w.present.Reset()
-	}
+	w.reset()
 	w.data.Reset()
 }
 

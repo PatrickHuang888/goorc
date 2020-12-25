@@ -131,9 +131,6 @@ func (w binaryV2Writer) GetStreamInfos() []*pb.Stream {
 
 func (w *binaryV2Writer) Reset() {
 	w.reset()
-	if w.schema.HasNulls {
-		w.present.Reset()
-	}
 	w.data.Reset()
 	w.length.Reset()
 }

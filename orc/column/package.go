@@ -230,8 +230,7 @@ func NewWriter(schema *api.TypeDescription, opts *config.WriterOptions) (Writer,
 			return newStringDirectV2Writer(schema, opts), nil
 		}
 		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-			// todo:
-			break
+			return newStringDirectV2Writer(schema, opts), nil
 		}
 		return nil, errors.New("encoding not impl")
 
@@ -255,22 +254,19 @@ func NewWriter(schema *api.TypeDescription, opts *config.WriterOptions) (Writer,
 
 	case pb.Type_DECIMAL:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// todo:
-			break
+			return NewDecimal64V2Writer(schema, opts), nil
 		}
 		return nil, errors.New("encoding not impl")
 
 	case pb.Type_DATE:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// todo:
-			break
+			return NewDateV2Writer(schema, opts), nil
 		}
 		return nil, errors.New("encoding not impl")
 
 	case pb.Type_TIMESTAMP:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// todo:
-			break
+			return NewTimestampV2Writer(schema, opts), nil
 		}
 		return nil, errors.New("encoding not impl")
 

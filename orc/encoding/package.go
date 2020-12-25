@@ -2,7 +2,6 @@ package encoding
 
 import (
 	"bytes"
-	"encoding/binary"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -160,72 +159,6 @@ func (irl *intRunLengthV1) Encode(out *bytes.Buffer) error {
 }*/
 
 
-// string contents, decoding need length decoder
-type BytesContent struct {
-}
-
-func (e *BytesContent) MarkPosition() {
-	//
-}
-
-func (e *BytesContent) GetAndClearPositions() []uint64 {
-	return nil
-}
-
-func (e *BytesContent) Reset() {
-	//
-}
-
-func (e *BytesContent) Encode(v interface{}) (data []byte, err error) {
-	data = v.([]byte)
-	return
-}
-
-func (e BytesContent) Flush() (data []byte, err error) {
-	//
-	return
-}
-
-// write out content do not base length field, just base on len of content
-func encodeBytesContent(out *bytes.Buffer, values [][]byte) error {
-	for _, v := range values {
-		if _, err := out.Write(v); err != nil {
-			return errors.WithStack(err)
-		}
-	}
-	return nil
-}
-
-type varInt64 struct {
-}
-
-func (e *varInt64) MarkPosition() {
-	//
-}
-
-func (e *varInt64) GetAndClearPositions() []uint64 {
-	return nil
-}
-
-func (e *varInt64) Reset() {
-	//
-}
-
-func (e *varInt64) Encode(v interface{}) (data []byte, err error) {
-	value := v.(int64)
-	bb := make([]byte, 10)
-	c := binary.PutVarint(bb, value)
-	return bb[:c], nil
-}
-
-func (e varInt64) Flush() (data []byte, err error) {
-	return nil, nil
-}
-
-func DecodeVarInt64(in BufferedReader) (value int64, err error) {
-	value, err = binary.ReadVarint(in)
-	return
-}
 
 func widthEncoding(width int) (w byte, err error) {
 	if 2 <= width && width <= 21 {

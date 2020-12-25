@@ -116,37 +116,31 @@ func (r *IntRLV2Reader) Close() {
 	r.stream.Close()
 }
 
-type VarIntReader struct {
+type Varint64Reader struct {
 	stream *reader
 }
 
-func NewVarIntReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *VarIntReader {
-	return &VarIntReader{stream: &reader{info: info, start: start, buf: &bytes.Buffer{}, in: in}}
+func NewVarIntReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *Varint64Reader {
+	return &Varint64Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}}
 }
 
-func (r *VarIntReader) NextInt64() (v int64, err error) {
+func (r *Varint64Reader) NextInt64() (v int64, err error) {
 	v, err = encoding.DecodeVarInt64(r.stream)
 	return
 }
 
-// todo: decode var 128
-
-func (r *VarIntReader) Finished() bool {
+func (r *Varint64Reader) Finished() bool {
 	return r.stream.finished()
 }
 
-func (r *VarIntReader) Seek(offset, uncompressedOffset, pos uint64) error {
+func (r *Varint64Reader) Seek(offset, uncompressedOffset, pos uint64) error {
 	if err := r.stream.seek(offset, uncompressedOffset); err != nil {
 		return err
 	}
-	for i := 0; i < int(pos); i++ {
-		if _, err := r.NextInt64(); err != nil {
-			return err
-		}
-	}
+	// always 1
 	return nil
 }
 
-func (r *VarIntReader) Close() {
+func (r *Varint64Reader) Close() {
 	r.stream.Close()
 }

@@ -180,9 +180,6 @@ func (w stringDirectV2Writer) GetStreamInfos() []*pb.Stream {
 
 func (w *stringDirectV2Writer) Reset() {
 	w.writer.reset()
-	if w.schema.HasNulls {
-		w.present.Reset()
-	}
 	w.data.Reset()
 	w.length.Reset()
 }

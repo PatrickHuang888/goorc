@@ -567,69 +567,49 @@ func TestByteOnIndexWithPresents(t *testing.T) {
 	assert.Equal(t, byte(140), value.V)
 }
 
-/*
-func TestColumnDecimal64WithPresents(t *testing.T) {
-	schema := &orc.TypeDescription{Id: 0, Kind: pb.Type_DECIMAL, HasNulls: true}
-	wopts := orc.DefaultWriterOptions()
-	batch := schema.CreateWriterBatch(wopts)
+func TestColumnDecimal64(t *testing.T) {
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_DECIMAL}
+	wopts := config.DefaultWriterOptions()
 
 	rows := 100
-	vector := make([]orc.Decimal64, rows)
+	values := make([]api.Value, rows)
 	for i := 0; i < rows; i++ {
-		vector[i] = orc.Decimal64{Precision: int64(i), Scale: 10}
+		values[i].V = api.Decimal64{Precision: int64(i), Scale: 2}
 	}
-	presents := make([]bool, rows)
-	for i := 0; i < rows; i++ {
-		presents[i] = true
+
+	writer := NewDecimal64V2Writer(schema, &wopts).(*decimalV2Writer)
+	for _, v := range values {
+		if err:=writer.Write(v);err!=nil {
+			t.Fatalf("%+v", err)
+		}
 	}
-	presents[0] = false
-	vector[0] = orc.Decimal64{}
-	presents[45] = false
-	vector[45] = orc.Decimal64{}
-	presents[98] = false
-	vector[98] = orc.Decimal64{}
+	err:=writer.Flush()
+	assert.Nil(t, err)
 
-	batch.Presents = presents
-	batch.Vector = vector
+	bb := make([]byte, 500)
+	f := orcio.NewMockFile(bb)
 
-	writer := newDecimal64DirectV2Writer(schema, wopts)
-	n, err := writer.write(&orc.batchInternal{ColumnVector: batch})
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
-	assert.Equal(t, rows, n)
-
-	ropts := orc.DefaultReaderOptions()
-	batch = schema.CreateReaderBatch(ropts)
-	presentBs := &bufSeeker{writer.present.buf}
-	pKind := pb.Stream_PRESENT
-	pLength_ := uint64(writer.present.buf.Len())
-	pInfo := &pb.Stream{Column: &schema.Id, Kind: &pKind, Length: &pLength_}
-	present := orc.newBoolStreamReader(ropts, pInfo, 0, presentBs)
-
-	dataBs := &bufSeeker{writer.data.buf}
-	dKind := pb.Stream_DATA
-	dLength := uint64(writer.data.buf.Len())
-	dInfo := &pb.Stream{Column: &schema.Id, Kind: &dKind, Length: &dLength}
-	data := orc.newVarIntStreamReader(ropts, dInfo, 0, dataBs)
-
-	secondaryBs := &bufSeeker{writer.secondary.buf}
-	sKind := pb.Stream_SECONDARY
-	sLength := uint64(writer.secondary.buf.Len())
-	sInfo := &pb.Stream{Column: &schema.Id, Kind: &sKind, Length: &sLength}
-	secondary := orc.newLongV2StreamReader(ropts, sInfo, 0, secondaryBs, true)
-
-	cr := &orc.treeReader{schema: schema, present: present, numberOfRows: uint64(rows)}
-	reader := &orc.decimal64DirectV2Reader{treeReader: cr, data: data, secondary: secondary}
-
-	err = reader.next(batch)
-	if err != nil {
+	if _, err := writer.WriteOut(f); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	assert.Equal(t, presents, batch.Presents)
-	assert.Equal(t, vector, batch.Vector)
-}*/
+	ropts := config.DefaultReaderOptions()
+	reader:= NewDecimal64V2Reader(schema, &ropts, f)
+	err = reader.InitStream(writer.data.Info(), 0)
+	assert.Nil(t, err)
+	err= reader.InitStream(writer.secondary.Info(), writer.data.Info().GetLength())
+	assert.Nil(t, err)
+
+	vector := make([]api.Value, rows)
+	for i := 0; i < rows; i++ {
+		var err error
+		if vector[i], err = reader.Next(); err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+
+	assert.Equal(t, values, vector)
+}
 
 
 func TestColumnTimestampWithPresents(t *testing.T) {
