@@ -9,18 +9,15 @@ import (
 	"github.com/pkg/errors"
 )
 
-// todo: check reader, if parent has present stream, children should not have present stream
 type TypeDescription struct {
 	Id            uint32
 	Kind          pb.Type_Kind
 	ChildrenNames []string
 	Children      []*TypeDescription
 
-	// although encoding is stripe related, but I think this should be set in schema
-	// maybe changed at nextStripe?
 	Encoding pb.ColumnEncoding_Kind
 
-	HasNulls bool // create initial batch presents vector on this when reading
+	HasNulls bool
 }
 
 func (td TypeDescription) String() string {
@@ -41,51 +38,117 @@ func (td TypeDescription) String() string {
 	return sb.String()
 }
 
-var nodeId uint32
+type action func(node *TypeDescription) error
 
-func doId(node *TypeDescription) error {
-	nodeId++
-	node.Id = nodeId
+func checkId(node *TypeDescription) error {
+	if node.Id == 0 {
+		return errors.New("id ==0, not inited?")
+	}
 	return nil
 }
 
-type action func(*TypeDescription) error
-
-// pre-order traverse
-func traverse(node *TypeDescription, do action) error {
-	if node.Kind == pb.Type_STRUCT || node.Kind == pb.Type_LIST {
-		for _, td := range node.Children {
-			if err := do(td); err != nil {
-				return err
-			}
-			if err := traverse(td, do); err != nil {
+func CheckId(root *TypeDescription) error {
+	if len(root.Children) == 0 {
+		for _, c := range root.Children {
+			if err := traverse(c, checkId); err != nil {
 				return err
 			}
 		}
-	} else if node.Kind == pb.Type_UNION || node.Kind == pb.Type_MAP {
-		return errors.New("type union or map no impl")
 	}
 	return nil
 }
 
-// set ids, flat the schema tree to slice
-func (td *TypeDescription) Normalize() (schemas []*TypeDescription, err error) {
-	var id uint32
-	if err = walkSchema(&schemas, td, id); err != nil {
+func addId(node *TypeDescription) error {
+	node.Id = _nodeId
+	_nodeId++
+	return nil
+}
+
+var _nodeId uint32
+
+func SetId(root *TypeDescription) error {
+	_nodeId = uint32(0)
+	return traverse(root, addId)
+}
+
+func CheckNulls(root *TypeDescription) error {
+	if root.HasNulls {
+		checkNulls(root)
+	}
+	return nil
+}
+
+func checkNulls(node *TypeDescription) error {
+	if node.HasNulls {
+		for _, c := range node.Children {
+			traverse(c, checkNoNull)
+		}
+	}
+	return nil
+}
+
+func checkNoNull(node *TypeDescription) error {
+	if node.HasNulls {
+		return errors.Errorf("node %d has null", node.Id)
+	}
+	return nil
+}
+
+var _schemas []*TypeDescription
+
+func (root *TypeDescription) Flat() (schemas []*TypeDescription, err error) {
+	if err = CheckId(root); err != nil {
 		return
 	}
+	_schemas = nil
+	if err = traverse(root, addSchema); err != nil {
+		return
+	}
+	schemas= _schemas
 	return
 }
 
+func addSchema(node *TypeDescription) error {
+	_schemas = append(_schemas, node)
+	return nil
+}
+
 // pre-order traverse
-func walkSchema(schemas *[]*TypeDescription, node *TypeDescription, id uint32) error {
+func traverse(node *TypeDescription, do action) error {
+	if err := do(node); err != nil {
+		return err
+	}
+
+	if node.Kind != pb.Type_STRUCT && len(node.Children) != 0 {
+		return errors.New("kind other than STRUCT must not have children")
+	}
+
+	for _, c := range node.Children {
+		if err := traverse(c, do); err != nil {
+			return err
+		}
+	}
+
+	if node.Kind == pb.Type_UNION || node.Kind == pb.Type_MAP || node.Kind == pb.Type_LIST {
+		return errors.New("no impl")
+	}
+	return nil
+}
+
+func NormalizeSchema(root *TypeDescription) error {
+	if err := CheckNulls(root); err != nil {
+		return err
+	}
+	return SetId(root)
+}
+
+func setId(node *TypeDescription, id uint32) error {
 	node.Id = id
-	*schemas = append(*schemas, node)
 
 	if node.Kind == pb.Type_STRUCT || node.Kind == pb.Type_LIST {
 		for _, td := range node.Children {
 			id++
-			if err := walkSchema(schemas, td, id); err != nil {
+			if err := setId(td, id); err != nil {
 				return errors.WithStack(err)
 			}
 		}
@@ -118,21 +181,34 @@ func CreateReaderBatch(td TypeDescription, opts config.ReaderOptions) ColumnVect
 }
 
 // should normalize first
-func CreateWriterBatch(td TypeDescription, opts config.WriterOptions) ColumnVector {
-	// set id
-	//td.Normalize()
+func CreateWriterBatch(td TypeDescription, opts config.WriterOptions, createVector bool) (batch ColumnVector, err error) {
+	if err = CheckId(&td); err != nil {
+		return
+	}
+
+	if err = config.CheckWriteOpts(&opts); err != nil {
+		return
+	}
 
 	if td.Kind == pb.Type_STRUCT {
 		var children []ColumnVector
-		for _, v := range td.Children {
-			children = append(children, CreateWriterBatch(*v, opts))
+		for _, c := range td.Children {
+			var cb ColumnVector
+			if cb, err = CreateWriterBatch(*c, opts, createVector); err != nil {
+				return
+			}
+			children = append(children, cb)
 		}
-		// fix this
-		//return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize), Children: children}
-		return ColumnVector{Id: td.Id, Kind: td.Kind, Children: children}
+		if createVector {
+			return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize), Children: children}, nil
+		} else {
+			return ColumnVector{Id: td.Id, Kind: td.Kind, Children: children}, nil
+		}
 	}
 
-	// fix this
-	//return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
-	return ColumnVector{Id: td.Id, Kind: td.Kind}
+	if createVector {
+		return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}, nil
+	} else {
+		return ColumnVector{Id: td.Id, Kind: td.Kind}, nil
+	}
 }

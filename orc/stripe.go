@@ -32,8 +32,6 @@ type stripeWriter struct {
 }
 
 func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
-	// todo: verify hasnull
-
 	col := stripe.columnWriters[batch.Id]
 
 	count := uint64(0)
@@ -315,9 +313,8 @@ func (stripe *stripeReader) next(batch *api.ColumnVector) (end bool, err error) 
 }
 
 // locate rows in this stripe
-func (s *stripeReader) Seek(rowNumber uint64) error {
-	// rethink: all column seek to row ?
-	for _, r := range s.columnReaders {
+func (stripe *stripeReader) Seek(rowNumber uint64) error {
+	for _, r := range stripe.columnReaders {
 		if err := r.Seek(rowNumber); err != nil {
 			return err
 		}
@@ -325,8 +322,8 @@ func (s *stripeReader) Seek(rowNumber uint64) error {
 	return nil
 }
 
-func (s *stripeReader) Close() error {
-	for _, r := range s.columnReaders {
+func (stripe *stripeReader) Close() error {
+	for _, r := range stripe.columnReaders {
 		r.Close()
 	}
 	return nil

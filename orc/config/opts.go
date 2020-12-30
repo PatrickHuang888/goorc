@@ -2,6 +2,7 @@ package config
 
 import (
 	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/pkg/errors"
 	"time"
 )
 
@@ -43,6 +44,13 @@ type WriterOptions struct {
 
 	WriteIndex  bool
 	IndexStride int
+}
+
+func CheckWriteOpts(opts * WriterOptions) error {
+	if opts.ChunkSize > opts.StripeSize {
+		return errors.Errorf("ChunkSize %d larger than StripeSize %d ", opts.ChunkSize, opts.StripeSize)
+	}
+	return nil
 }
 
 func DefaultWriterOptions() WriterOptions {

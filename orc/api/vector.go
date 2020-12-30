@@ -16,39 +16,29 @@ type ColumnVector struct {
 	Children []ColumnVector
 }
 
+func (cv *ColumnVector) Clear() {
+	cv.Vector = cv.Vector[:0]
+	for _, c := range cv.Children {
+		c.Clear()
+	}
+}
+
+func (cv ColumnVector) Len() int  {
+	// todo: other kind
+	if cv.Kind== pb.Type_STRUCT {
+		if len(cv.Vector)!=0 {
+			// nulls
+			return len(cv.Vector)
+		}
+		return cv.Children[0].Len()
+	}
+	return len(cv.Vector)
+}
+
 type Value struct {
 	Null bool
 	V    interface{}
 }
-
-/*func (cv ColumnVector) check() error {
-	if cv.Kind == pb.Type_STRUCT && cv.Presents != nil {
-		var presentCounts int
-		for _, p := range cv.Presents {
-			if p {
-				presentCounts++
-			}
-		}
-		for i, childVector := range cv.Vector.([]*ColumnVector) {
-			switch childVector.Kind {
-			case pb.Type_INT:
-				fallthrough
-			case pb.Type_LONG:
-				vector := childVector.Vector.([]int64)
-				if len(vector) < presentCounts {
-					return errors.Errorf("column %d vector data less than presents data in struct column", childVector.Id)
-				}
-				if len(vector) > presentCounts {
-					log.Warnf("column %d vector data large than prensents in struct column, extra data will be discard", childVector.Id)
-					vector = vector[:presentCounts]
-					cv.Vector.([]*ColumnVector)[i].Vector = vector
-				}
-			}
-		}
-
-	}
-	return nil
-}*/
 
 // hive 0.13 support 38 digits
 type Decimal64 struct {
@@ -61,10 +51,10 @@ func (d Decimal64) String() string {
 }
 
 func (d Decimal64) Float64() float64 {
-	if d.Scale >0 {
+	if d.Scale > 0 {
 		return float64(d.Precision) * float64(10*d.Scale)
-	}else {
-		return float64(d.Precision)/float64(10*d.Scale)
+	} else {
+		return float64(d.Precision) / float64(10*d.Scale)
 	}
 }
 
@@ -93,13 +83,13 @@ func ToDays(d Date) int32 {
 }
 
 type Timestamp struct {
-	Loc *time.Location
+	Loc     *time.Location
 	Seconds int64
 	Nanos   uint32
 }
 
 func (t Timestamp) Time() time.Time {
-	loc:= t.Loc
+	loc := t.Loc
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -108,9 +98,9 @@ func (t Timestamp) Time() time.Time {
 }
 
 func (t Timestamp) GetMilliSeconds() int64 {
-	loc:= t.Loc
-	if loc==nil {
-		loc= time.UTC
+	loc := t.Loc
+	if loc == nil {
+		loc = time.UTC
 	}
 	var ms int64
 	baseSec := time.Date(2015, time.January, 1, 0, 0, 0, 0, loc).Unix()
@@ -121,7 +111,7 @@ func (t Timestamp) GetMilliSeconds() int64 {
 
 func (t Timestamp) GetMilliSecondsUtc() int64 {
 	base := time.Date(2015, time.January, 1, 0, 0, 0, 0, time.UTC).Unix()
-	return base+t.Time().Unix()+int64(t.Nanos/1_000)
+	return base + t.Time().Unix() + int64(t.Nanos/1_000)
 }
 
 func GetTimestamp(t time.Time) Timestamp {

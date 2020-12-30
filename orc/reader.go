@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"compress/flate"
 	"fmt"
+	"io"
+	"os"
+
 	"github.com/golang/protobuf/proto"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
-	"io"
-	"os"
-
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -31,7 +32,6 @@ type Reader interface {
 
 	Next(batch *api.ColumnVector) error
 
-	// fixme: how this function should be ?
 	Seek(rowNumber uint64) error
 
 	GetStatistics() []*pb.ColumnStatistics
@@ -119,7 +119,8 @@ func (r *reader) Close() error {
 }
 
 func (r *reader) Next(batch *api.ColumnVector) error {
-	batch.Reset()
+	batch.Clear()
+
 	if r.cursor >= r.numberOfRows-1 {
 		return nil
 	}
@@ -131,7 +132,7 @@ func (r *reader) Next(batch *api.ColumnVector) error {
 		}
 		if end {
 			r.stripeIndex++
-			if batch.Len() >= batch.Cap() {
+			if len(batch.Vector) >= cap(batch.Vector) {
 				break
 			}
 		} else {
@@ -141,7 +142,7 @@ func (r *reader) Next(batch *api.ColumnVector) error {
 	if r.stripeIndex == len(r.stripes) {
 		r.stripeIndex--
 	}
-	r.cursor += uint64(batch.Len())
+	r.cursor += uint64(len(batch.Vector))
 	return nil
 }
 
@@ -161,180 +162,6 @@ func (r *reader) Seek(rowNumber uint64) error {
 }
 
 /*
-type timestampV2Reader struct {
-	*treeReader
-
-	data      *longV2StreamReader
-	secondary *longV2StreamReader
-}
-
-func (c *timestampV2Reader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([]Timestamp)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			seconds, err := c.data.nextInt64()
-			if err != nil {
-				return err
-			}
-			nanos, err := c.secondary.nextUInt()
-			if err != nil {
-				return err
-			}
-			vector = append(vector, Timestamp{seconds, uint32(encoding.DecodingNano(nanos))})
-
-		} else {
-			vector = append(vector, Timestamp{})
-		}
-
-		c.cursor++
-	}
-
-	if (c.data.finished() && !c.secondary.finished()) || (c.secondary.finished() && !c.data.finished()) {
-		return errors.New("read error")
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
-
-type boolReader struct {
-	*treeReader
-	data *boolStreamReader
-}
-
-func (c *boolReader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([]bool)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.next()
-			if err != nil {
-				return err
-			}
-			vector = append(vector, v)
-		} else {
-			vector = append(vector, false)
-		}
-
-		c.cursor++
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
-
-type binaryV2Reader struct {
-	*treeReader
-	length *longV2StreamReader
-	data   *stringContentsStreamReader
-}
-
-func (c *binaryV2Reader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([][]byte)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			l, err := c.length.nextUInt()
-			if err != nil {
-				return err
-			}
-			v, err := c.data.nextBytes(l)
-			if err != nil {
-				return err
-			}
-			// default utf-8
-			vector = append(vector, v)
-
-		} else {
-			vector = append(vector, nil)
-		}
-
-		c.cursor++
-	}
-
-	if (c.length.finished() && !c.data.finished()) || (c.data.finished() && !c.length.finished()) {
-		return errors.New("read error")
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
-
-type stringDirectV2Reader struct {
-	*treeReader
-	data   *stringContentsStreamReader
-	length *longV2StreamReader
-}
-
-func (c *stringDirectV2Reader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([]string)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			l, err := c.length.nextUInt()
-			if err != nil {
-				return err
-			}
-			v, err := c.data.next(l)
-			if err != nil {
-				return err
-			}
-			// default utf-8
-			vector = append(vector, string(v))
-
-		} else {
-			vector = append(vector, "")
-		}
-
-		c.cursor++
-	}
-
-	if (c.length.finished() && !c.data.finished()) || (c.data.finished() && !c.length.finished()) {
-		return errors.New("read error")
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
-
-type stringDictV2Reader struct {
-	*treeReader
-
-	data       *longV2StreamReader
-	dictData   *stringContentsStreamReader
-	dictLength *longV2StreamReader
-
-	dict    []string
-	lengths []uint64
-}
-
 func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 	var err error
 	vector := batch.Vector.([]string)
@@ -383,125 +210,6 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 	batch.ReadRows = len(vector)
 	return nil
 }
-
-
-type decimal64DirectV2Reader struct {
-	*treeReader
-	data      *varIntStreamReader
-	secondary *longV2StreamReader
-}
-
-func (c *decimal64DirectV2Reader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([]Decimal64)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			precision, err := c.data.next()
-			if err != nil {
-				return err
-			}
-			scala, err := c.secondary.nextInt64()
-			if err != nil {
-				return err
-			}
-			vector = append(vector, Decimal64{precision, int(scala)})
-
-		} else {
-			vector = append(vector, Decimal64{})
-		}
-
-		c.cursor++
-	}
-
-	if (c.data.finished() && !c.secondary.finished()) || (c.secondary.finished() && !c.data.finished()) {
-		return errors.New("read error")
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
-
-type floatReader struct {
-	*treeReader
-	data *floatStreamReader
-}
-
-func (c *floatReader) next(batch *ColumnVector) error {
-	vector := batch.Vector.([]float32)
-	vector = vector[:0]
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.next()
-			if err != nil {
-				return err
-			}
-			vector = append(vector, v)
-
-		} else {
-			vector = append(vector, 0)
-		}
-
-		c.cursor++
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
-
-
-type structReader struct {
-	*treeReader
-	children []columnReader
-}
-
-func (c *structReader) next(batch *ColumnVector) error {
-
-	if err := c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	vector := batch.Vector.([]*ColumnVector)
-
-	for i, child := range c.children {
-		if len(batch.Presents) != 0 {
-			// todo: it should check in prepare that
-			// there will be no presents is children while parent has presents
-
-			// reassure: if parent has presents, children use it
-			vector[i].Presents = batch.Presents
-		}
-
-		if err := child.next(vector[i]); err != nil {
-			return err
-		}
-	}
-
-	// reassure: no present, so readrows same as children readrows?
-	if len(batch.Presents) == 0 {
-		batch.ReadRows = vector[0].ReadRows
-	} else {
-		batch.ReadRows = len(batch.Presents)
-	}
-
-	c.cursor += uint64(batch.ReadRows)
-
-	return nil
-}
-
 
 
 */
@@ -678,12 +386,6 @@ func Max(x, y int64) int64 {
 		return x
 	}
 	return y
-}
-
-func assertx(condition bool) {
-	if !condition {
-		panic("assert error")
-	}
 }
 
 func ReadChunks(chunksBuf []byte, compressKind pb.CompressionKind, chunkBufferSize int) (decompressed []byte, err error) {

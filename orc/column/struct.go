@@ -1,42 +1,44 @@
 package column
 
 import (
+	"io"
+
+	"github.com/pkg/errors"
+
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	"github.com/pkg/errors"
-	"io"
 )
 
 type structReader struct {
 	*reader
 }
 
-func (c *structReader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *structReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err := c.f.Clone()
+		ic, err := r.f.Clone()
 		if err != nil {
 			return err
 		}
 		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
 			return err
 		}
-		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
 		return nil
 	}
 
 	return errors.New("struct column no stream other than present")
 }
 
-func (c *structReader) Next() (value api.Value, err error) {
-	if err = c.checkInit(); err != nil {
+func (r *structReader) Next() (value api.Value, err error) {
+	if err = r.checkInit(); err != nil {
 		return
 	}
 
-	if c.schema.HasNulls {
+	if r.schema.HasNulls {
 		var p bool
-		if p, err = c.present.Next(); err != nil {
+		if p, err = r.present.Next(); err != nil {
 			return
 		}
 		value.Null = !p
@@ -79,9 +81,9 @@ func (r structReader) checkInit() error {
 	return nil
 }
 
-func (c *structReader) Close() {
-	if c.schema.HasNulls {
-		c.present.Close()
+func (r *structReader) Close() {
+	if r.schema.HasNulls {
+		r.present.Close()
 	}
 }
 

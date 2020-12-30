@@ -9,21 +9,14 @@ import (
 	"testing"
 )
 
-/*func init() {
-	log.SetLevel(log.TraceLevel)
-}*/
-
 func TestStripeBasic(t *testing.T) {
-	//schema := api.TypeDescription{Kind: pb.Type_TIMESTAMP, Encoding: pb.ColumnEncoding_DIRECT_V2}
 	schema := api.TypeDescription{Kind: pb.Type_BYTE, Encoding: pb.ColumnEncoding_DIRECT}
-	schemas, err := schema.Normalize()
-	assert.Nil(t, err)
 
 	buf := make([]byte, 500)
 	f := orcio.NewMockFile(buf)
 
 	wopts := config.DefaultWriterOptions()
-	batch := api.CreateWriterBatch(schema, wopts)
+	batch, err := api.CreateWriterBatch(schema, wopts, false)
 
 	rows := 104
 
@@ -31,34 +24,10 @@ func TestStripeBasic(t *testing.T) {
 	for i := 0; i < rows; i++ {
 		values[i].V = byte(i)
 	}
-	/*layout := "2006-01-01 00:00:00.999999999"
-	v1, _ := time.Parse(layout, "2037-01-01 00:00:00.000999")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v1)})
-	v2, _ := time.Parse(layout, "2003-01-01 00:00:00.000000222")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v2)})
-	v3, _ := time.Parse(layout, "1999-01-01 00:00:00.999999999")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v3)})
-	v4, _ := time.Parse(layout, "1995-01-01 00:00:00.688888888")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v4)})
-	v5, _ := time.Parse(layout, "2002-01-01 00:00:00.1")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v5)})
-	v6, _ := time.Parse(layout, "2010-03-02 00:00:00.000009001")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v6)})
-	v7, _ := time.Parse(layout, "2005-01-01 00:00:00.000002229")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v7)})
-	v8, _ := time.Parse(layout, "2006-01-01 00:00:00.900203003")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v8)})
-	v9, _ := time.Parse(layout, "2003-01-01 00:00:00.800000007")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v9)})
-	v10, _ := time.Parse(layout, "1996-08-02 00:00:00.723100809")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v10)})
-	v11, _ := time.Parse(layout, "1998-11-02 00:00:00.857340643")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v11)})
-	v12, _ := time.Parse(layout, "2008-10-02 00:00:00")
-	vector = append(vector, api.Value{V:api.GetTimestamp(v12)})*/
-
 	batch.Vector = values
 
+	schemas, err:= schema.Flat()
+	assert.Nil(t, err)
 	writer, err := newStripeWriter(f, 0, schemas, &wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -91,10 +60,12 @@ func TestStructWithPresents (t *testing.T) {
 	child1 := api.TypeDescription{Id: 0, Kind: pb.Type_INT}
 	child1.Encoding = pb.ColumnEncoding_DIRECT_V2
 	schema.Children= []*api.TypeDescription{&child1}
-	schemas, _:= schema.Normalize()
+	err:=api.NormalizeSchema(&schema)
+	assert.Nil(t, err)
 
 	wopts := config.DefaultWriterOptions()
-	wbatch := api.CreateWriterBatch(schema, wopts)
+	wbatch, err := api.CreateWriterBatch(schema, wopts, false)
+	assert.Nil(t, err)
 
 	rows := 100
 
@@ -106,7 +77,7 @@ func TestStructWithPresents (t *testing.T) {
 
 	childValues := make([]api.Value, rows)
 	for i:=0; i<rows;i++ {
-		childValues[i].V= int64(i)
+		childValues[i].V= int32(i)
 	}
 	childValues[0].Null= true
 	childValues[0].V= nil
@@ -119,6 +90,8 @@ func TestStructWithPresents (t *testing.T) {
 	buf := make([]byte, 5000)
 	f := orcio.NewMockFile(buf)
 
+	schemas, err:= schema.Flat()
+	assert.Nil(t, err)
 	writer, err := newStripeWriter(f, 0, schemas, &wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)

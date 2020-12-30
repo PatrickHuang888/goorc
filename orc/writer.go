@@ -2,14 +2,16 @@ package orc
 
 import (
 	"bytes"
+
 	"github.com/golang/protobuf/proto"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 var VERSION = []uint32{0, 12}
@@ -25,13 +27,13 @@ type Writer interface {
 }
 
 // current version always write new file, no append
-func NewFileWriter(path string, schema *api.TypeDescription, opts *config.WriterOptions) (Writer, error) {
+func NewOSFileWriter(path string, schema *api.TypeDescription, opts config.WriterOptions) (Writer, error) {
 	log.Infof("open file %s", path)
 	f, err := orcio.OpenFileForWrite(path)
 	if err != nil {
 		return nil, err
 	}
-	w, err := newWriter(schema, opts, f)
+	w, err := newWriter(schema, &opts, f)
 	if err != nil {
 		return nil, err
 	}
@@ -39,8 +41,7 @@ func NewFileWriter(path string, schema *api.TypeDescription, opts *config.Writer
 }
 
 func newWriter(schema *api.TypeDescription, opts *config.WriterOptions, f orcio.File) (*writer, error) {
-	// normalize schema id from 0
-	schemas, err := schema.Normalize()
+	schemas, err := schema.Flat()
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +73,6 @@ type writer struct {
 
 	stripe *stripeWriter
 
-	//stripeInfos []*pb.StripeInformation
 	columnStats []*pb.ColumnStatistics
 
 	ps *pb.PostScript
@@ -81,8 +81,26 @@ type writer struct {
 }
 
 func (w *writer) Write(batch *api.ColumnVector) error {
+	if err := w.CheckBatch(batch); err != nil {
+		return err
+	}
+
 	if err := w.stripe.write(batch); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (w *writer) CheckBatch(batch *api.ColumnVector) error {
+	for _, v := range batch.Vector {
+		if v.Null && !w.schemas[batch.Id].HasNulls {
+			return errors.Errorf("schema %d %s has no nulls, but batch has null", batch.Id, w.schemas[batch.Id].Kind.String())
+		}
+	}
+	for _, c := range batch.Children {
+		if err := w.CheckBatch(&c); err != nil {
+			return err
+		}
 	}
 	return nil
 }
