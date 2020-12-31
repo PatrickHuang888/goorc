@@ -1,40 +1,49 @@
 package testing
 
 import (
-	"github.com/patrickhuang888/goorc/orc"
-	"github.com/patrickhuang888/goorc/orc/api"
+	"testing"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
-	"testing"
-	"time"
+
+	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/config"
+	"github.com/patrickhuang888/goorc/orc/stream"
 )
 
 func init() {
-	log.SetLevel(log.TraceLevel)
+	orc.SetLogLevel(log.DebugLevel)
+	stream.SetLogLevel(log.TraceLevel)
 }
 
 func TestBasicNoCompression(t *testing.T) {
-	opts := orc.DefaultReaderOptions()
-	reader, err := orc.NewFileReader("basicLongNoCompression.orc", opts)
+	opts := config.DefaultReaderOptions()
+	reader, err := orc.NewOSFileReader("basicLongNoCompression.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 
 	schema := reader.GetSchema()
-	batch := schema.CreateReaderBatch(opts)
+	batch := api.CreateReaderBatch(*schema, opts)
 
-	err = reader.Next(batch)
-	if err != nil {
-		t.Fatalf("%+v", err)
+	var vector []api.Value
+	for ; ; {
+		if err = reader.Next(&batch); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if batch.Len() == 0 {
+			break
+		}
+		vector = append(vector, batch.Vector...)
 	}
 
-	assert.Equal(t, 90, batch.ReadRows)
+	assert.Equal(t, 90, len(vector))
 
-	values := batch.Vector.([]int64)
-
-	min := values[0]
-	max := values[0]
-	for _, v := range values {
+	min := vector[0].V.(int64)
+	max := vector[0].V.(int64)
+	for _, vec := range vector {
+		v := vec.V.(int64)
 		if v < min {
 			min = v
 		}
@@ -50,7 +59,7 @@ func TestBasicNoCompression(t *testing.T) {
 	}
 }
 
-func TestPatchBaseNegativeMinNoCmpression(t *testing.T) {
+func TestPatchBaseNegativeMinNoCompression(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1,
 		3, 17, 71, 35, 2,
@@ -103,25 +112,34 @@ func TestPatchBaseNegativeMinNoCmpression(t *testing.T) {
 		4, 3, 3, 2, 2,
 		16}
 
-	opts := orc.DefaultReaderOptions()
-	reader, err := orc.NewFileReader("patchBaseNegativeMin.orc", opts)
+	opts := config.DefaultReaderOptions()
+	reader, err := orc.NewOSFileReader("patchBaseNegativeMin.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
 
-	batch := schema.CreateReaderBatch(opts)
+	batch := api.CreateReaderBatch(*schema, opts)
 
-	if err := reader.Next(batch);err != nil {
-		t.Fatalf("%+v", err)
+	var vector []int64
+	for ; ; {
+		if err := reader.Next(&batch); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if len(batch.Vector) == 0 {
+			break
+		}
+		for _, v := range batch.Vector {
+			vector = append(vector, v.V.(int64))
+		}
 	}
 
 	reader.Close()
 
-	assert.Equal(t, values, batch.Vector)
+	assert.Equal(t, values, vector)
 }
 
-func TestPatchBaseNegativeMin2NoCmppression(t *testing.T) {
+func TestPatchBaseNegativeMin2NoCompression(t *testing.T) {
 	values := []int64{
 		20, 2, 3, 2, 1, 3, 17, 71, 35, 2, 1, 139, 2, 2,
 		3, 1783, 475, 2, 1, 1, 3, 1, 3, 2, 32, 1, 2, 3, 1, 8, 30, 1, 3, 414, 1,
@@ -136,22 +154,31 @@ func TestPatchBaseNegativeMin2NoCmppression(t *testing.T) {
 		1, 13, 2, 3, 4, 1, 3, 1, 1, 2, 1, 1, 2, 4, 2, 207, 1, 1, 2, 4, 3, 3, 2,
 		2, 16}
 
-	opts := orc.DefaultReaderOptions()
-	reader, err := orc.NewFileReader("patchBaseNegativeMin2.orc", opts)
+	opts := config.DefaultReaderOptions()
+	reader, err := orc.NewOSFileReader("patchBaseNegativeMin2.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
 
-	batch := schema.CreateReaderBatch(opts)
+	batch := api.CreateReaderBatch(*schema, opts)
 
-	if err = reader.Next(batch);err != nil {
-		t.Fatalf("%+v", err)
+	var vector []int64
+	for ; ; {
+		if err = reader.Next(&batch); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if batch.Len() == 0 {
+			break
+		}
+		for _, v := range batch.Vector {
+			vector = append(vector, v.V.(int64))
+		}
 	}
 
 	reader.Close()
 
-	assert.Equal(t, values, batch.Vector)
+	assert.Equal(t, values, vector)
 }
 
 func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
@@ -169,61 +196,64 @@ func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
 		1, 13, 2, 3, 4, 1, 3, 1, 1, 2, 1, 1, 2, 4, 2, 207, 1, 1, 2, 4, 3, 3, 2,
 		2, 16}
 
-	opts := orc.DefaultReaderOptions()
-	reader, err := orc.NewFileReader("patchBaseNegativeMin3.orc", opts)
+	opts := config.DefaultReaderOptions()
+	reader, err := orc.NewOSFileReader("patchBaseNegativeMin3.orc", opts)
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
-	batch := schema.CreateReaderBatch(opts)
+	batch := api.CreateReaderBatch(*schema, opts)
 
-	if err = reader.Next(batch);err != nil {
-		t.Fatalf("%+v", err)
+	var vector []int64
+	for ; ; {
+		if err = reader.Next(&batch); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if batch.Len() == 0 {
+			break
+		}
+		for _, v := range batch.Vector {
+			vector = append(vector, v.V.(int64))
+		}
 	}
 
 	reader.Close()
 
-	assert.Equal(t, values, batch.Vector)
+	assert.Equal(t, values, vector)
 }
 
 func TestStructs(t *testing.T) {
-	opts := orc.DefaultReaderOptions()
-
-	reader, err := orc.NewFileReader("testStructs.0.12.orc", opts)
+	opts := config.DefaultReaderOptions()
+	reader, err := orc.NewOSFileReader("testStructs.0.12.orc", opts)
 	if err != nil {
-		t.Errorf("create reader error: %+v", err)
+		t.Fatalf("create reader error: %+v", err)
 	}
 
 	schema := reader.GetSchema()
-	log.Debugf("schema: %s", schema.String())
+	batch := api.CreateReaderBatch(*schema, opts)
 
-	batch := schema.CreateReaderBatch(opts)
-
-	if err := reader.Next(batch); err != nil {
+	if err := reader.Next(&batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	assert.Equal(t, 1024, batch.ReadRows)
+	assert.Equal(t, 1024, batch.Len())
 
-	if err := reader.Close(); err != nil {
-		t.Fatalf("%+v", err)
-	}
+	err = reader.Close()
+	assert.Nil(t, err)
 
-	cl1 := batch.Vector.([]*api.ColumnVector)[0]
+	vector := batch.Children[0].Vector
 	for i := 0; i < 1024; i++ {
 		if i < 200 || (i >= 400 && i < 600) || i >= 800 {
-			assert.Equal(t, false, cl1.Presents[i])
+			assert.Equal(t, true, vector[i].Null)
 		} else {
-			assert.Equal(t, true, cl1.Presents[i])
-			cl2 := cl1.Vector.([]*api.ColumnVector)[0]
-			vv := cl2.Vector.([]int64)
-			assert.Equal(t, i, int(vv[i]))
+			v := vector[i].V.(int64)
+			assert.Equal(t, i, int(v))
 		}
 	}
 
 }
 
-func TestTimestamp(t *testing.T) {
+/*func TestTimestamp(t *testing.T) {
 	opts := orc.DefaultReaderOptions()
 
 	reader, err := orc.NewFileReader("testTimestamp.0.12.orc", opts)
@@ -269,7 +299,7 @@ func TestTimestamp(t *testing.T) {
 	assert.Equal(t, len(values), batch.ReadRows)
 
 	layout := "2006-01-02 15:04:05.999999999"
-	loc, _ := time.LoadLocation("US/Pacific")  //data write with us/pacific locale
+	loc, _ := time.LoadLocation("US/Pacific") //data write with us/pacific locale
 	assert.Equal(t, t1, batch.Vector.([]api.Timestamp)[0].Time(loc).Format(layout))
 	assert.Equal(t, t2, batch.Vector.([]api.Timestamp)[1].Time(loc).Format(layout))
 	assert.Equal(t, t3, batch.Vector.([]api.Timestamp)[2].Time(loc).Format(layout))
@@ -304,7 +334,7 @@ func TestStringAndBinaryStatistics(t *testing.T) {
 	log.Debugf("schema: %s", schema.String())
 
 	// check the stats
-	stats:= reader.GetStatistics()
+	stats := reader.GetStatistics()
 	assert.Equal(t, 4, int(stats[0].GetNumberOfValues()))
 	assert.Equal(t, 15, int(stats[1].GetBinaryStatistics().GetSum()))
 
@@ -316,10 +346,10 @@ func TestStringAndBinaryStatistics(t *testing.T) {
 
 	assert.Equal(t, 4, batch.ReadRows)
 
-	if err=reader.Close();err!=nil {
+	if err = reader.Close(); err != nil {
 		t.Fatalf("%+v", err)
 	}
-}
+}*/
 
 /*func BenchmarkReader(b *testing.B) {
 	path := "/u01/apache/orc/java/bench/data/generated/taxi/orc.gz"

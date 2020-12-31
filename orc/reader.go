@@ -8,14 +8,12 @@ import (
 	"os"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
-
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -53,7 +51,7 @@ type reader struct {
 	stats []*pb.ColumnStatistics
 }
 
-func NewFileReader(path string, opts config.ReaderOptions) (Reader, error) {
+func NewOSFileReader(path string, opts config.ReaderOptions) (Reader, error) {
 	f, err := orcio.OpenFileForRead(path)
 	if err != nil {
 		return nil, err
@@ -81,10 +79,13 @@ func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) 
 	if opts.CompressionKind != pb.CompressionKind_NONE { // compression_none no block size
 		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
 	}
-	opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
+
+	// todo: check opts chunksize !=0
 
 	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: rows, stats: tail.Footer.GetStatistics()}
-	r.initStripes(f, tail.Footer.GetStripes())
+	if err = r.initStripes(f, tail.Footer.GetStripes()); err != nil {
+		return
+	}
 	return
 }
 
@@ -310,7 +311,7 @@ func extractFileTail(f orcio.File) (tail *pb.FileTail, err error) {
 	if ps.GetCompression() != pb.CompressionKind_NONE {
 		fb := bytes.NewBuffer(make([]byte, ps.GetCompressionBlockSize()))
 		fb.Reset()
-		if err := common.DecompressBuffer(ps.GetCompression(), fb, bytes.NewBuffer(footerBuf)); err != nil {
+		if err := common.DecompressChunks(ps.GetCompression(), fb, bytes.NewBuffer(footerBuf)); err != nil {
 			return nil, errors.WithStack(err)
 		}
 		footerBuf = fb.Bytes()
@@ -320,7 +321,7 @@ func extractFileTail(f orcio.File) (tail *pb.FileTail, err error) {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 
-	log.Debugf("read file footer: %s", footer.String())
+	logger.Debugf("read file footer: %s", footer.String())
 
 	fl := uint64(size)
 	psl := uint64(psLen)
@@ -337,7 +338,7 @@ func extractPostScript(buf []byte) (ps *pb.PostScript, err error) {
 		return nil, errors.Wrapf(err, "check orc version error")
 	}
 
-	log.Debugf("read file postscript: %s", ps.String())
+	logger.Debugf("read file postscript: %s", ps.String())
 
 	return ps, err
 }

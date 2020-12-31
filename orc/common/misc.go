@@ -224,7 +224,7 @@ func DecChunkHeader(h []byte) (length int, orig bool) {
 }
 
 // buffer should be compressed, maybe contains several chunks
-func DecompressBuffer(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (err error) {
+func DecompressChunks(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (err error) {
 	switch kind {
 	case pb.CompressionKind_ZLIB:
 		for src.Len() > 0 {
@@ -260,7 +260,7 @@ func DecompressBuffer(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buf
 	return
 }
 
-func DecompressChunkData(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
+func Decompress(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (n int64, err error) {
 	switch kind {
 
 	case pb.CompressionKind_ZLIB:

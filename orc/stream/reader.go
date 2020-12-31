@@ -143,7 +143,7 @@ func (r *reader) readAChunk() error {
 		return errors.WithStack(err)
 	}
 
-	if _, err := common.DecompressChunkData(r.opts.CompressionKind, r.buf, readBuf); err != nil {
+	if _, err := common.Decompress(r.opts.CompressionKind, r.buf, readBuf); err != nil {
 		return err
 	}
 

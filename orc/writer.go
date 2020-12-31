@@ -16,8 +16,6 @@ import (
 
 var VERSION = []uint32{0, 12}
 
-var logger = log.New()
-
 type Writer interface {
 	GetSchema() *api.TypeDescription
 

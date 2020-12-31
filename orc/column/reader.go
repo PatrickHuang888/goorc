@@ -1,13 +1,16 @@
 package column
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
+	"github.com/pkg/errors"
 	"io"
 	"strings"
 )
@@ -31,18 +34,31 @@ func (r *reader) String() string {
 }
 
 func (r *reader) InitIndex(startOffset uint64, length uint64) error {
-	var err error
-
-	if _, err = r.f.Seek(int64(startOffset), io.SeekStart); err != nil {
-		return err
+	if _, err := r.f.Seek(int64(startOffset), io.SeekStart); err != nil {
+		return errors.WithStack(err)
 	}
 
-	var buf = make([]byte, length)
-	if _, err = io.ReadFull(r.f, buf); err != nil {
-		return err
+	var buf []byte
+	tBuf := make([]byte, length)
+	if _, err := io.ReadFull(r.f, tBuf); err != nil {
+		return errors.WithStack(err)
+	}
+	if r.opts.CompressionKind==pb.CompressionKind_NONE {
+		buf= tBuf
+	}else {
+		cBuf:= &bytes.Buffer{}
+		if  err:=common.DecompressChunks(r.opts.CompressionKind, cBuf, bytes.NewBuffer(tBuf));err!=nil {
+			return err
+		}
+		buf= cBuf.Bytes()
 	}
 
-	return proto.Unmarshal(buf, r.index)
+	// unmarshal will call Reset on index first
+	r.index = &pb.RowIndex{}
+	if err := proto.Unmarshal(buf, r.index); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 func (r *reader) getIndexEntryAndOffset(rowNumber uint64) (entry *pb.RowIndexEntry, offset uint64) {
@@ -73,4 +89,3 @@ func (r *reader) seekPresent(indexEntry *pb.RowIndexEntry) error {
 	}
 	return r.present.Seek(chunk, chunkOffset, offset1, offset2)
 }
-

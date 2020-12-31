@@ -219,7 +219,7 @@ func (stripe *stripeReader) readFooter(info *pb.StripeInformation) (*pb.StripeFo
 	}
 	if stripe.opts.CompressionKind != pb.CompressionKind_NONE {
 		fb := &bytes.Buffer{}
-		if err := common.DecompressBuffer(stripe.opts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
+		if err := common.DecompressChunks(stripe.opts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
 			return nil, err
 		}
 		footerBuf = fb.Bytes()
@@ -282,8 +282,13 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 
 // a stripe is typically  ~200MB
 func (stripe *stripeReader) next(batch *api.ColumnVector) (end bool, err error) {
-	schema := stripe.schemas[batch.Id]
 	i := 0
+
+	page:= cap(batch.Vector)- len(batch.Vector)
+	if int(stripe.numberOfRows- stripe.cursor) < page {
+		page= int(stripe.numberOfRows- stripe.cursor)
+	}
+
 	for ; stripe.cursor+uint64(i) < stripe.numberOfRows && len(batch.Vector) < cap(batch.Vector); i++ {
 		var v api.Value
 		if v, err = stripe.columnReaders[batch.Id].Next(); err != nil {
@@ -291,25 +296,38 @@ func (stripe *stripeReader) next(batch *api.ColumnVector) (end bool, err error) 
 		}
 		batch.Vector = append(batch.Vector, v)
 
-		for i := 0; i < len(batch.Children); i++ {
-			var childValue api.Value
-			if schema.HasNulls && schema.Kind == pb.Type_STRUCT {
-				if v.Null {
-					childValue.Null = true
-				}
-			}
-			if !childValue.Null {
-				if childValue, err = stripe.columnReaders[batch.Children[i].Id].Next(); err != nil {
-					return
-				}
-			}
-			batch.Children[i].Vector = append(batch.Children[i].Vector, childValue)
+		if err = stripe.readChildren(batch); err != nil {
+			return
 		}
 	}
 	stripe.cursor += uint64(i)
 	logger.Debugf("stripe %d column %d has cursor %d", stripe.index, batch.Id, stripe.cursor)
 	end = stripe.cursor+1 >= stripe.numberOfRows
 	return
+}
+
+func (stripe *stripeReader) readChildren(batch *api.ColumnVector) error {
+	for _, c := range batch.Children {
+		for _, v := range batch.Vector {
+			cv := api.Value{}
+			if stripe.schemas[batch.Id].HasNulls {
+				cv.Null = v.Null
+			}
+			if !cv.Null {
+				v, err := stripe.columnReaders[c.Id].Next()
+				if err != nil {
+					return err
+				}
+				cv.V = v
+			}
+			c.Vector = append(c.Vector, cv)
+
+			if err := stripe.readChildren(&c); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // locate rows in this stripe
