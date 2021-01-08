@@ -94,7 +94,7 @@ func ToDays(d Date) int32 {
 type Timestamp struct {
 	Loc     *time.Location
 	Seconds int64
-	Nanos   uint32
+	Nanos   uint64
 }
 
 func (t Timestamp) Time() time.Time {
@@ -125,5 +125,34 @@ func (t Timestamp) GetMilliSecondsUtc() int64 {
 
 func GetTimestamp(t time.Time) Timestamp {
 	base := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	return Timestamp{t.Location(), t.Unix() - base, uint32(t.Nanosecond())}
+	return Timestamp{t.Location(), t.Unix() - base, uint64(t.Nanosecond())}
 }
+
+func EncodingTimestampNanos(nanos uint64) (encoded uint64) {
+	if nanos == 0 {
+		return 0
+	} else if nanos%100 != 0 {
+		return uint64(nanos) << 3 // no encoding if less 2 zeros
+	} else {
+		nanos /= 100
+		trailingZeros := 1
+		for nanos%10 == 0 && trailingZeros < 7 { // 3 bits
+			nanos /= 10
+			trailingZeros++
+		}
+		return nanos<<3 | uint64(trailingZeros)
+	}
+}
+
+func DecodingTimestampNanos(encoded uint64) (nano uint64) {
+	zeros := 0x07 & encoded
+	nano = encoded >> 3
+	if zeros != 0 {
+		for i := 0; i <= int(zeros); i++ {
+			nano *= 10
+		}
+	}
+	return
+}
+
+

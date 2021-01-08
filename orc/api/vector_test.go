@@ -31,3 +31,13 @@ func TestTimestampEncoding(test *testing.T) {
 	ts1 = GetTimestamp(t)
 	assert.Equal(test, ts, ts1)
 }
+
+func TestTimestampTrailing(t *testing.T) {
+	assert.Equal(t, uint64(0x0a), EncodingTimestampNanos(1000))
+	assert.Equal(t, uint64(0x0c), EncodingTimestampNanos(100000))
+}
+
+func TestNanoEncoding(t *testing.T) {
+	assert.Equal(t, uint64(0x0a), EncodingTimestampNanos(uint64(1000)))
+	assert.Equal(t, uint64(0x0c), EncodingTimestampNanos(uint64(100000)))
+}

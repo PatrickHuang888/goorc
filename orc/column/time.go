@@ -333,7 +333,7 @@ func (w *timestampWriter) Write(value api.Value) error {
 		if err := w.data.Write(t.Seconds); err != nil {
 			return err
 		}
-		if err := w.secondary.Write(uint64(t.Nanos)); err != nil {
+		if err := w.secondary.Write(api.EncodingTimestampNanos(t.Nanos)); err != nil {
 			return err
 		}
 
@@ -517,7 +517,7 @@ func (r *timestampV2Reader) Next() (value api.Value, err error) {
 		if ns, err = r.secondary.NextUInt64(); err != nil {
 			return
 		}
-		value.V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: uint32(ns)}
+		value.V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: api.DecodingTimestampNanos(ns)}
 	}
 	return
 }
@@ -550,7 +550,7 @@ func (r *timestampV2Reader) NextBatch(batch *api.ColumnVector) error {
 			if ns, err = r.secondary.NextUInt64(); err != nil {
 				return err
 			}
-			batch.Vector[i].V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: uint32(ns)}
+			batch.Vector[i].V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: api.DecodingTimestampNanos(ns)}
 		}
 	}
 	return nil
