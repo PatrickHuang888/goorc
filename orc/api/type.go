@@ -73,7 +73,9 @@ func SetId(root *TypeDescription) error {
 
 func CheckNulls(root *TypeDescription) error {
 	if root.HasNulls {
-		checkNulls(root)
+		if err := checkNulls(root); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -81,7 +83,9 @@ func CheckNulls(root *TypeDescription) error {
 func checkNulls(node *TypeDescription) error {
 	if node.HasNulls {
 		for _, c := range node.Children {
-			traverse(c, checkNoNull)
+			if err := traverse(c, checkNoNull); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -104,7 +108,7 @@ func (root *TypeDescription) Flat() (schemas []*TypeDescription, err error) {
 	if err = traverse(root, addSchema); err != nil {
 		return
 	}
-	schemas= _schemas
+	schemas = _schemas
 	return
 }
 
@@ -172,12 +176,31 @@ func SchemasToTypes(schemas []*TypeDescription) []*pb.Type {
 	return t
 }
 
-func CreateReaderBatch(td TypeDescription, opts config.ReaderOptions) ColumnVector {
-	batch := ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
-	for _, v := range td.Children {
-		batch.Children = append(batch.Children, CreateReaderBatch(*v, opts))
+func CreateReaderBatch(td *TypeDescription, opts config.ReaderOptions) (batch ColumnVector, err error) {
+	if err = verifySchema(td); err != nil {
+		return
 	}
-	return batch
+
+	batch = ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
+	for _, v := range td.Children {
+		var b ColumnVector
+		if b, err = CreateReaderBatch(v, opts); err != nil {
+			return
+		}
+		batch.Children = append(batch.Children, b)
+	}
+	return
+}
+
+func verifySchema(schema *TypeDescription) error {
+	if schema.Kind == pb.Type_STRUCT {
+		for _, c := range schema.Children {
+			if schema.HasNulls && c.HasNulls {
+				return errors.New("struct column has nulls cannot have nulls children")
+			}
+		}
+	}
+	return nil
 }
 
 // should normalize first

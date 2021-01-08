@@ -46,16 +46,16 @@ func (w *dateV2Writer) Write(value api.Value) error {
 
 	var days int32
 	if !value.Null {
-		date:= value.V.(api.Date)
-		days= api.ToDays(date)
+		date := value.V.(api.Date)
+		days = api.ToDays(date)
 		if err := w.data.Write(int64(days)); err != nil {
 			return err
 		}
 		if days < w.stats.DateStatistics.GetMinimum() {
-			*w.stats.DateStatistics.Minimum= days
+			*w.stats.DateStatistics.Minimum = days
 		}
 		if days > w.stats.DateStatistics.GetMaximum() {
-			*w.stats.DateStatistics.Maximum= days
+			*w.stats.DateStatistics.Maximum = days
 		}
 		*w.stats.NumberOfValues++
 	}
@@ -80,10 +80,10 @@ func (w *dateV2Writer) Write(value api.Value) error {
 		}
 		if !value.Null {
 			if days < w.stats.DateStatistics.GetMinimum() {
-				*w.stats.DateStatistics.Minimum= days
+				*w.stats.DateStatistics.Minimum = days
 			}
 			if days > w.stats.DateStatistics.GetMaximum() {
-				*w.stats.DateStatistics.Maximum= days
+				*w.stats.DateStatistics.Maximum = days
 			}
 			*w.indexStats.NumberOfValues++
 		}
@@ -196,6 +196,35 @@ func (r *dateV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
+func (r *dateV2Reader) NextBatch(batch *api.ColumnVector) error {
+	var err error
+	if err = r.checkInit(); err != nil {
+		return err
+	}
+
+	if r.schema.Id != batch.Id {
+		return errors.New("column error")
+	}
+
+	for i := 0; i < len(batch.Vector); i++ {
+		if r.schema.HasNulls {
+			var p bool
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+			batch.Vector[i].Null = !p
+		}
+
+		if !batch.Vector[i].Null {
+			batch.Vector[i].V, err = r.data.Next()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (r *dateV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 	if r.schema.HasNulls {
 		if err := r.seekPresent(indexEntry); err != nil {
@@ -257,10 +286,10 @@ func (r *dateV2Reader) Close() {
 
 func (r dateV2Reader) checkInit() error {
 	if r.data == nil {
-		return errors.New("stream data not initialized!")
+		return errors.New("stream data not initialized")
 	}
 	if r.schema.HasNulls && r.present == nil {
-		return errors.New("stream present not initialized!")
+		return errors.New("stream present not initialized")
 	}
 	return nil
 }
@@ -300,23 +329,23 @@ func (w *timestampWriter) Write(value api.Value) error {
 	}
 
 	if !value.Null {
-		time := value.V.(api.Timestamp)
-		if err := w.data.Write(time.Seconds); err != nil {
+		t := value.V.(api.Timestamp)
+		if err := w.data.Write(t.Seconds); err != nil {
 			return err
 		}
-		if err := w.secondary.Write(uint64(time.Nanos)); err != nil {
+		if err := w.secondary.Write(uint64(t.Nanos)); err != nil {
 			return err
 		}
 
 		*w.stats.NumberOfValues++
-		ms := time.GetMilliSeconds()
+		ms := t.GetMilliSeconds()
 		if ms < w.stats.TimestampStatistics.GetMinimum() {
 			*w.stats.TimestampStatistics.Minimum = ms
 		}
 		if ms > w.stats.TimestampStatistics.GetMaximum() {
 			*w.stats.TimestampStatistics.Maximum = ms
 		}
-		msUtc := time.GetMilliSecondsUtc()
+		msUtc := t.GetMilliSecondsUtc()
 		if ms < w.stats.TimestampStatistics.GetMinimumUtc() {
 			*w.stats.TimestampStatistics.Minimum = msUtc
 		}
@@ -417,10 +446,10 @@ func (w timestampWriter) GetStreamInfos() []*pb.Stream {
 	return []*pb.Stream{w.data.Info(), w.secondary.Info()}
 }
 
-func (t *timestampWriter) Reset() {
-	t.writer.reset()
-	t.data.Reset()
-	t.secondary.Reset()
+func (w *timestampWriter) Reset() {
+	w.writer.reset()
+	w.data.Reset()
+	w.secondary.Reset()
 }
 
 func (w timestampWriter) Size() int {
@@ -431,8 +460,8 @@ func (w timestampWriter) Size() int {
 }
 
 func NewTimestampV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File, loc *time.Location) Reader {
-	if loc==nil {
-		loc= time.Local
+	if loc == nil {
+		loc = time.Local
 	}
 	return &timestampV2Reader{reader: &reader{schema: schema, opts: opts, f: f}, loc: loc}
 }
@@ -481,16 +510,50 @@ func (r *timestampV2Reader) Next() (value api.Value, err error) {
 
 	if !value.Null {
 		var s int64
-		if s, err = r.data.NextInt64();err != nil {
+		if s, err = r.data.NextInt64(); err != nil {
 			return
 		}
 		var ns uint64
-		if ns, err = r.secondary.NextUInt64();err != nil {
+		if ns, err = r.secondary.NextUInt64(); err != nil {
 			return
 		}
-		value.V = api.Timestamp{Loc:r.loc, Seconds: s, Nanos: uint32(ns)}
+		value.V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: uint32(ns)}
 	}
 	return
+}
+
+func (r *timestampV2Reader) NextBatch(batch *api.ColumnVector) error {
+	var err error
+	if err = r.checkInit(); err != nil {
+		return err
+	}
+
+	if r.schema.Id != batch.Id {
+		return errors.New("column error")
+	}
+
+	for i := 0; i < len(batch.Vector); i++ {
+		if r.schema.HasNulls {
+			var p bool
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+			batch.Vector[i].Null = !p
+		}
+
+		if !batch.Vector[i].Null {
+			var s int64
+			if s, err = r.data.NextInt64(); err != nil {
+				return err
+			}
+			var ns uint64
+			if ns, err = r.secondary.NextUInt64(); err != nil {
+				return err
+			}
+			batch.Vector[i].V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: uint32(ns)}
+		}
+	}
+	return nil
 }
 
 func (r *timestampV2Reader) Seek(rowNumber uint64) error {

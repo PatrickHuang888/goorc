@@ -42,7 +42,7 @@ func (r *floatReader) InitStream(info *pb.Stream, startOffset uint64) error {
 }
 
 func (r *floatReader) Next() (value api.Value, err error) {
-	if err = r.checkStreams(); err != nil {
+	if err = r.checkInit(); err != nil {
 		return
 	}
 
@@ -61,6 +61,35 @@ func (r *floatReader) Next() (value api.Value, err error) {
 		}
 	}
 	return
+}
+
+func (r *floatReader) NextBatch(batch *api.ColumnVector) error {
+	var err error
+	if err = r.checkInit(); err != nil {
+		return err
+	}
+
+	if r.schema.Id != batch.Id {
+		return errors.New("column error")
+	}
+
+	for i := 0; i < len(batch.Vector); i++ {
+		if r.schema.HasNulls {
+			var p bool
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+			batch.Vector[i].Null = !p
+		}
+
+		if !batch.Vector[i].Null {
+			batch.Vector[i].V, err = r.data.NextFloat()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return err
 }
 
 func (r *floatReader) Seek(rowNumber uint64) error {
@@ -116,11 +145,11 @@ func (r *floatReader) seek(indexEntry *pb.RowIndexEntry) error {
 	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset)
 }
 
-func (c floatReader) checkInit() error {
-	if c.data == nil {
+func (r floatReader) checkInit() error {
+	if r.data == nil {
 		return errors.New("stream data not initialized!")
 	}
-	if c.schema.HasNulls && c.present == nil {
+	if r.schema.HasNulls && r.present == nil {
 		return errors.New("stream present not initialized!")
 	}
 	return nil
@@ -131,16 +160,6 @@ func (r *floatReader) Close() {
 		r.present.Close()
 	}
 	r.data.Close()
-}
-
-func (r floatReader) checkStreams() error {
-	if r.data == nil {
-		return errors.New("stream data not initialized!")
-	}
-	if r.schema.HasNulls && r.present == nil {
-		return errors.New("stream present not initialized!")
-	}
-	return nil
 }
 
 func newFloatWriter(schema *api.TypeDescription, opts *config.WriterOptions, is64 bool) Writer {

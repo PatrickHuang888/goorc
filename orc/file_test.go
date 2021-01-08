@@ -56,7 +56,8 @@ func TestString(t *testing.T) {
 	ropts := config.DefaultReaderOptions()
 	reader, err := newReader(&ropts, f)
 	assert.Nil(t, err)
-	rbatch := api.CreateReaderBatch(*reader.GetSchema(), ropts)
+	rbatch, err := api.CreateReaderBatch(reader.GetSchema(), ropts)
+	assert.Nil(t, err)
 
 	var vector []api.Value
 	for {
@@ -108,7 +109,8 @@ func TestMultipleStripes(t *testing.T) {
 	ropts.RowSize = 2000
 	reader, err := newReader(&ropts, f)
 	assert.Nil(t, err)
-	rbatch := api.CreateReaderBatch(*reader.GetSchema(), ropts)
+	rbatch, err := api.CreateReaderBatch(reader.GetSchema(), ropts)
+	assert.Nil(t, err)
 
 	var vector []api.Value
 	for {

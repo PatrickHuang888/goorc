@@ -185,6 +185,34 @@ func (c *byteReader) Next() (value api.Value, err error) {
 	return
 }
 
+func (r *byteReader) NextBatch(batch *api.ColumnVector) error {
+	var err error
+	if err = r.checkInit(); err != nil {
+		return err
+	}
+
+	if r.schema.Id != batch.Id {
+		return errors.New("column error")
+	}
+
+	for i := 0; i < len(batch.Vector); i++ {
+		if r.schema.HasNulls {
+			var p bool
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+			batch.Vector[i].Null = !p
+		}
+		if !batch.Vector[i].Null {
+			batch.Vector[i].V, err = r.data.Next()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (r *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
 	if r.schema.HasNulls {
 		if err := r.seekPresent(indexEntry); err != nil {

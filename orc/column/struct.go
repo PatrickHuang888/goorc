@@ -13,6 +13,7 @@ import (
 
 type structReader struct {
 	*reader
+	//children []Reader
 }
 
 func (r *structReader) InitStream(info *pb.Stream, startOffset uint64) error {
@@ -44,6 +45,41 @@ func (r *structReader) Next() (value api.Value, err error) {
 		value.Null = !p
 	}
 	return
+}
+
+func (r *structReader) NextBatch(batch *api.ColumnVector) error {
+	if err := r.checkInit(); err != nil {
+		return err
+	}
+
+	if r.schema.Id != batch.Id {
+		return errors.New("column id error")
+	}
+
+	if r.schema.HasNulls {
+		/*if len(batch.Vector) != 0 {
+			return errors.Errorf("struct column %d already has nulls", r.schema.Id)
+		}*/
+
+		for i := 0; i < len(batch.Vector); i++ {
+			p, err := r.present.Next()
+			if err != nil {
+				return err
+			}
+			batch.Vector[i].Null= !p
+
+			for j := 0; j < len(batch.Children); j++ {
+				batch.Children[j].Vector[i].Null= !p
+			}
+		}
+	}
+
+	/*for i, cr := range r.children {
+		if err := cr.NextBatch(&batch.Children[i]); err != nil {
+			return err
+		}
+	}*/
+	return nil
 }
 
 func (r *structReader) seek(indexEntry *pb.RowIndexEntry) error {

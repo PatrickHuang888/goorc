@@ -25,7 +25,8 @@ func TestBasicNoCompression(t *testing.T) {
 	}
 
 	schema := reader.GetSchema()
-	batch := api.CreateReaderBatch(*schema, opts)
+	batch, err := api.CreateReaderBatch(schema, opts)
+	assert.Nil(t, err)
 
 	var vector []api.Value
 	for ; ; {
@@ -118,8 +119,8 @@ func TestPatchBaseNegativeMinNoCompression(t *testing.T) {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
-
-	batch := api.CreateReaderBatch(*schema, opts)
+	batch, err := api.CreateReaderBatch(schema, opts)
+	assert.Nil(t, err)
 
 	var vector []int64
 	for ; ; {
@@ -161,7 +162,8 @@ func TestPatchBaseNegativeMin2NoCompression(t *testing.T) {
 	}
 	schema := reader.GetSchema()
 
-	batch := api.CreateReaderBatch(*schema, opts)
+	batch, err := api.CreateReaderBatch(schema, opts)
+	assert.Nil(t, err)
 
 	var vector []int64
 	for ; ; {
@@ -202,7 +204,8 @@ func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
-	batch := api.CreateReaderBatch(*schema, opts)
+	batch, err := api.CreateReaderBatch(schema, opts)
+	assert.Nil(t, err)
 
 	var vector []int64
 	for ; ; {
@@ -230,7 +233,8 @@ func TestStructs(t *testing.T) {
 	}
 
 	schema := reader.GetSchema()
-	batch := api.CreateReaderBatch(*schema, opts)
+	batch, err := api.CreateReaderBatch(schema, opts)
+	assert.Nil(t, err)
 
 	if err := reader.Next(&batch); err != nil {
 		t.Fatalf("%+v", err)
@@ -241,7 +245,7 @@ func TestStructs(t *testing.T) {
 	err = reader.Close()
 	assert.Nil(t, err)
 
-	vector := batch.Children[0].Vector
+	vector := batch.Children[0].Children[0].Vector // struct/struct/long
 	for i := 0; i < 1024; i++ {
 		if i < 200 || (i >= 400 && i < 600) || i >= 800 {
 			assert.Equal(t, true, vector[i].Null)

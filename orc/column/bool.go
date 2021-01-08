@@ -155,7 +155,9 @@ func (r *boolReader) InitStream(info *pb.Stream, startOffset uint64) error {
 			return err
 		}
 		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
-		ic.Seek(int64(startOffset), 0)
+		if _, err := ic.Seek(int64(startOffset), 0); err != nil {
+			return err
+		}
 		return nil
 	}
 	if info.GetKind() == pb.Stream_DATA {
@@ -164,7 +166,9 @@ func (r *boolReader) InitStream(info *pb.Stream, startOffset uint64) error {
 			return err
 		}
 		r.data = stream.NewBoolReader(r.opts, info, startOffset, ic)
-		ic.Seek(int64(startOffset), 0)
+		if _, err := ic.Seek(int64(startOffset), 0); err != nil {
+			return err
+		}
 		return nil
 	}
 	return errors.New("stream kind error")
@@ -190,6 +194,31 @@ func (r *boolReader) Next() (value api.Value, err error) {
 		}
 	}
 	return
+}
+
+func (r *boolReader) NextBatch(batch *api.ColumnVector) error {
+	var err error
+	if err = r.checkInit(); err != nil {
+		return err
+	}
+
+	for i := 0; i < len(batch.Vector); i++ {
+		if r.schema.HasNulls {
+			var p bool
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+			batch.Vector[i].Null = !p
+		}
+
+		if !batch.Vector[i].Null {
+			batch.Vector[i].V, err = r.data.Next()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (r *boolReader) Seek(rowNumber uint64) error {

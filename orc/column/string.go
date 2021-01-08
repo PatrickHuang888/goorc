@@ -201,8 +201,8 @@ type stringDirectV2Reader struct {
 	length *stream.IntRLV2Reader
 }
 
-func (s *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
-	f, err := s.f.Clone()
+func (r *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+	f, err := r.f.Clone()
 	if err != nil {
 		return err
 	}
@@ -212,13 +212,13 @@ func (s *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) e
 
 	switch info.GetKind() {
 	case pb.Stream_PRESENT:
-		s.present = stream.NewBoolReader(s.opts, info, startOffset, f)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 	case pb.Stream_DATA:
-		s.data = stream.NewStringContentsReader(s.opts, info, startOffset, f)
+		r.data = stream.NewStringContentsReader(r.opts, info, startOffset, f)
 	case pb.Stream_LENGTH:
-		s.length = stream.NewIntRLV2Reader(s.opts, info, startOffset, false, f)
+		r.length = stream.NewIntRLV2Reader(r.opts, info, startOffset, false, f)
 	default:
-		errors.New("stream kind not unknown")
+		return errors.New("stream kind not unknown")
 	}
 	return nil
 }
@@ -246,6 +246,38 @@ func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
 		}
 	}
 	return
+}
+
+func (r *stringDirectV2Reader) NextBatch(batch *api.ColumnVector) error {
+	var err error
+	if err = r.checkInit(); err != nil {
+		return err
+	}
+
+	if r.schema.Id != batch.Id {
+		return errors.New("column error")
+	}
+
+	for i := 0; i < len(batch.Vector); i++ {
+		if r.schema.HasNulls {
+			var p bool
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+			batch.Vector[i].Null = !p
+		}
+		if !batch.Vector[i].Null {
+			var l uint64
+			l, err = r.length.NextUInt64()
+			if err != nil {
+				return err
+			}
+			if batch.Vector[i].V, err = r.data.NextString(l); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
@@ -310,7 +342,7 @@ func (r *stringDirectV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 			}
 		}
 	}
-	if err:= r.data.Seek(dataChunk, dataChunkOffset, dataOffset);err!=nil {
+	if err := r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
 		return err
 	}
 	if err := r.length.Seek(lengthChunk, lengthChunkOffset, lengthOffset); err != nil {

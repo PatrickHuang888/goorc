@@ -26,6 +26,8 @@ type Reader interface {
 
 	Next() (value api.Value, err error)
 
+	NextBatch(batch *api.ColumnVector) error
+
 	// Seek seek to row number offset to current stripe
 	// if column is struct (or like)  children, and struct has present stream, then
 	// seek to non-null row that is calculated by parent
@@ -130,7 +132,6 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
 			// todo:
 			return nil, errors.New("not impl")
-			break
 		}
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			return nil, errors.New("not impl")
@@ -164,7 +165,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
-		return &structReader{&reader{schema: schema, opts: opts, f: in}}, nil
+		return &structReader{reader: &reader{schema: schema, opts: opts, f: in}}, nil
 
 	case pb.Type_LIST:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
@@ -284,7 +285,6 @@ func NewWriter(schema *api.TypeDescription, opts *config.WriterOptions) (Writer,
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			// todo:
 			return nil, errors.New("not impl")
-			break
 		}
 		return nil, errors.New("encoding error")
 
@@ -292,7 +292,6 @@ func NewWriter(schema *api.TypeDescription, opts *config.WriterOptions) (Writer,
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			// todo:
 			return nil, errors.New("not impl")
-			break
 		}
 		return nil, errors.New("encoding not impl")
 
@@ -306,5 +305,4 @@ func NewWriter(schema *api.TypeDescription, opts *config.WriterOptions) (Writer,
 	default:
 		return nil, errors.New("column kind unknown")
 	}
-	return nil, nil
 }

@@ -133,7 +133,7 @@ func (r *reader) Next(batch *api.ColumnVector) error {
 		}
 		if end {
 			r.stripeIndex++
-			if len(batch.Vector) >= cap(batch.Vector) {
+			if batch.Len() >= batch.Cap() {
 				break
 			}
 		} else {
@@ -143,7 +143,7 @@ func (r *reader) Next(batch *api.ColumnVector) error {
 	if r.stripeIndex == len(r.stripes) {
 		r.stripeIndex--
 	}
-	r.cursor += uint64(len(batch.Vector))
+	r.cursor += uint64(batch.Len())
 	return nil
 }
 

@@ -186,34 +186,34 @@ type intV2Reader struct {
 	bits int
 }
 
-func (c *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 
-	if c.schema.Encoding == pb.ColumnEncoding_DIRECT {
+	if r.schema.Encoding == pb.ColumnEncoding_DIRECT {
 		err := errors.New("int reader encoding direct not impl")
 		return err
 	}
 
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err := c.f.Clone()
+		ic, err := r.f.Clone()
 		if err != nil {
 			return err
 		}
 		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
 			return err
 		}
-		c.present = stream.NewBoolReader(c.opts, info, startOffset, ic)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
 		return nil
 	}
 
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err := c.f.Clone()
+		ic, err := r.f.Clone()
 		if err != nil {
 			return err
 		}
 		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
 			return err
 		}
-		c.data = stream.NewIntRLV2Reader(c.opts, info, startOffset, true, ic)
+		r.data = stream.NewIntRLV2Reader(r.opts, info, startOffset, true, ic)
 		return nil
 	}
 	return errors.New("stream unknown")
@@ -224,7 +224,6 @@ func (r *intV2Reader) Next() (value api.Value, err error) {
 		return
 	}
 
-	// if parent struct has nulls then child like int's schema will not has nulls ?
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -246,17 +245,52 @@ func (r *intV2Reader) Next() (value api.Value, err error) {
 		case BitsBigInt:
 			value.V = v
 		default:
-			errors.New("reader bits error")
+			err = errors.New("reader bits error")
 		}
 	}
 	return
 }
 
-func (c intV2Reader) checkInit() error {
-	if c.data == nil {
+func (r *intV2Reader) NextBatch(batch *api.ColumnVector) error {
+	var err error
+	if err = r.checkInit(); err != nil {
+		return err
+	}
+
+	for i := 0; i < len(batch.Vector); i++ {
+		if r.schema.HasNulls {
+			var p bool
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+			batch.Vector[i].Null = !p
+		}
+
+		if !batch.Vector[i].Null {
+			var v int64
+			if v, err = r.data.NextInt64(); err != nil {
+				return err
+			}
+			switch r.bits {
+			case BitsSmallInt:
+				batch.Vector[i].V = int16(v)
+			case BitsInt:
+				batch.Vector[i].V = int32(v)
+			case BitsBigInt:
+				batch.Vector[i].V = v
+			default:
+				err = errors.New("reader bits error")
+			}
+		}
+	}
+	return nil
+}
+
+func (r intV2Reader) checkInit() error {
+	if r.data == nil {
 		return errors.New("stream data not initialized!")
 	}
-	if c.schema.HasNulls && c.present == nil {
+	if r.schema.HasNulls && r.present == nil {
 		return errors.New("stream present not initialized!")
 	}
 	return nil
@@ -294,30 +328,30 @@ func (r *intV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset)
 }
 
-func (c *intV2Reader) Seek(rowNumber uint64) error {
-	if err := c.checkInit(); err != nil {
+func (r *intV2Reader) Seek(rowNumber uint64) error {
+	if err := r.checkInit(); err != nil {
 		return err
 	}
 
-	if !c.opts.HasIndex {
+	if !r.opts.HasIndex {
 		return errors.New("no index")
 	}
 
-	entry, offset := c.reader.getIndexEntryAndOffset(rowNumber)
-	if err := c.seek(entry); err != nil {
+	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err := r.seek(entry); err != nil {
 		return err
 	}
 	for i := 0; i < int(offset); i++ {
-		if _, err := c.Next(); err != nil {
+		if _, err := r.Next(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *intV2Reader) Close() {
-	if c.schema.HasNulls {
-		c.present.Close()
+func (r *intV2Reader) Close() {
+	if r.schema.HasNulls {
+		r.present.Close()
 	}
-	c.data.Close()
+	r.data.Close()
 }

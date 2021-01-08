@@ -23,16 +23,25 @@ func (cv *ColumnVector) Clear() {
 	}
 }
 
-func (cv ColumnVector) Len() int  {
+func (cv ColumnVector) Len() int {
 	// todo: other kind
-	if cv.Kind== pb.Type_STRUCT {
-		if len(cv.Vector)!=0 {
+	if cv.Kind == pb.Type_STRUCT {
+		if len(cv.Vector) != 0 {
 			// nulls
 			return len(cv.Vector)
 		}
-		return cv.Children[0].Len()
+		for _, c := range cv.Children {
+			if len(c.Vector) != 0 {
+				return len(c.Vector)
+			}
+			return c.Len()
+		}
 	}
 	return len(cv.Vector)
+}
+
+func (cv ColumnVector) Cap() int {
+	return cap(cv.Vector)
 }
 
 type Value struct {

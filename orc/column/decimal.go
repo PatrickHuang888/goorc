@@ -234,6 +234,39 @@ func (r *decimalV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
+func (r *decimalV2Reader) NextBatch(batch *api.ColumnVector) error {
+	var err error
+	if err = r.checkInit(); err != nil {
+		return err
+	}
+
+	if r.schema.Id != batch.Id {
+		return errors.New("column error")
+	}
+
+	for i := 0; i < len(batch.Vector); i++ {
+		if r.schema.HasNulls {
+			var p bool
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+			batch.Vector[i].Null = !p
+		}
+		if !batch.Vector[i].Null {
+			var precision int64
+			if precision, err = r.data.NextInt64(); err != nil {
+				return err
+			}
+			var scale int64
+			if scale, err = r.secondary.NextInt64(); err != nil {
+				return err
+			}
+			batch.Vector[i].V = api.Decimal64{Precision: precision, Scale: int(scale)}
+		}
+	}
+	return nil
+}
+
 func (r *decimalV2Reader) Seek(rowNumber uint64) error {
 	if err := r.checkInit(); err != nil {
 		return err
