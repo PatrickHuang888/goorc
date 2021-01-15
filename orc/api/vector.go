@@ -18,8 +18,8 @@ type ColumnVector struct {
 
 func (cv *ColumnVector) Clear() {
 	cv.Vector = cv.Vector[:0]
-	for _, c := range cv.Children {
-		c.Clear()
+	for i:=0; i<len(cv.Children); i++ {
+		cv.Children[i].Clear()
 	}
 }
 
@@ -56,15 +56,20 @@ type Decimal64 struct {
 }
 
 func (d Decimal64) String() string {
-	return fmt.Sprintf("%f", d.Float64())
+	return fmt.Sprintf("precision %d, scale %d", d.Precision, d.Scale)
 }
 
 func (d Decimal64) Float64() float64 {
+	if d.Scale==0 {
+		return float64(d.Precision)
+	}
 	if d.Scale > 0 {
 		return float64(d.Precision) * float64(10*d.Scale)
-	} else {
+	}
+	if d.Scale < 0 {
 		return float64(d.Precision) / float64(10*d.Scale)
 	}
+	return 0
 }
 
 // enhance: UTC

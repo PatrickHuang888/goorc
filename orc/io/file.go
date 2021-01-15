@@ -9,7 +9,7 @@ import (
 
 var logger = log.New()
 
-func SetLogLevel(level log.Level)  {
+func SetLogLevel(level log.Level) {
 	logger.SetLevel(level)
 }
 
@@ -22,26 +22,26 @@ type File interface {
 }
 
 type osFile struct {
-	path string
-	flag int
-	f    *os.File
+	path   string
+	isRead bool
+	f      *os.File
 }
 
 func OpenFileForRead(path string) (File, error) {
-	return OpenOsFile(path, os.O_RDONLY)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return &osFile{f: f, isRead: true, path: path}, nil
 }
 
 // should not exist, because cannot APPEND
 func OpenFileForWrite(path string) (File, error) {
-	return OpenOsFile(path, os.O_EXCL)
-}
-
-func OpenOsFile(path string, flag int) (File, error) {
-	f, err := os.OpenFile(path, flag, 0)
+	f, err := os.Create(path)
 	if err != nil {
 		return nil, err
 	}
-	return &osFile{f: f, flag: flag, path: path}, nil
+	return &osFile{f: f, path: path}, nil
 }
 
 func (f *osFile) Write(p []byte) (n int, err error) {
@@ -49,11 +49,14 @@ func (f *osFile) Write(p []byte) (n int, err error) {
 }
 
 func (f *osFile) Clone() (File, error) {
-	r, err := OpenOsFile(f.path, f.flag)
+	if !f.isRead {
+		return nil, errors.New("write file clone not impl")
+	}
+	r, err := os.Open(f.path)
 	if err != nil {
 		return nil, err
 	}
-	return r, nil
+	return &osFile{f.path, false, r}, nil
 }
 
 func (f *osFile) Size() (int64, error) {

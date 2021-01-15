@@ -48,11 +48,9 @@ func checkId(node *TypeDescription) error {
 }
 
 func CheckId(root *TypeDescription) error {
-	if len(root.Children) == 0 {
-		for _, c := range root.Children {
-			if err := traverse(c, checkId); err != nil {
-				return err
-			}
+	for _, c := range root.Children {
+		if err := traverse(c, checkId); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -204,8 +202,8 @@ func verifySchema(schema *TypeDescription) error {
 }
 
 // should normalize first
-func CreateWriterBatch(td TypeDescription, opts config.WriterOptions, createVector bool) (batch ColumnVector, err error) {
-	if err = CheckId(&td); err != nil {
+func CreateWriterBatch(td *TypeDescription, opts config.WriterOptions) (batch ColumnVector, err error) {
+	if err = CheckId(td); err != nil {
 		return
 	}
 
@@ -213,24 +211,24 @@ func CreateWriterBatch(td TypeDescription, opts config.WriterOptions, createVect
 		return
 	}
 
+	// todo: other type
 	if td.Kind == pb.Type_STRUCT {
 		var children []ColumnVector
 		for _, c := range td.Children {
 			var cb ColumnVector
-			if cb, err = CreateWriterBatch(*c, opts, createVector); err != nil {
+			if cb, err = CreateWriterBatch(c, opts); err != nil {
 				return
 			}
 			children = append(children, cb)
 		}
-		if createVector {
-			return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize), Children: children}, nil
-		} else {
-			return ColumnVector{Id: td.Id, Kind: td.Kind, Children: children}, nil
+		if td.HasNulls && opts.CreateVector {
+			return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opts.RowSize), Children: children}, nil
 		}
+		return ColumnVector{Id: td.Id, Kind: td.Kind, Children: children}, nil
 	}
 
-	if createVector {
-		return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}, nil
+	if opts.CreateVector {
+		return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opts.RowSize)}, nil
 	} else {
 		return ColumnVector{Id: td.Id, Kind: td.Kind}, nil
 	}

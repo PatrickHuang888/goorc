@@ -44,6 +44,8 @@ type WriterOptions struct {
 
 	WriteIndex  bool
 	IndexStride int
+
+	CreateVector bool
 }
 
 func CheckWriteOpts(opts * WriterOptions) error {
@@ -55,7 +57,8 @@ func CheckWriteOpts(opts * WriterOptions) error {
 
 func DefaultWriterOptions() WriterOptions {
 	return WriterOptions{CompressionKind: pb.CompressionKind_ZLIB, StripeSize: DEFAULT_STRIPE_SIZE, ChunkSize: DEFAULT_CHUNK_SIZE,
-		BufferSize: DefalutBufferSize, RowSize: DEFAULT_ROW_SIZE, EncoderBufferSize: DefalutBufferSize, IndexStride: DefaultIndexStride}
+		BufferSize: DefalutBufferSize, RowSize: DEFAULT_ROW_SIZE, EncoderBufferSize: DefalutBufferSize, IndexStride: DefaultIndexStride,
+	CreateVector:  true}
 }
 
 func DefaultReaderOptions() ReaderOptions {

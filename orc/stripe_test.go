@@ -10,13 +10,14 @@ import (
 )
 
 func TestStripeBasic(t *testing.T) {
-	schema := api.TypeDescription{Kind: pb.Type_BYTE, Encoding: pb.ColumnEncoding_DIRECT}
+	schema := &api.TypeDescription{Kind: pb.Type_BYTE, Encoding: pb.ColumnEncoding_DIRECT}
 
 	buf := make([]byte, 500)
 	f := orcio.NewMockFile(buf)
 
 	wopts := config.DefaultWriterOptions()
-	batch, err := api.CreateWriterBatch(schema, wopts, false)
+	wopts.CreateVector= false
+	batch, err := api.CreateWriterBatch(schema, wopts)
 
 	rows := 104
 
@@ -45,7 +46,8 @@ func TestStripeBasic(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	readBatch := api.CreateReaderBatch(schema, ropts)
+	readBatch, err := api.CreateReaderBatch(schema, ropts)
+	assert.Nil(t, err)
 
 	if _, err := reader.next(&readBatch); err != nil {
 		t.Fatalf("%+v", err)
@@ -55,16 +57,17 @@ func TestStripeBasic(t *testing.T) {
 }
 
 func TestStructWithPresents (t *testing.T) {
-	schema := api.TypeDescription{Id: 0, Kind: pb.Type_STRUCT, HasNulls: true}
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRUCT, HasNulls: true}
 	schema.Encoding = pb.ColumnEncoding_DIRECT
 	child1 := api.TypeDescription{Id: 0, Kind: pb.Type_INT}
 	child1.Encoding = pb.ColumnEncoding_DIRECT_V2
 	schema.Children= []*api.TypeDescription{&child1}
-	err:=api.NormalizeSchema(&schema)
+	err:=api.NormalizeSchema(schema)
 	assert.Nil(t, err)
 
 	wopts := config.DefaultWriterOptions()
-	wbatch, err := api.CreateWriterBatch(schema, wopts, false)
+	wopts.CreateVector= false
+	wbatch, err := api.CreateWriterBatch(schema, wopts)
 	assert.Nil(t, err)
 
 	rows := 100
@@ -109,7 +112,8 @@ func TestStructWithPresents (t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	rBatch := api.CreateReaderBatch(schema, ropts)
+	rBatch, err := api.CreateReaderBatch(schema, ropts)
+	assert.Nil(t, err)
 
 	if _, err := reader.next(&rBatch); err != nil {
 		t.Fatalf("%+v", err)

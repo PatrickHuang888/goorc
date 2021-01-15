@@ -21,7 +21,7 @@ func NewFloatReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, i
 
 func (r *FloatReader) NextFloat() (v float32, err error) {
 	if r.is64 {
-		return 0, errors.New("is 64 bit reader")
+		return 0, errors.Errorf("column %d is 64 bit reader", r.stream.info.GetColumn())
 	}
 	return encoding.DecodeFloat(r.stream)
 }

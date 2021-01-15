@@ -7,9 +7,14 @@ import (
 
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
+
+func NewStructReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
+	return &structReader{reader: &reader{schema: schema, opts: opts, f: f}}
+}
 
 type structReader struct {
 	*reader
@@ -47,38 +52,18 @@ func (r *structReader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *structReader) NextBatch(batch *api.ColumnVector) error {
+func (r *structReader) NextBatch(vector []api.Value) error {
 	if err := r.checkInit(); err != nil {
 		return err
 	}
 
-	if r.schema.Id != batch.Id {
-		return errors.New("column id error")
-	}
-
-	if r.schema.HasNulls {
-		/*if len(batch.Vector) != 0 {
-			return errors.Errorf("struct column %d already has nulls", r.schema.Id)
-		}*/
-
-		for i := 0; i < len(batch.Vector); i++ {
-			p, err := r.present.Next()
-			if err != nil {
-				return err
-			}
-			batch.Vector[i].Null= !p
-
-			for j := 0; j < len(batch.Children); j++ {
-				batch.Children[j].Vector[i].Null= !p
-			}
-		}
-	}
-
-	/*for i, cr := range r.children {
-		if err := cr.NextBatch(&batch.Children[i]); err != nil {
+	for i := 0; i < len(vector); i++ {
+		p, err := r.present.Next()
+		if err != nil {
 			return err
 		}
-	}*/
+		vector[i].Null = !p
+	}
 	return nil
 }
 
@@ -149,37 +134,35 @@ type structWriter struct {
 }
 
 func (w *structWriter) Write(value api.Value) error {
-	if w.schema.HasNulls {
-		if err := w.present.Write(!value.Null); err != nil {
-			return err
-		}
-		if !value.Null {
-			(*w.stats.BucketStatistics).Count[0]++
-		}
-		*w.stats.NumberOfValues++
+	if err := w.present.Write(!value.Null); err != nil {
+		return err
+	}
+	if !value.Null {
+		(*w.stats.BucketStatistics).Count[0]++
+	}
+	*w.stats.NumberOfValues++
 
-		if w.opts.WriteIndex {
-			w.indexInRows++
-			if w.indexInRows >= w.opts.IndexStride {
-				var pp []uint64
-				if w.schema.HasNulls {
-					pp = append(pp, w.present.GetPosition()...)
-				}
-				w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Positions: pp, Statistics: w.indexStats})
-				// new stats
-				w.indexStats = &pb.ColumnStatistics{BucketStatistics: &pb.BucketStatistics{Count: make([]uint64, 1)},
-					NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
-				if w.schema.HasNulls {
-					*w.indexStats.HasNull = true
-				}
-				w.indexInRows = 0
+	if w.opts.WriteIndex {
+		w.indexInRows++
+		if w.indexInRows >= w.opts.IndexStride {
+			var pp []uint64
+			if w.schema.HasNulls {
+				pp = append(pp, w.present.GetPosition()...)
 			}
-			// no bytes on disk index stats
-			if !value.Null {
-				(*w.indexStats.BucketStatistics).Count[0]++
+			w.index.Entry = append(w.index.Entry, &pb.RowIndexEntry{Positions: pp, Statistics: w.indexStats})
+			// new stats
+			w.indexStats = &pb.ColumnStatistics{BucketStatistics: &pb.BucketStatistics{Count: make([]uint64, 1)},
+				NumberOfValues: new(uint64), HasNull: new(bool), BytesOnDisk: new(uint64)}
+			if w.schema.HasNulls {
+				*w.indexStats.HasNull = true
 			}
-			*w.indexStats.NumberOfValues++
+			w.indexInRows = 0
 		}
+		// no bytes on disk index stats
+		if !value.Null {
+			(*w.indexStats.BucketStatistics).Count[0]++
+		}
+		*w.indexStats.NumberOfValues++
 	}
 	return nil
 }

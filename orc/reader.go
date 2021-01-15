@@ -26,7 +26,7 @@ type Reader interface {
 
 	NumberOfRows() uint64
 
-	Close() error
+	Close()
 
 	Next(batch *api.ColumnVector) error
 
@@ -115,8 +115,8 @@ func (r reader) GetStatistics() []*pb.ColumnStatistics {
 	return r.stats
 }
 
-func (r *reader) Close() error {
-	return r.stripes[r.stripeIndex].Close()
+func (r *reader) Close() {
+	r.stripes[r.stripeIndex].Close()
 }
 
 func (r *reader) Next(batch *api.ColumnVector) error {
@@ -133,10 +133,9 @@ func (r *reader) Next(batch *api.ColumnVector) error {
 		}
 		if end {
 			r.stripeIndex++
-			if batch.Len() >= batch.Cap() {
-				break
-			}
-		} else {
+			break
+		}
+		if batch.Len() >= batch.Cap() {
 			break
 		}
 	}
@@ -265,7 +264,7 @@ func extractFileTail(f orcio.File) (tail *pb.FileTail, err error) {
 		fmt.Printf("file size 0")
 		return
 	}
-	if size <= int64(len(MAGIC)) {
+	if size <= int64(len(Magic)) {
 		return nil, errors.New("not a valid orc file")
 	}
 
@@ -321,7 +320,20 @@ func extractFileTail(f orcio.File) (tail *pb.FileTail, err error) {
 		return nil, errors.Wrapf(err, "unmarshal footer error")
 	}
 
-	logger.Debugf("read file footer: %s", footer.String())
+	logger.Debugf("read file footer:\n")
+	logger.Debugf("header length: %d\n", footer.GetHeaderLength())
+	logger.Debugf("content length %d\n\n", footer.GetContentLength())
+	for i, v := range footer.Stripes {
+		logger.Debugf("stripe %d: %s\n", i, v.String())
+	}
+	logger.Debugf("\n")
+	for i, v := range footer.Types {
+		logger.Debugf("type %d: %s\n", i, v.String())
+	}
+	logger.Debugf("number of rows: %d\n\n", footer.GetNumberOfRows())
+	for i, v := range footer.Statistics {
+		logger.Debugf("stats %d: %s\n", i, v.String())
+	}
 
 	fl := uint64(size)
 	psl := uint64(psLen)
@@ -349,16 +361,16 @@ func checkOrcVersion(ps *pb.PostScript) error {
 }
 
 func ensureOrcFooter(f *os.File, psLen int, buf []byte) error {
-	magicLength := len(MAGIC)
+	magicLength := len(Magic)
 	fullLength := magicLength + 1
 	if psLen < fullLength || len(buf) < fullLength {
 		return errors.Errorf("malformed ORC file %stream, invalid postscript length %d", f.Name(), psLen)
 	}
 	// now look for the magic string at the end of the postscript.
-	//if (!Text.decode(array, offset, magicLength).equals(OrcFile.MAGIC)) {
+	//if (!Text.decode(array, offset, magicLength).equals(OrcFile.Magic)) {
 	offset := len(buf) - fullLength
 	// fixme: encoding
-	if string(buf[offset:]) != MAGIC {
+	if string(buf[offset:]) != Magic {
 		// If it isn't there, this may be the 0.11.0 version of ORC.
 		// Read the first 3 bytes of the file to check for the header
 		// todo:

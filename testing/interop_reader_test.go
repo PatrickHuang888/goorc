@@ -55,9 +55,7 @@ func TestBasicNoCompression(t *testing.T) {
 	assert.Equal(t, 1, int(min))
 	assert.Equal(t, 2000, int(max))
 
-	if err = reader.Close(); err != nil {
-		t.Fatalf("%+v", err)
-	}
+	reader.Close()
 }
 
 func TestPatchBaseNegativeMinNoCompression(t *testing.T) {
@@ -242,8 +240,7 @@ func TestStructs(t *testing.T) {
 
 	assert.Equal(t, 1024, batch.Len())
 
-	err = reader.Close()
-	assert.Nil(t, err)
+	reader.Close()
 
 	vector := batch.Children[0].Children[0].Vector // struct/struct/long
 	for i := 0; i < 1024; i++ {
@@ -336,9 +333,7 @@ func TestTimestamp(t *testing.T) {
 	/*assert.Equal(t, t11, batch.Vector.([]api.Timestamp)[10].Time(loc).Format(layout))
 	assert.Equal(t, t12, batch.Vector.([]api.Timestamp)[11].Time(loc).Format(layout))*/
 
-	if err := reader.Close(); err != nil {
-		t.Fatalf("%+v", err)
-	}
+	reader.Close()
 }
 
 /*func TestStringAndBinaryStatistics(t *testing.T) {

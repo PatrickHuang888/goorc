@@ -26,7 +26,7 @@ type Reader interface {
 
 	Next() (value api.Value, err error)
 
-	NextBatch(batch *api.ColumnVector) error
+	NextBatch(vector []api.Value) error
 
 	// Seek seek to row number offset to current stripe
 	// if column is struct (or like)  children, and struct has present stream, then
@@ -101,8 +101,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 			return NewStringDirectV2Reader(opts, schema, in), nil
 		}
 		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-			return nil, errors.New("not impl")
-			// todo:
+			return NewStringDictionaryV2Reader(opts, schema, in), nil
 		}
 		return nil, errors.New("column encoding error")
 
@@ -134,8 +133,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 			return nil, errors.New("not impl")
 		}
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			return nil, errors.New("not impl")
-			// todo:
+			return NewDecimal64V2Reader(schema, opts, in), nil
 		}
 		return nil, errors.New("column encoding error")
 
@@ -165,7 +163,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		if schema.Encoding != pb.ColumnEncoding_DIRECT {
 			return nil, errors.New("encoding error")
 		}
-		return &structReader{reader: &reader{schema: schema, opts: opts, f: in}}, nil
+		return NewStructReader(schema, opts, in), nil
 
 	case pb.Type_LIST:
 		if schema.Encoding == pb.ColumnEncoding_DIRECT {
@@ -235,7 +233,7 @@ func NewWriter(schema *api.TypeDescription, opts *config.WriterOptions) (Writer,
 			return newStringDirectV2Writer(schema, opts), nil
 		}
 		if schema.Encoding == pb.ColumnEncoding_DICTIONARY_V2 {
-			return newStringDirectV2Writer(schema, opts), nil
+			return NewStringDictionaryV2Writer(schema, opts), nil
 		}
 		return nil, errors.New("encoding not impl")
 

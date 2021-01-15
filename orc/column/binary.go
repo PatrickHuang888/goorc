@@ -200,30 +200,26 @@ func (r *binaryV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *binaryV2Reader) NextBatch(batch *api.ColumnVector) error {
+func (r *binaryV2Reader) NextBatch(vector []api.Value) error {
 	var err error
 	if err = r.checkInit(); err != nil {
 		return err
 	}
 
-	if r.schema.Id != batch.Id {
-		return errors.New("column error")
-	}
-
-	for i := 0; i < len(batch.Vector); i++ {
+	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			batch.Vector[i].Null = !p
+			vector[i].Null = !p
 		}
-		if !batch.Vector[i].Null {
+		if !vector[i].Null {
 			var l uint64
 			if l, err = r.length.NextUInt64(); err != nil {
 				return err
 			}
-			if batch.Vector[i].V, err = r.data.NextBytes(l); err != nil {
+			if vector[i].V, err = r.data.NextBytes(l); err != nil {
 				return err
 			}
 		}

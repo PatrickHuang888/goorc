@@ -38,13 +38,17 @@ func NewOSFileWriter(path string, schema *api.TypeDescription, opts config.Write
 	return w, nil
 }
 
-func newWriter(schema *api.TypeDescription, opts *config.WriterOptions, f orcio.File) (*writer, error) {
-	schemas, err := schema.Flat()
-	if err != nil {
-		return nil, err
+func newWriter(schema *api.TypeDescription, opts *config.WriterOptions, f orcio.File) (w *writer, err error) {
+	if err = api.NormalizeSchema(schema); err != nil {
+		return
 	}
 
-	w := &writer{opts: opts, f: f, schemas: schemas}
+	var schemas []*api.TypeDescription
+	if schemas, err = schema.Flat(); err != nil {
+		return
+	}
+
+	w = &writer{opts: opts, f: f, schemas: schemas}
 
 	var h uint64
 	if h, err = w.writeHeader(); err != nil {
@@ -57,7 +61,7 @@ func newWriter(schema *api.TypeDescription, opts *config.WriterOptions, f orcio.
 	for _, cw := range w.stripe.columnWriters {
 		w.columnStats = append(w.columnStats, cw.GetStats())
 	}
-	return w, nil
+	return
 }
 
 // cannot used concurrently, not synchronized
@@ -124,20 +128,20 @@ func (w *writer) Close() error {
 }
 
 func (w *writer) writeHeader() (uint64, error) {
-	b := []byte(MAGIC)
+	b := []byte(Magic)
 	if _, err := w.f.Write(b); err != nil {
 		return 0, errors.WithStack(err)
 	}
 	return uint64(len(b)), nil
 }
 
-var HEADER_LENGTH = uint64(3)
-var MAGIC = "ORC"
+var HeaderLength = uint64(3)
+var Magic = "ORC"
 
 func (w *writer) writeFileTail() error {
 	// Encode footer
-	// todo: rowsinstride
-	ft := &pb.Footer{HeaderLength: &HEADER_LENGTH, ContentLength: new(uint64), NumberOfRows: new(uint64)}
+	// todo: rows in stride
+	ft := &pb.Footer{HeaderLength: &HeaderLength, ContentLength: new(uint64), NumberOfRows: new(uint64)}
 
 	for _, si := range w.stripe.infos {
 		*ft.ContentLength += si.GetIndexLength() + si.GetDataLength() + si.GetFooterLength()
@@ -170,7 +174,7 @@ func (w *writer) writeFileTail() error {
 			return err
 		}
 	}
-	logger.Infof("write out compressed file tail %s (length: %d)", ft.String(), footLen)
+	logger.Infof("write out file tail %s (length: %d)", ft.String(), footLen)
 
 	// postscript
 	ps := &pb.PostScript{}
@@ -179,7 +183,7 @@ func (w *writer) writeFileTail() error {
 	c := uint64(w.opts.ChunkSize)
 	ps.CompressionBlockSize = &c
 	ps.Version = VERSION
-	ps.Magic = &MAGIC
+	ps.Magic = &Magic
 	psb, err := proto.Marshal(ps)
 	if err != nil {
 		return errors.WithStack(err)

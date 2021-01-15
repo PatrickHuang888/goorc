@@ -167,10 +167,6 @@ func (w intWriter) GetStreamInfos() []*pb.Stream {
 	return []*pb.Stream{w.data.Info()}
 }
 
-func (w intWriter) GetStats() *pb.ColumnStatistics {
-	return w.stats
-}
-
 func (w *intWriter) Reset() {
 	w.reset()
 	w.data.Reset()
@@ -251,33 +247,33 @@ func (r *intV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *intV2Reader) NextBatch(batch *api.ColumnVector) error {
+func (r *intV2Reader) NextBatch(vector []api.Value) error {
 	var err error
 	if err = r.checkInit(); err != nil {
 		return err
 	}
 
-	for i := 0; i < len(batch.Vector); i++ {
+	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			batch.Vector[i].Null = !p
+			vector[i].Null = !p
 		}
 
-		if !batch.Vector[i].Null {
+		if !vector[i].Null {
 			var v int64
 			if v, err = r.data.NextInt64(); err != nil {
 				return err
 			}
 			switch r.bits {
 			case BitsSmallInt:
-				batch.Vector[i].V = int16(v)
+				vector[i].V = int16(v)
 			case BitsInt:
-				batch.Vector[i].V = int32(v)
+				vector[i].V = int32(v)
 			case BitsBigInt:
-				batch.Vector[i].V = v
+				vector[i].V = v
 			default:
 				err = errors.New("reader bits error")
 			}

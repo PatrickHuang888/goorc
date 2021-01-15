@@ -55,8 +55,9 @@ func DecodeDouble(in io.Reader) (float64, error) {
 	if _, err := io.ReadFull(in, bb); err != nil {
 		return 0, errors.WithStack(err)
 	}
-	v := math.Float64frombits(binary.BigEndian.Uint64(bb))
-	//v := math.Float64frombits(binary.LittleEndian.Uint64(bb))
+	//v := math.Float64frombits(binary.BigEndian.Uint64(bb))
+	// Java writer write with little endian
+	v := math.Float64frombits(binary.LittleEndian.Uint64(bb))
 	return v, nil
 }
 
@@ -73,8 +74,8 @@ func (d double) Encode(v interface{}, out *bytes.Buffer) error {
 		return errors.New("double encoding value should be type float64")
 	}
 	bb := make([]byte, 8)
-	//binary.LittleEndian.PutUint64(bb, math.Float64bits(value))
-	binary.BigEndian.PutUint64(bb, math.Float64bits(value))
+	binary.LittleEndian.PutUint64(bb, math.Float64bits(value))
+	//binary.BigEndian.PutUint64(bb, math.Float64bits(value))
 	if _, err := out.Write(bb); err != nil {
 		return err
 	}
