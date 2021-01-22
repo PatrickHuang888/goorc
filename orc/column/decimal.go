@@ -186,21 +186,21 @@ type decimalV2Reader struct {
 }
 
 func (r *decimalV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
-	ic, err := r.f.Clone()
+	f, err := r.f.Clone()
 	if err != nil {
 		return err
 	}
-	if _, err = ic.Seek(int64(startOffset), io.SeekStart); err != nil {
+	if _, err = f.Seek(int64(startOffset), io.SeekStart); err != nil {
 		return err
 	}
 
 	switch info.GetKind() {
 	case pb.Stream_PRESENT:
-		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 	case pb.Stream_DATA:
-		r.data = stream.NewVarIntReader(r.opts, info, startOffset, ic)
+		r.data = stream.NewVarIntReader(r.opts, info, startOffset, f)
 	case pb.Stream_SECONDARY:
-		r.secondary = stream.NewIntRLV2Reader(r.opts, info, startOffset, true, ic)
+		r.secondary = stream.NewIntRLV2Reader(r.opts, info, startOffset, true, f)
 	default:
 		return errors.New("stream kind error")
 	}
@@ -208,10 +208,6 @@ func (r *decimalV2Reader) InitStream(info *pb.Stream, startOffset uint64) error 
 }
 
 func (r *decimalV2Reader) Next() (value api.Value, err error) {
-	if err = r.checkInit(); err != nil {
-		return
-	}
-
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -236,10 +232,6 @@ func (r *decimalV2Reader) Next() (value api.Value, err error) {
 
 func (r *decimalV2Reader) NextBatch(vector []api.Value) error {
 	var err error
-	if err = r.checkInit(); err != nil {
-		return err
-	}
-
 	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
@@ -264,15 +256,11 @@ func (r *decimalV2Reader) NextBatch(vector []api.Value) error {
 }
 
 func (r *decimalV2Reader) Seek(rowNumber uint64) error {
-	if err := r.checkInit(); err != nil {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err!=nil {
 		return err
 	}
-	if !r.opts.HasIndex {
-		return errors.New("no index")
-	}
-
-	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err := r.seek(entry); err != nil {
+	if err = r.seek(entry); err != nil {
 		return err
 	}
 	for i := 0; i < int(offset); i++ {
@@ -338,14 +326,4 @@ func (r *decimalV2Reader) Close() {
 	}
 	r.data.Close()
 	r.secondary.Close()
-}
-
-func (r decimalV2Reader) checkInit() error {
-	if r.schema.HasNulls && r.present == nil {
-		return errors.New("init error")
-	}
-	if r.data == nil || r.secondary == nil {
-		return errors.New("init error")
-	}
-	return nil
 }

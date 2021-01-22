@@ -65,7 +65,7 @@ func (w *byteWriter) Write(value api.Value) error {
 			}
 			w.indexInRows = 0
 		}
-		// fixme: does not write index statistic bytes on disk, java impl either
+		// java impl does not write index statistic bytes on disk, has nulls ...
 		if !value.Null {
 			*w.indexStats.BinaryStatistics.Sum++
 			*w.indexStats.NumberOfValues++
@@ -141,43 +141,40 @@ func NewByteReader(schema *api.TypeDescription, opts *config.ReaderOptions, f or
 	return &byteReader{reader: &reader{opts: opts, schema: schema, f: f}}
 }
 
-func (c *byteReader) InitStream(info *pb.Stream, startOffset uint64) error {
-	f, err := c.f.Clone()
+func (r *byteReader) InitStream(info *pb.Stream, startOffset uint64) error {
+	f, err := r.f.Clone()
 	if err != nil {
 		return err
 	}
+	if _, err = f.Seek(int64(startOffset), io.SeekStart); err != nil {
+		return err
+	}
+
 	switch info.GetKind() {
 	case pb.Stream_PRESENT:
-		if !c.schema.HasNulls {
+		if !r.schema.HasNulls {
 			return errors.New("column schema has no nulls")
 		}
-		c.present = stream.NewBoolReader(c.opts, info, startOffset, f)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 	case pb.Stream_DATA:
-		c.data = stream.NewByteReader(c.opts, info, startOffset, f)
+		r.data = stream.NewByteReader(r.opts, info, startOffset, f)
 	default:
-		errors.New("stream kind error")
-	}
-	if _, err = f.Seek(int64(startOffset), 0); err != nil {
-		return err
+		err = errors.New("stream kind error")
 	}
 	return nil
 }
 
-func (c *byteReader) Next() (value api.Value, err error) {
-	if err = c.checkInit(); err != nil {
-		return
-	}
-
-	if c.schema.HasNulls {
+func (r *byteReader) Next() (value api.Value, err error) {
+	if r.schema.HasNulls {
 		var p bool
-		if p, err = c.present.Next(); err != nil {
+		if p, err = r.present.Next(); err != nil {
 			return
 		}
 		value.Null = !p
 	}
 
 	if !value.Null {
-		value.V, err = c.data.Next()
+		value.V, err = r.data.Next()
 		if err != nil {
 			return
 		}
@@ -187,10 +184,6 @@ func (c *byteReader) Next() (value api.Value, err error) {
 
 func (r *byteReader) NextBatch(vector []api.Value) error {
 	var err error
-	if err = r.checkInit(); err != nil {
-		return err
-	}
-
 	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
@@ -200,8 +193,7 @@ func (r *byteReader) NextBatch(vector []api.Value) error {
 			vector[i].Null = !p
 		}
 		if !vector[i].Null {
-			vector[i].V, err = r.data.Next()
-			if err != nil {
+			if vector[i].V, err = r.data.Next(); err != nil {
 				return err
 			}
 		}
@@ -241,39 +233,25 @@ func (r *byteReader) seek(indexEntry *pb.RowIndexEntry) error {
 	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset)
 }
 
-func (c *byteReader) Seek(rowNumber uint64) error {
-	if !c.opts.HasIndex {
-		return errors.New("no index")
-	}
-	if err := c.checkInit(); err != nil {
+func (r *byteReader) Seek(rowNumber uint64) error {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err != nil {
 		return err
 	}
-
-	entry, offset := c.reader.getIndexEntryAndOffset(rowNumber)
-	if err := c.seek(entry); err != nil {
+	if err = r.seek(entry); err != nil {
 		return err
 	}
 	for i := 0; i < int(offset); i++ {
-		if _, err := c.Next(); err != nil {
+		if _, err := r.Next(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *byteReader) Close() {
-	if c.schema.HasNulls {
-		c.present.Close()
+func (r *byteReader) Close() {
+	if r.schema.HasNulls {
+		r.present.Close()
 	}
-	c.data.Close()
-}
-
-func (c byteReader) checkInit() error {
-	if c.data == nil {
-		return errors.New("stream data not initialized!")
-	}
-	if c.schema.HasNulls && c.present == nil {
-		return errors.New("stream present not initialized!")
-	}
-	return nil
+	r.data.Close()
 }

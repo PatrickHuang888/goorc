@@ -14,7 +14,7 @@ type StringContentsReader struct {
 }
 
 func NewStringContentsReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in orcio.File) *StringContentsReader {
-	return &StringContentsReader{stream: &reader{opts:opts, info: info, buf: &bytes.Buffer{}, in: in, start: start}}
+	return &StringContentsReader{stream: &reader{opts:opts, info: info, buf: &bytes.Buffer{}, f: in, start: start}}
 }
 
 func (r *StringContentsReader) NextBytes(len uint64) (v []byte, err error) {
@@ -49,7 +49,7 @@ func (r *StringContentsReader) getAllString(byteLengths []uint64) (vs []string, 
 	return
 }
 
-func (r *StringContentsReader) Seek(chunk uint64, chunkOffset uint64, offset uint64) error {
+func (r *StringContentsReader) Seek(chunk uint64, chunkOffset uint64) error {
 	if err := r.stream.seek(chunk, chunkOffset); err != nil {
 		return err
 	}

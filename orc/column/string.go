@@ -272,10 +272,6 @@ func (r *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) e
 }
 
 func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
-	if err = r.checkInit(); err != nil {
-		return
-	}
-
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -298,10 +294,6 @@ func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
 
 func (r *stringDirectV2Reader) NextBatch(vector []api.Value) error {
 	var err error
-	if err = r.checkInit(); err != nil {
-		return err
-	}
-
 	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
@@ -325,15 +317,10 @@ func (r *stringDirectV2Reader) NextBatch(vector []api.Value) error {
 }
 
 func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
-	if err := r.checkInit(); err != nil {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err != nil {
 		return err
 	}
-
-	if !r.opts.HasIndex {
-		return errors.New("no index")
-	}
-
-	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
 	if err := r.seek(entry); err != nil {
 		return err
 	}
@@ -351,42 +338,38 @@ func (r *stringDirectV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 			return err
 		}
 	}
-	var dataChunk, dataChunkOffset, dataOffset uint64
+	var dataChunk, dataChunkOffset uint64
 	var lengthChunk, lengthChunkOffset, lengthOffset uint64
 	if indexEntry != nil {
 		pos := indexEntry.Positions
 		if r.opts.CompressionKind == pb.CompressionKind_NONE {
 			if r.schema.HasNulls {
 				dataChunkOffset = pos[3]
-				dataOffset = pos[4]
-				lengthChunkOffset = indexEntry.Positions[5]
-				lengthOffset = indexEntry.Positions[6]
+				lengthChunkOffset = indexEntry.Positions[4]
+				lengthOffset = indexEntry.Positions[5]
 			} else {
 				dataChunkOffset = pos[0]
-				dataOffset = pos[1]
-				lengthChunkOffset = indexEntry.Positions[2]
-				lengthOffset = indexEntry.Positions[3]
+				lengthChunkOffset = indexEntry.Positions[1]
+				lengthOffset = indexEntry.Positions[2]
 			}
 
 		} else {
 			if r.schema.HasNulls {
 				dataChunk = pos[4]
 				dataChunkOffset = pos[5]
-				dataOffset = pos[6]
-				lengthChunk = indexEntry.Positions[7]
-				lengthChunkOffset = indexEntry.Positions[8]
-				lengthOffset = indexEntry.Positions[9]
+				lengthChunk = indexEntry.Positions[6]
+				lengthChunkOffset = indexEntry.Positions[7]
+				lengthOffset = indexEntry.Positions[8]
 			} else {
 				dataChunk = pos[0]
 				dataChunkOffset = pos[1]
-				dataOffset = pos[2]
-				lengthChunk = indexEntry.Positions[3]
-				lengthChunkOffset = indexEntry.Positions[4]
-				lengthOffset = indexEntry.Positions[5]
+				lengthChunk = indexEntry.Positions[2]
+				lengthChunkOffset = indexEntry.Positions[3]
+				lengthOffset = indexEntry.Positions[4]
 			}
 		}
 	}
-	if err := r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
+	if err := r.data.Seek(dataChunk, dataChunkOffset); err != nil {
 		return err
 	}
 	if err := r.length.Seek(lengthChunk, lengthChunkOffset, lengthOffset); err != nil {
@@ -401,21 +384,6 @@ func (r *stringDirectV2Reader) Close() {
 	}
 	r.data.Close()
 	r.length.Close()
-}
-
-func (r stringDirectV2Reader) checkInit() error {
-	if r.schema.HasNulls {
-		if r.present == nil {
-			return errors.New("present stream not initialized")
-		}
-	}
-	if r.data == nil {
-		return errors.New("data stream not initialized")
-	}
-	if r.length == nil {
-		return errors.New("length stream not initialized")
-	}
-	return nil
 }
 
 func NewStringDictionaryV2Reader(opts *config.ReaderOptions, schema *api.TypeDescription, f orcio.File) Reader {
@@ -455,15 +423,38 @@ func (r *stringDictionaryV2Reader) InitStream(info *pb.Stream, startOffset uint6
 }
 
 func (r *stringDictionaryV2Reader) Next() (value api.Value, err error) {
-	panic("implement me")
+	if r.schema.HasNulls {
+		var p bool
+		if p, err = r.present.Next(); err != nil {
+			return
+		}
+		value.Null = !p
+	}
+	if !value.Null {
+		var data uint64
+		if data, err = r.data.NextUInt64(); err != nil {
+			return
+		}
+		if int(data) > len(r.dictStrings)-1 {
+			for i := len(r.dictStrings); i <= int(data); i++ {
+				var l uint64
+				if l, err = r.length.NextUInt64(); err != nil {
+					return
+				}
+				var s string
+				if s, err = r.dict.NextString(l); err != nil {
+					return
+				}
+				r.dictStrings = append(r.dictStrings, s)
+			}
+		}
+		value.V = r.dictStrings[data]
+	}
+	return
 }
 
 func (r *stringDictionaryV2Reader) NextBatch(vector []api.Value) error {
 	var err error
-	if err = r.checkInit(); err != nil {
-		return err
-	}
-
 	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
@@ -497,16 +488,11 @@ func (r *stringDictionaryV2Reader) NextBatch(vector []api.Value) error {
 }
 
 func (r *stringDictionaryV2Reader) Seek(rowNumber uint64) error {
-	if err := r.checkInit(); err != nil {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err != nil {
 		return err
 	}
-
-	if !r.opts.HasIndex {
-		return errors.New("no index")
-	}
-
-	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err := r.seek(entry); err != nil {
+	if err = r.seek(entry); err != nil {
 		return err
 	}
 	for i := 0; i < int(offset); i++ {
@@ -523,26 +509,17 @@ func (r *stringDictionaryV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 			return err
 		}
 	}
+	// need data index only
 	var dataChunk, dataChunkOffset, dataOffset uint64
-	var dictChunk, dictChunkOffset, dictOffset uint64
-	var lengthChunk, lengthChunkOffset, lengthOffset uint64
 	if indexEntry != nil {
 		pos := indexEntry.Positions
 		if r.opts.CompressionKind == pb.CompressionKind_NONE { // no compression
 			if r.schema.HasNulls { // no compression has presents
 				dataChunkOffset = pos[3]
 				dataOffset = pos[4]
-				dictChunkOffset = pos[5]
-				dictOffset = pos[6]
-				lengthChunkOffset = pos[7]
-				lengthOffset = pos[8]
 			} else { // no compression, no present
 				dataChunkOffset = pos[0]
 				dataOffset = pos[1]
-				dictChunkOffset = pos[2]
-				dictOffset = pos[3]
-				lengthChunkOffset = pos[4]
-				lengthOffset = pos[5]
 			}
 
 		} else {
@@ -550,33 +527,15 @@ func (r *stringDictionaryV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 				dataChunk = pos[4]
 				dataChunkOffset = pos[5]
 				dataOffset = pos[6]
-				dictChunk = pos[7]
-				dictChunkOffset = pos[8]
-				dictOffset = pos[9]
-				lengthChunk = pos[10]
-				lengthChunkOffset = pos[11]
-				lengthOffset = pos[12]
 
 			} else { // has compression, no presents
 				dataChunk = pos[0]
 				dataChunkOffset = pos[1]
 				dataOffset = pos[2]
-				dictChunk = pos[3]
-				dictChunkOffset = pos[4]
-				dictOffset = pos[5]
-				lengthChunk = pos[6]
-				lengthChunkOffset = pos[7]
-				lengthOffset = pos[8]
 			}
 		}
 	}
 	if err := r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
-		return err
-	}
-	if err := r.dict.Seek(dictChunk, dictChunkOffset, dictOffset); err != nil {
-		return err
-	}
-	if err := r.length.Seek(lengthChunk, lengthChunkOffset, lengthOffset); err != nil {
 		return err
 	}
 	return nil
@@ -589,18 +548,6 @@ func (r *stringDictionaryV2Reader) Close() {
 	r.data.Close()
 	r.dict.Close()
 	r.length.Close()
-}
-
-func (r stringDictionaryV2Reader) checkInit() error {
-	if r.schema.HasNulls {
-		if r.present == nil {
-			return errors.New("present stream not initialized")
-		}
-	}
-	if r.data == nil || r.dict == nil || r.length == nil {
-		return errors.New("init error")
-	}
-	return nil
 }
 
 func NewStringDictionaryV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {

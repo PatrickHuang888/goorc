@@ -29,7 +29,6 @@ type ReaderOptions struct {
 
 	Loc *time.Location
 
-	HasIndex    bool
 	IndexStride int
 }
 

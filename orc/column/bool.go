@@ -146,39 +146,29 @@ type boolReader struct {
 }
 
 func (r *boolReader) InitStream(info *pb.Stream, startOffset uint64) error {
+	f, err := r.f.Clone()
+	if err != nil {
+		return err
+	}
+	if _, err = f.Seek(int64(startOffset), io.SeekStart); err != nil {
+		return err
+	}
+
 	if info.GetKind() == pb.Stream_PRESENT {
 		if !r.schema.HasNulls {
 			return errors.New("column schema has no nulls")
 		}
-		ic, err := r.f.Clone()
-		if err != nil {
-			return err
-		}
-		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
-		if _, err := ic.Seek(int64(startOffset), 0); err != nil {
-			return err
-		}
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 		return nil
 	}
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err := r.f.Clone()
-		if err != nil {
-			return err
-		}
-		r.data = stream.NewBoolReader(r.opts, info, startOffset, ic)
-		if _, err := ic.Seek(int64(startOffset), 0); err != nil {
-			return err
-		}
+		r.data = stream.NewBoolReader(r.opts, info, startOffset, f)
 		return nil
 	}
 	return errors.New("stream kind error")
 }
 
 func (r *boolReader) Next() (value api.Value, err error) {
-	if err = r.checkInit(); err != nil {
-		return
-	}
-
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -198,10 +188,6 @@ func (r *boolReader) Next() (value api.Value, err error) {
 
 func (r *boolReader) NextBatch(vector []api.Value) error {
 	var err error
-	if err = r.checkInit(); err != nil {
-		return err
-	}
-
 	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
@@ -222,16 +208,11 @@ func (r *boolReader) NextBatch(vector []api.Value) error {
 }
 
 func (r *boolReader) Seek(rowNumber uint64) error {
-	if err := r.checkInit(); err != nil {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err!=nil {
 		return err
 	}
-
-	if !r.opts.HasIndex {
-		return errors.New("no index")
-	}
-
-	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err := r.seek(entry); err != nil {
+	if err = r.seek(entry); err != nil {
 		return err
 	}
 	for i := 0; i < int(offset); i++ {
@@ -284,14 +265,4 @@ func (r *boolReader) Close() {
 		r.present.Close()
 	}
 	r.data.Close()
-}
-
-func (r boolReader) checkInit() error {
-	if r.data == nil {
-		return errors.New("stream data not initialized!")
-	}
-	if r.schema.HasNulls && r.present == nil {
-		return errors.New("stream present not initialized!")
-	}
-	return nil
 }

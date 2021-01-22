@@ -183,6 +183,13 @@ type intV2Reader struct {
 }
 
 func (r *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+	f, err := r.f.Clone()
+	if err != nil {
+		return err
+	}
+	if _, err := f.Seek(int64(startOffset), io.SeekStart); err != nil {
+		return err
+	}
 
 	if r.schema.Encoding == pb.ColumnEncoding_DIRECT {
 		err := errors.New("int reader encoding direct not impl")
@@ -190,36 +197,17 @@ func (r *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	}
 
 	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err := r.f.Clone()
-		if err != nil {
-			return err
-		}
-		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
-			return err
-		}
-		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 		return nil
 	}
-
 	if info.GetKind() == pb.Stream_DATA {
-		ic, err := r.f.Clone()
-		if err != nil {
-			return err
-		}
-		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
-			return err
-		}
-		r.data = stream.NewIntRLV2Reader(r.opts, info, startOffset, true, ic)
+		r.data = stream.NewIntRLV2Reader(r.opts, info, startOffset, true, f)
 		return nil
 	}
 	return errors.New("stream unknown")
 }
 
 func (r *intV2Reader) Next() (value api.Value, err error) {
-	if err = r.checkInit(); err != nil {
-		return
-	}
-
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -249,10 +237,6 @@ func (r *intV2Reader) Next() (value api.Value, err error) {
 
 func (r *intV2Reader) NextBatch(vector []api.Value) error {
 	var err error
-	if err = r.checkInit(); err != nil {
-		return err
-	}
-
 	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
@@ -278,16 +262,6 @@ func (r *intV2Reader) NextBatch(vector []api.Value) error {
 				err = errors.New("reader bits error")
 			}
 		}
-	}
-	return nil
-}
-
-func (r intV2Reader) checkInit() error {
-	if r.data == nil {
-		return errors.New("stream data not initialized!")
-	}
-	if r.schema.HasNulls && r.present == nil {
-		return errors.New("stream present not initialized!")
 	}
 	return nil
 }
@@ -325,16 +299,11 @@ func (r *intV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 }
 
 func (r *intV2Reader) Seek(rowNumber uint64) error {
-	if err := r.checkInit(); err != nil {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err!=nil {
 		return err
 	}
-
-	if !r.opts.HasIndex {
-		return errors.New("no index")
-	}
-
-	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err := r.seek(entry); err != nil {
+	if err = r.seek(entry); err != nil {
 		return err
 	}
 	for i := 0; i < int(offset); i++ {

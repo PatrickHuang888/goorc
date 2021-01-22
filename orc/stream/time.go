@@ -11,7 +11,7 @@ import (
 )
 
 func NewDateV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) DateReader {
-	stream := &reader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}
+	stream := &reader{opts: opts, info: info, start: start, f: in, buf: &bytes.Buffer{}}
 	decoder := encoding.NewDateV2DeCoder()
 	return &dateV2Reader{stream: stream, decoder: decoder}
 }

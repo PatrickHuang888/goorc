@@ -27,7 +27,7 @@ type reader struct {
 
 	opts *config.ReaderOptions
 
-	in orcio.File
+	f orcio.File
 }
 
 func (r *reader) ReadByte() (b byte, err error) {
@@ -85,7 +85,7 @@ func (r *reader) seek(chunk uint64, chunkOffset uint64) error {
 	logger.Tracef("seeking, stream %s of column %d seek to chunk %d, decompressed offset %d",
 		r.info.GetKind().String(), r.info.GetColumn(), chunk, chunkOffset)
 	r.buf.Reset()
-	if _, err := r.in.Seek(int64(r.start+chunk), io.SeekStart); err != nil {
+	if _, err := r.f.Seek(int64(r.start+chunk), io.SeekStart); err != nil {
 		return err
 	}
 	r.readLength = chunk
@@ -107,7 +107,7 @@ func (r *reader) readAChunk() error {
 
 		logger.Tracef("read a chunk, no compression copy %d from stream", l)
 
-		if _, err := io.CopyN(r.buf, r.in, int64(l)); err != nil {
+		if _, err := io.CopyN(r.buf, r.f, int64(l)); err != nil {
 			return errors.WithStack(err)
 		}
 
@@ -116,7 +116,7 @@ func (r *reader) readAChunk() error {
 	}
 
 	head := make([]byte, 3)
-	if _, err := io.ReadFull(r.in, head); err != nil {
+	if _, err := io.ReadFull(r.f, head); err != nil {
 		return errors.WithStack(err)
 	}
 	r.readLength += 3
@@ -130,7 +130,7 @@ func (r *reader) readAChunk() error {
 	}
 
 	if original {
-		if _, err := io.CopyN(r.buf, r.in, int64(chunkLength)); err != nil {
+		if _, err := io.CopyN(r.buf, r.f, int64(chunkLength)); err != nil {
 			return errors.WithStack(err)
 		}
 		r.readLength += uint64(chunkLength)
@@ -139,7 +139,7 @@ func (r *reader) readAChunk() error {
 
 	readBuf := bytes.NewBuffer(make([]byte, chunkLength))
 	readBuf.Reset()
-	if _, err := io.CopyN(readBuf, r.in, int64(chunkLength)); err != nil {
+	if _, err := io.CopyN(readBuf, r.f, int64(chunkLength)); err != nil {
 		return errors.WithStack(err)
 	}
 
@@ -157,7 +157,7 @@ func (r reader) finished() bool {
 }
 
 func (r *reader) Close() {
-	if err := r.in.Close(); err != nil {
-		logger.Error("closing error ", err)
+	if err := r.f.Close(); err != nil {
+		logger.Errorf("stream %s closing error,  %s", r.info.String(), err)
 	}
 }

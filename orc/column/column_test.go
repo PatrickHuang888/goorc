@@ -54,7 +54,6 @@ func TestIntV2(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	ropts.HasIndex = true
 	ropts.IndexStride = 200
 	r, err := NewReader(schema, &ropts, f)
 	assert.Nil(t, err)
@@ -189,7 +188,6 @@ func TestBool(t *testing.T) {
 
 	ropts := config.DefaultReaderOptions()
 	ropts.IndexStride = 130
-	ropts.HasIndex = true
 
 	reader := NewBoolReader(&schema, &ropts, f).(*boolReader)
 	reader.index = writer.index
@@ -344,7 +342,6 @@ func TestStringDirectV2Index(t *testing.T) {
 
 	ropts := config.DefaultReaderOptions()
 	ropts.IndexStride = 200
-	ropts.HasIndex = true
 	reader := NewStringDirectV2Reader(&ropts, &schema, f).(*stringDirectV2Reader)
 	reader.index = writer.index
 	err := reader.InitStream(writer.data.Info(), 0)
@@ -455,7 +452,6 @@ func TestByteOnIndex(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	ropts.HasIndex = true
 	ropts.IndexStride = indexStride
 	reader := NewByteReader(schema, &ropts, f).(*byteReader)
 	reader.index = writer.index
@@ -536,7 +532,6 @@ func TestByteOnIndexWithPresents(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	ropts.HasIndex = true
 	ropts.IndexStride = indexStride
 
 	reader := NewByteReader(schema, &ropts, f).(*byteReader)

@@ -3,9 +3,8 @@ package stream
 import (
 	"bytes"
 	"github.com/patrickhuang888/goorc/orc/config"
-	orcio "github.com/patrickhuang888/goorc/orc/io"
-
 	"github.com/patrickhuang888/goorc/orc/encoding"
+	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
@@ -17,7 +16,7 @@ type ByteReader struct {
 }
 
 func NewByteReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in orcio.File) *ByteReader{
-	return &ByteReader{stream: &reader{opts: opts, info: info, start: start, in: in, buf: &bytes.Buffer{}}}
+	return &ByteReader{stream: &reader{opts: opts, info: info, start: start, f: in, buf: &bytes.Buffer{}}}
 }
 
 func (r *ByteReader) Next() (v byte, err error) {

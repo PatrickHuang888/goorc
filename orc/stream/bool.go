@@ -33,11 +33,11 @@ func (r *BoolReader) Next() (v bool, err error) {
 }
 
 func (r *BoolReader) Seek(chunkOffset uint64, offset uint64, byteRLOffset uint64, valueOffset uint64) error {
-	if err := r.reader.Seek(chunkOffset, offset, byteRLOffset);err != nil {
+	if err := r.reader.Seek(chunkOffset, offset, byteRLOffset); err != nil {
 		return err
 	}
 	r.pos = 0
-	r.values= nil
+	r.values = nil
 	for i := 0; i < int(valueOffset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err

@@ -65,6 +65,8 @@ func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) 
 		return nil, errors.Wrap(err, "read file tail error")
 	}
 
+	opts.IndexStride= int(tail.Footer.GetRowIndexStride())
+
 	rows := tail.GetFooter().GetNumberOfRows()
 	if rows == 0 {
 		return nil, errors.New("file footer error, number of rows 0")
@@ -83,7 +85,7 @@ func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) 
 	// todo: check opts chunksize !=0
 
 	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: rows, stats: tail.Footer.GetStatistics()}
-	if err = r.initStripes(f, tail.Footer.GetStripes()); err != nil {
+	if err = r.initStripes(tail.Footer.GetStripes()); err != nil {
 		return
 	}
 	return
@@ -97,12 +99,12 @@ func (r *reader) NumberOfRows() uint64 {
 	return r.numberOfRows
 }
 
-func (r *reader) initStripes(f orcio.File, infos []*pb.StripeInformation) error {
+func (r *reader) initStripes(infos []*pb.StripeInformation) error {
 	for i, stripeInfo := range infos {
 		if stripeInfo.GetNumberOfRows() == 0 {
 			return errors.Errorf("stripe number of rows 0 err, %s", stripeInfo.String())
 		}
-		sr, err := newStripeReader(f, r.schemas, r.opts, i, stripeInfo)
+		sr, err := newStripeReader(r.f, r.schemas, r.opts, i, stripeInfo)
 		if err != nil {
 			return err
 		}
@@ -116,7 +118,12 @@ func (r reader) GetStatistics() []*pb.ColumnStatistics {
 }
 
 func (r *reader) Close() {
-	r.stripes[r.stripeIndex].Close()
+	if err:=r.f.Close();err!=nil {
+		logger.Warnf("file closing, %s", err.Error())
+	}
+	for _, s := range r.stripes {
+		s.Close()
+	}
 }
 
 func (r *reader) Next(batch *api.ColumnVector) error {
@@ -217,15 +224,18 @@ func (c *stringDictV2Reader) next(batch *ColumnVector) error {
 func unmarshallSchema(types []*pb.Type) (schemas []*api.TypeDescription) {
 	schemas = make([]*api.TypeDescription, len(types))
 	for i, t := range types {
-		node := &api.TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
-		schemas[i] = node
+		schemas[i] = &api.TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
 	}
 	for i, t := range types {
-		schemas[i].Children = make([]*api.TypeDescription, len(t.Subtypes))
-		schemas[i].ChildrenNames = make([]string, len(t.Subtypes))
-		for j, v := range t.Subtypes {
-			schemas[i].ChildrenNames[j] = t.FieldNames[j]
-			schemas[i].Children[j] = schemas[v]
+		if len(t.Subtypes)!=0 {
+			schemas[i].Children = make([]*api.TypeDescription, len(t.Subtypes))
+			schemas[i].ChildrenNames = make([]string, len(t.Subtypes))
+			for j, sub := range t.Subtypes {
+				if t.GetKind()==pb.Type_STRUCT {  // only struct has children names?
+					schemas[i].ChildrenNames[j] = t.FieldNames[j]
+				}
+				schemas[i].Children[j] = schemas[sub]
+			}
 		}
 	}
 	return
@@ -331,8 +341,9 @@ func extractFileTail(f orcio.File) (tail *pb.FileTail, err error) {
 		logger.Debugf("type %d: %s\n", i, v.String())
 	}
 	logger.Debugf("number of rows: %d\n\n", footer.GetNumberOfRows())
+	logger.Debug("Statistics:")
 	for i, v := range footer.Statistics {
-		logger.Debugf("stats %d: %s\n", i, v.String())
+		logger.Debugf("stats %d: %s", i, v.String())
 	}
 
 	fl := uint64(size)

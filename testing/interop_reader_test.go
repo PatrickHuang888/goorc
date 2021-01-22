@@ -9,12 +9,11 @@ import (
 	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
-	"github.com/patrickhuang888/goorc/orc/stream"
 )
 
 func init() {
 	orc.SetLogLevel(log.DebugLevel)
-	stream.SetLogLevel(log.TraceLevel)
+	//stream.SetLogLevel(log.TraceLevel)
 }
 
 func TestBasicNoCompression(t *testing.T) {
@@ -320,10 +319,10 @@ func TestTimestamp(t *testing.T) {
 	assert.Equal(t, t5, v5.Time().Format(layout))
 
 	/*
-	assert.Equal(t, t6, batch.Vector.([]api.Timestamp)[5].Time(loc).Format(layout))
-	assert.Equal(t, t7, batch.Vector.([]api.Timestamp)[6].Time(loc).Format(layout))
-	assert.Equal(t, t8, batch.Vector.([]api.Timestamp)[7].Time(loc).Format(layout))
-	assert.Equal(t, t9, batch.Vector.([]api.Timestamp)[8].Time(loc).Format(layout))*/
+		assert.Equal(t, t6, batch.Vector.([]api.Timestamp)[5].Time(loc).Format(layout))
+		assert.Equal(t, t7, batch.Vector.([]api.Timestamp)[6].Time(loc).Format(layout))
+		assert.Equal(t, t8, batch.Vector.([]api.Timestamp)[7].Time(loc).Format(layout))
+		assert.Equal(t, t9, batch.Vector.([]api.Timestamp)[8].Time(loc).Format(layout))*/
 
 	// data written has daylight saving
 	// todo: daylight saving
@@ -363,6 +362,47 @@ func TestTimestamp(t *testing.T) {
 	if err = reader.Close(); err != nil {
 		t.Fatalf("%+v", err)
 	}
+}*/
+
+/*func TestSeek(t *testing.T) {
+	opts := config.DefaultReaderOptions()
+
+	reader, err := orc.NewOSFileReader("testSeek.0.12.orc", opts)
+	defer reader.Close()
+	if err != nil {
+		t.Errorf("create reader error: %+v", err)
+	}
+
+	nor := reader.NumberOfRows()
+	log.Infof("number of rows %d", nor)
+
+	schema := reader.GetSchema()
+	batch, err := api.CreateReaderBatch(schema, opts)
+	assert.Nil(t, err)
+
+	count:=0
+
+	for {
+		if err := reader.Next(&batch); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if batch.Len()==0 {
+			break
+		}else {
+			count += batch.Len()
+		}
+	}
+
+	fmt.Printf("read rows %d\n", count)
+	assert.Equal(t, int(nor), count)
+
+	if err:=reader.Seek(100);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+
+	//if err:=reader.Seek(1500);err!=nil {
+	//	t.Fatalf("%+v", err)
+	//}
 }*/
 
 /*func BenchmarkReader(b *testing.B) {

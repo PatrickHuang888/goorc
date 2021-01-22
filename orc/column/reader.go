@@ -61,7 +61,12 @@ func (r *reader) InitIndex(startOffset uint64, length uint64) error {
 	return nil
 }
 
-func (r *reader) getIndexEntryAndOffset(rowNumber uint64) (entry *pb.RowIndexEntry, offset uint64) {
+func (r *reader) getIndexEntryAndOffset(rowNumber uint64) (entry *pb.RowIndexEntry, offset uint64, err error) {
+	if r.index==nil {
+		err= errors.New("no index")
+		return
+	}
+
 	if rowNumber < uint64(r.opts.IndexStride) {
 		offset = rowNumber
 		return
@@ -77,10 +82,12 @@ func (r *reader) seekPresent(indexEntry *pb.RowIndexEntry) error {
 	if indexEntry != nil {
 		pos := indexEntry.Positions
 		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			// no compression
 			chunkOffset = pos[0]
 			offset1 = pos[1]
 			offset2 = pos[2]
 		} else {
+			// compression
 			chunk = pos[0]
 			chunkOffset = pos[1]
 			offset1 = pos[2]

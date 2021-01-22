@@ -171,8 +171,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 			return nil, errors.New("not impl")
 		}
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// todo:
-
+			return NewListV2Reader(schema, opts, in), nil
 		}
 		return nil, errors.New("encoding error")
 
@@ -182,7 +181,7 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 			return nil, errors.New("not impl")
 		}
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
-			// todo:
+			return NewMapV2Reader(schema, opts, in), nil
 			break
 		}
 		return nil, errors.New("encoding error")

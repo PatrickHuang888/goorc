@@ -22,26 +22,22 @@ type structReader struct {
 }
 
 func (r *structReader) InitStream(info *pb.Stream, startOffset uint64) error {
-	if info.GetKind() == pb.Stream_PRESENT {
-		ic, err := r.f.Clone()
-		if err != nil {
-			return err
-		}
-		if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
-			return err
-		}
-		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
-		return nil
+	f, err := r.f.Clone()
+	if err != nil {
+		return err
+	}
+	if _, err := f.Seek(int64(startOffset), io.SeekStart); err != nil {
+		return err
 	}
 
+	if info.GetKind() == pb.Stream_PRESENT {
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
+		return nil
+	}
 	return errors.New("struct column no stream other than present")
 }
 
 func (r *structReader) Next() (value api.Value, err error) {
-	if err = r.checkInit(); err != nil {
-		return
-	}
-
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -53,16 +49,14 @@ func (r *structReader) Next() (value api.Value, err error) {
 }
 
 func (r *structReader) NextBatch(vector []api.Value) error {
-	if err := r.checkInit(); err != nil {
-		return err
-	}
-
-	for i := 0; i < len(vector); i++ {
-		p, err := r.present.Next()
-		if err != nil {
-			return err
+	if r.schema.HasNulls {
+		for i := 0; i < len(vector); i++ {
+			p, err := r.present.Next()
+			if err != nil {
+				return err
+			}
+			vector[i].Null = !p
 		}
-		vector[i].Null = !p
 	}
 	return nil
 }
@@ -75,29 +69,17 @@ func (r *structReader) seek(indexEntry *pb.RowIndexEntry) error {
 }
 
 func (r *structReader) Seek(rowNumber uint64) error {
-	if err := r.checkInit(); err != nil {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err != nil {
 		return err
 	}
-
-	if !r.opts.HasIndex {
-		return errors.New("no index")
-	}
-
-	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err := r.seek(entry); err != nil {
+	if err = r.seek(entry); err != nil {
 		return err
 	}
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func (r structReader) checkInit() error {
-	if r.schema.HasNulls && r.present == nil {
-		return errors.New("stream present not initialized!")
 	}
 	return nil
 }

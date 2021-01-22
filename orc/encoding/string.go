@@ -30,8 +30,8 @@ func (e *stringContents) Flush(out *bytes.Buffer) error {
 }
 
 func (e *stringContents) GetPosition() []uint64 {
-	// fixme: always 0 ??
-	return []uint64{uint64(0)}
+	//always 0
+	return []uint64{}
 }
 
 func DecodeBytes(in io.Reader, length int) ([]byte, error) {

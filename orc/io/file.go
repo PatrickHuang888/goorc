@@ -22,9 +22,8 @@ type File interface {
 }
 
 type osFile struct {
-	path   string
-	isRead bool
-	f      *os.File
+	path string
+	f    *os.File
 }
 
 func OpenFileForRead(path string) (File, error) {
@@ -32,7 +31,7 @@ func OpenFileForRead(path string) (File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &osFile{f: f, isRead: true, path: path}, nil
+	return &osFile{f: f, path: path}, nil
 }
 
 // should not exist, because cannot APPEND
@@ -49,14 +48,11 @@ func (f *osFile) Write(p []byte) (n int, err error) {
 }
 
 func (f *osFile) Clone() (File, error) {
-	if !f.isRead {
-		return nil, errors.New("write file clone not impl")
-	}
 	r, err := os.Open(f.path)
 	if err != nil {
 		return nil, err
 	}
-	return &osFile{f.path, false, r}, nil
+	return &osFile{f.path, r}, nil
 }
 
 func (f *osFile) Size() (int64, error) {

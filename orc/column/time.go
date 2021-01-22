@@ -151,11 +151,11 @@ type dateV2Reader struct {
 }
 
 func (r *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
-	ic, err := r.f.Clone()
+	f, err := r.f.Clone()
 	if err != nil {
 		return err
 	}
-	if _, err := ic.Seek(int64(startOffset), io.SeekStart); err != nil {
+	if _, err := f.Seek(int64(startOffset), io.SeekStart); err != nil {
 		return err
 	}
 
@@ -164,21 +164,17 @@ func (r *dateV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	}
 
 	if info.GetKind() == pb.Stream_PRESENT {
-		r.present = stream.NewBoolReader(r.opts, info, startOffset, ic)
+		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 		return nil
 	}
 	if info.GetKind() == pb.Stream_DATA {
-		r.data = stream.NewDateV2Reader(r.opts, info, startOffset, ic)
+		r.data = stream.NewDateV2Reader(r.opts, info, startOffset, f)
 		return err
 	}
 	return errors.New("stream kind unknown")
 }
 
 func (r *dateV2Reader) Next() (value api.Value, err error) {
-	if err = r.checkInit(); err != nil {
-		return
-	}
-
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -198,10 +194,6 @@ func (r *dateV2Reader) Next() (value api.Value, err error) {
 
 func (r *dateV2Reader) NextBatch(vector []api.Value) error {
 	var err error
-	if err = r.checkInit(); err != nil {
-		return err
-	}
-
 	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
@@ -254,14 +246,10 @@ func (r *dateV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 }
 
 func (r *dateV2Reader) Seek(rowNumber uint64) error {
-	if err := r.checkInit(); err != nil {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err != nil {
 		return err
 	}
-	if !r.opts.HasIndex {
-		return errors.New("no index")
-	}
-
-	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
 	if err := r.seek(entry); err != nil {
 		return err
 	}
@@ -278,16 +266,6 @@ func (r *dateV2Reader) Close() {
 		r.present.Close()
 	}
 	r.data.Close()
-}
-
-func (r dateV2Reader) checkInit() error {
-	if r.data == nil {
-		return errors.New("stream data not initialized")
-	}
-	if r.schema.HasNulls && r.present == nil {
-		return errors.New("stream present not initialized")
-	}
-	return nil
 }
 
 func NewTimestampV2Writer(schema *api.TypeDescription, opts *config.WriterOptions) Writer {
@@ -492,10 +470,6 @@ func (r *timestampV2Reader) InitStream(info *pb.Stream, startOffset uint64) erro
 }
 
 func (r *timestampV2Reader) Next() (value api.Value, err error) {
-	if err = r.checkInit(); err != nil {
-		return
-	}
-
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -520,10 +494,6 @@ func (r *timestampV2Reader) Next() (value api.Value, err error) {
 
 func (r *timestampV2Reader) NextBatch(vector []api.Value) error {
 	var err error
-	if err = r.checkInit(); err != nil {
-		return err
-	}
-
 	for i := 0; i < len(vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
@@ -549,14 +519,10 @@ func (r *timestampV2Reader) NextBatch(vector []api.Value) error {
 }
 
 func (r *timestampV2Reader) Seek(rowNumber uint64) error {
-	if err := r.checkInit(); err != nil {
+	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+	if err != nil {
 		return err
 	}
-	if !r.opts.HasIndex {
-		return errors.New("no index")
-	}
-
-	entry, offset := r.reader.getIndexEntryAndOffset(rowNumber)
 	if err := r.seek(entry); err != nil {
 		return err
 	}
@@ -623,14 +589,4 @@ func (r *timestampV2Reader) Close() {
 	}
 	r.data.Close()
 	r.secondary.Close()
-}
-
-func (r *timestampV2Reader) checkInit() error {
-	if r.schema.HasNulls && r.present == nil {
-		return errors.New("init error")
-	}
-	if r.data == nil || r.secondary == nil {
-		return errors.New("init error")
-	}
-	return nil
 }

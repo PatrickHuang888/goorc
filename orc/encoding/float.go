@@ -37,8 +37,8 @@ func (f float) Flush(out *bytes.Buffer) error {
 }
 
 func (f *float) GetPosition() []uint64 {
-	// rethink:
-	return []uint64{0}
+	// no need, always 0
+	return []uint64{}
 }
 
 func DecodeFloat(in io.Reader) (float32, error) {
@@ -88,7 +88,7 @@ func (d double) Flush(out *bytes.Buffer) error {
 }
 
 func (d *double) GetPosition() []uint64 {
-	return []uint64{0}
+	return []uint64{}
 }
 
 func (d *double) Reset() {

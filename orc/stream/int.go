@@ -22,7 +22,7 @@ type IntRLV2Reader struct {
 }
 
 func NewIntRLV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, signed bool, in io.File) *IntRLV2Reader {
-	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in},
+	return &IntRLV2Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, f: in},
 		decoder: encoding.NewIntDecoder(signed), signed: signed}
 }
 
@@ -121,7 +121,7 @@ type Varint64Reader struct {
 }
 
 func NewVarIntReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) *Varint64Reader {
-	return &Varint64Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, in: in}}
+	return &Varint64Reader{stream: &reader{opts: opts, info: info, start: start, buf: &bytes.Buffer{}, f: in}}
 }
 
 func (r *Varint64Reader) NextInt64() (v int64, err error) {
