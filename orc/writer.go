@@ -100,7 +100,7 @@ func (w *writer) CheckBatch(batch *api.ColumnVector) error {
 		}
 	}
 	for _, c := range batch.Children {
-		if err := w.CheckBatch(&c); err != nil {
+		if err := w.CheckBatch(c); err != nil {
 			return err
 		}
 	}

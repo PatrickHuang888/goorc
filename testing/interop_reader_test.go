@@ -364,6 +364,22 @@ func TestTimestamp(t *testing.T) {
 	}
 }*/
 
+func TestProject(t *testing.T) {
+	//opts := config.DefaultReaderOptions()
+	r, err := orc.NewOSFileReader("testProject.0.12.orc")
+	assert.Nil(t, err)
+
+	opts:= &orc.BatchOption{RowSize: orc.DefaultRowSize}
+	reader, err:= r.CreateBatchReader(opts)
+	defer reader.Close()
+	assert.Nil(t, err)
+
+	batch:=reader.CreateBatch()
+	if err=reader.Next(batch);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+}
+
 /*func TestSeek(t *testing.T) {
 	opts := config.DefaultReaderOptions()
 

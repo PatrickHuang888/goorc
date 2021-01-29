@@ -62,19 +62,22 @@ func TestStruct(t *testing.T) {
 		fmt.Printf("close error %+v\n", err)
 	}
 
-	ropts := config.DefaultReaderOptions()
-	reader, err := newReader(&ropts, f)
-	assert.Nil(t, err)
-	rbatch, err := api.CreateReaderBatch(reader.GetSchema(), ropts)
+	reader, err := newReader(f)
+	defer reader.Close()
 	assert.Nil(t, err)
 
-	err = reader.Next(&rbatch)
+	bopt := &api.BatchOption{RowSize: 150}
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
+	assert.Nil(t, err)
+	batch, err := schema.CreateBatch(bopt)
+	assert.Nil(t, err)
+	err = br.Next(batch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	reader.Close()
-	//assert.Equal(t, values, vector)
+	assert.Equal(t, wbatch.Children[0].Vector, batch.Children[0].Vector)
 }
 
 func TestString(t *testing.T) {
@@ -110,16 +113,21 @@ func TestString(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	ropts := config.DefaultReaderOptions()
-	reader, err := newReader(&ropts, f)
+	reader, err := newReader(f)
+	defer reader.Close()
 	assert.Nil(t, err)
-	rbatch, err := api.CreateReaderBatch(reader.GetSchema(), ropts)
+
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
+	assert.Nil(t, err)
+
+	rbatch, err := schema.CreateBatch(bopt)
 	assert.Nil(t, err)
 
 	var vector []api.Value
 	for {
-		err = reader.Next(&rbatch)
-		if err != nil {
+		if err = br.Next(rbatch); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		vector = append(vector, rbatch.Vector...)
@@ -127,60 +135,73 @@ func TestString(t *testing.T) {
 			break
 		}
 	}
-	reader.Close()
 	assert.Equal(t, values, vector)
 }
 
-func TestMultipleStripes(t *testing.T) {
-	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRING, Encoding: pb.ColumnEncoding_DIRECT_V2, HasNulls: false}
+func TestStructWithPresents (t *testing.T) {
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRUCT, HasNulls: true}
+	schema.Encoding = pb.ColumnEncoding_DIRECT
+	child1 := api.TypeDescription{Id: 0, Kind: pb.Type_INT}
+	child1.Encoding = pb.ColumnEncoding_DIRECT_V2
+	schema.Children= []*api.TypeDescription{&child1}
+	err:=api.NormalizeSchema(schema)
+	assert.Nil(t, err)
 
 	wopts := config.DefaultWriterOptions()
-	wopts.CompressionKind = pb.CompressionKind_ZLIB
-	wopts.StripeSize = 10_000
-	wopts.ChunkSize = 8_000
-	wopts.CreateVector = false
+	wopts.CreateVector= false
 	wbatch, err := api.CreateWriterBatch(schema, wopts)
 	assert.Nil(t, err)
 
-	rows := 1_000
-	values := make([]api.Value, rows)
-	for i := 0; i < rows; i++ {
-		values[i].V = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
-	}
-	wbatch.Vector = values
+	rows := 100
 
-	buf := make([]byte, 200_000)
+	values := make([]api.Value, rows)
+	values[0].Null = true
+	values[45].Null = true
+	values[99].Null = true
+	wbatch.Vector= values
+
+	childValues := make([]api.Value, rows)
+	for i:=0; i<rows;i++ {
+		childValues[i].V= int32(i)
+	}
+	childValues[0].Null= true
+	childValues[0].V= nil
+	childValues[45].Null=true
+	childValues[45].V= nil
+	childValues[99].Null=true
+	childValues[99].V= nil
+	wbatch.Children[0].Vector=childValues
+
+	buf := make([]byte, 5000)
 	f := orcio.NewMockFile(buf)
 
-	writer, err := newWriter(schema, &wopts, f)
+	schemas, err:= schema.Flat()
+	assert.Nil(t, err)
+	writer, err := newStripeWriter(f, 0, schemas, &wopts)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := writer.Write(&wbatch); err != nil {
+	if err := writer.write(&wbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := writer.Close(); err != nil {
+	if err := writer.flushOut(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	ropts := config.DefaultReaderOptions()
-	ropts.RowSize = 2000
-	reader, err := newReader(&ropts, f)
-	assert.Nil(t, err)
-	rbatch, err := api.CreateReaderBatch(reader.GetSchema(), ropts)
+	reader, err := newStripeReader(f, schemas, &ropts, 0, writer.info)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	bopt:= &api.BatchOption{RowSize: api.DefaultRowSize}
+	batch, err := schema.CreateBatch(bopt)
 	assert.Nil(t, err)
 
-	var vector []api.Value
-	for {
-		err = reader.Next(&rbatch)
-		if err != nil {
-			t.Fatalf("%+v", err)
-		}
-		vector = append(vector, rbatch.Vector...)
-		if rbatch.Len() == 0 {
-			break
-		}
+	if _, err := reader.next(batch); err != nil {
+		t.Fatalf("%+v", err)
 	}
-	reader.Close()
-	assert.Equal(t, values, vector)
+
+	assert.Equal(t, values, batch.Vector)
+	assert.Equal(t, childValues, batch.Children[0].Vector)
 }

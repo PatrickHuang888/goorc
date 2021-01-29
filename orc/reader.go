@@ -21,51 +21,33 @@ const (
 	DIRECTORY_SIZE_GUESS = 16 * 1024
 )
 
-type Reader interface {
-	GetSchema() *api.TypeDescription
-
-	NumberOfRows() uint64
-
-	Close()
-
-	Next(batch *api.ColumnVector) error
-
-	Seek(rowNumber uint64) error
-
-	GetStatistics() []*pb.ColumnStatistics
+func NewOSFileReader(path string) (Reader, error) {
+	f, err := orcio.OpenFileForRead(path)
+	if err != nil {
+		return nil, err
+	}
+	return newReader(f)
 }
 
 type reader struct {
 	opts    *config.ReaderOptions
 	schemas []*api.TypeDescription
 
-	stripes []*stripeReader
-
-	stripeIndex int
-
-	f orcio.File
-
+	f            orcio.File
 	numberOfRows uint64
-	cursor       uint64
 
-	stats []*pb.ColumnStatistics
+	stats   []*pb.ColumnStatistics
+	stripes []*pb.StripeInformation
 }
 
-func NewOSFileReader(path string, opts config.ReaderOptions) (Reader, error) {
-	f, err := orcio.OpenFileForRead(path)
-	if err != nil {
-		return nil, err
-	}
-	return newReader(&opts, f)
-}
-
-func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) {
+func newReader(f orcio.File) (r *reader, err error) {
+	opts := &config.ReaderOptions{}
 	var tail *pb.FileTail
 	if tail, err = extractFileTail(f); err != nil {
 		return nil, errors.Wrap(err, "read file tail error")
 	}
 
-	opts.IndexStride= int(tail.Footer.GetRowIndexStride())
+	opts.IndexStride = int(tail.Footer.GetRowIndexStride())
 
 	rows := tail.GetFooter().GetNumberOfRows()
 	if rows == 0 {
@@ -80,37 +62,50 @@ func newReader(opts *config.ReaderOptions, f orcio.File) (r *reader, err error) 
 	opts.CompressionKind = tail.Postscript.GetCompression()
 	if opts.CompressionKind != pb.CompressionKind_NONE { // compression_none no block size
 		opts.ChunkSize = tail.Postscript.GetCompressionBlockSize()
+	} else {
+		opts.ChunkSize = config.DefaultChunkSize
 	}
+
+	stats := tail.Footer.GetStatistics()
+	stripes := tail.Footer.GetStripes()
 
 	// todo: check opts chunksize !=0
 
-	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: rows, stats: tail.Footer.GetStatistics()}
-	if err = r.initStripes(tail.Footer.GetStripes()); err != nil {
-		return
-	}
+	r = &reader{f: f, opts: opts, schemas: schemas, numberOfRows: rows, stats: stats, stripes: stripes}
 	return
 }
 
-func (r *reader) GetSchema() *api.TypeDescription {
-	return r.schemas[0]
+func (r *reader) CreateBatchReader(opts *api.BatchOption) (BatchReader, error) {
+	if opts.RowSize == 0 {
+		return nil, errors.New("Batch option RowSize == 0")
+	}
+
+	br := &batchReader{f: r.f, numberOfRows: r.numberOfRows, ropts: r.opts}
+
+	if opts.Includes == nil {
+		br.schemas = r.schemas
+	} else {
+		for _, id := range opts.Includes {
+			br.schemas = append(br.schemas, r.schemas[id])
+		}
+	}
+
+	if err := br.initStripes(r.stripes); err != nil {
+		return nil, err
+	}
+	return br, nil
+}
+
+func (r *reader) GetSchemas() []*api.TypeDescription {
+	return r.schemas
+}
+
+func (r *reader) GetReaderOptions() *config.ReaderOptions {
+	return r.opts
 }
 
 func (r *reader) NumberOfRows() uint64 {
 	return r.numberOfRows
-}
-
-func (r *reader) initStripes(infos []*pb.StripeInformation) error {
-	for i, stripeInfo := range infos {
-		if stripeInfo.GetNumberOfRows() == 0 {
-			return errors.Errorf("stripe number of rows 0 err, %s", stripeInfo.String())
-		}
-		sr, err := newStripeReader(r.f, r.schemas, r.opts, i, stripeInfo)
-		if err != nil {
-			return err
-		}
-		r.stripes = append(r.stripes, sr)
-	}
-	return nil
 }
 
 func (r reader) GetStatistics() []*pb.ColumnStatistics {
@@ -118,108 +113,110 @@ func (r reader) GetStatistics() []*pb.ColumnStatistics {
 }
 
 func (r *reader) Close() {
-	if err:=r.f.Close();err!=nil {
-		logger.Warnf("file closing, %s", err.Error())
+	if err := r.f.Close(); err != nil {
+		logger.Warn(err)
 	}
-	for _, s := range r.stripes {
+}
+
+type batchReader struct {
+	ropts   *config.ReaderOptions
+	opts    *api.BatchOption
+	schemas []*api.TypeDescription // schemas selected
+
+	stripeIndex int
+	stripes     []*stripeReader
+
+	f orcio.File
+
+	numberOfRows uint64
+	cursor       uint64
+}
+
+func (br *batchReader) initStripes(infos []*pb.StripeInformation) error {
+	for i, stripeInfo := range infos {
+		if stripeInfo.GetNumberOfRows() == 0 {
+			return errors.Errorf("stripe number of rows 0 err, %s", stripeInfo.String())
+		}
+		sr, err := newStripeReader(br.f, br.schemas, br.ropts, i, stripeInfo)
+		if err != nil {
+			return err
+		}
+		br.stripes = append(br.stripes, sr)
+	}
+	return nil
+}
+
+/*func (br *batchReader) CreateBatch() *api.Batch {
+	batch := &api.Batch{}
+	if len(br.opts.Includes) == 0 { //all
+		for _, s := range br.schemas {
+			vec := &api.ColumnVector{Id: s.Id, Kind: s.Kind, Vector: make([]api.Value, 0, br.opts.RowSize)}
+			batch.Cols = append(batch.Cols, vec)
+		}
+	} else {
+		for _, id := range br.opts.Includes {
+			vec := &api.ColumnVector{Id: id, Kind: br.schemas[id].Kind, Vector: make([]api.Value, 0, br.opts.RowSize)}
+			batch.Cols = append(batch.Cols, vec)
+		}
+	}
+
+	for i := 0; i < len(batch.Cols); i++ {
+		for _, child := range br.schemas[batch.Cols[i].Id].Children {
+			if batch.Cols[child.Id] != nil {
+				batch.Cols[i].Children = append(batch.Cols[i].Children, batch.Cols[child.Id])
+			}
+		}
+	}
+	return batch
+}*/
+
+func (br *batchReader) Close() {
+	for _, s := range br.stripes {
 		s.Close()
 	}
 }
 
-func (r *reader) Next(batch *api.ColumnVector) error {
+func (br *batchReader) Next(batch *api.ColumnVector) error {
 	batch.Clear()
 
-	if r.cursor >= r.numberOfRows-1 {
+	if br.cursor >= br.numberOfRows-1 {
 		return nil
 	}
 
-	for r.stripeIndex < len(r.stripes) {
-		end, err := r.stripes[r.stripeIndex].next(batch)
+	for br.stripeIndex < len(br.stripes) {
+		end, err := br.stripes[br.stripeIndex].next(batch)
 		if err != nil {
 			return err
 		}
 		if end {
-			r.stripeIndex++
+			br.stripeIndex++
 			break
 		}
 		if batch.Len() >= batch.Cap() {
 			break
 		}
 	}
-	if r.stripeIndex == len(r.stripes) {
-		r.stripeIndex--
+	if br.stripeIndex == len(br.stripes) {
+		br.stripeIndex--
 	}
-	r.cursor += uint64(batch.Len())
+	br.cursor += uint64(batch.Len())
 	return nil
 }
 
-func (r *reader) Seek(rowNumber uint64) error {
-	if rowNumber > r.numberOfRows {
+func (br *batchReader) Seek(rowNumber uint64) error {
+	if rowNumber > br.numberOfRows {
 		return errors.New("row number larger than number of rows")
 	}
 	var rows uint64
-	for i := 0; i < len(r.stripes); i++ {
-		if rows+r.stripes[i].numberOfRows > rowNumber {
-			return r.stripes[i].Seek(rowNumber - rows)
+	for i := 0; i < len(br.stripes); i++ {
+		if rows+br.stripes[i].numberOfRows > rowNumber {
+			return br.stripes[i].Seek(rowNumber - rows)
 		}
-		rows += r.stripes[i].numberOfRows
+		rows += br.stripes[i].numberOfRows
 	}
-	r.cursor = rowNumber
+	br.cursor = rowNumber
 	return errors.New("no row found")
 }
-
-/*
-func (c *stringDictV2Reader) next(batch *ColumnVector) error {
-	var err error
-	vector := batch.Vector.([]string)
-	vector = vector[:0]
-
-	// rethink: len(lengths)==0
-	if len(c.lengths) == 0 {
-		c.lengths, err = c.dictLength.getAllUInts()
-		if err != nil {
-			return err
-		}
-	}
-
-	// rethink: len(dict)==0
-	if len(c.dict) == 0 {
-		c.dict, err = c.dictData.getAll(c.lengths)
-		if err != nil {
-			return err
-		}
-	}
-
-	if err = c.nextPresents(batch); err != nil {
-		return err
-	}
-
-	for i := 0; i < cap(vector) && c.cursor < c.numberOfRows; i++ {
-
-		if len(batch.Presents) == 0 || (len(batch.Presents) != 0 && batch.Presents[i]) {
-			v, err := c.data.nextUInt()
-			if err != nil {
-				return err
-			}
-			if v >= uint64(len(c.dict)) {
-				return errors.New("dict index error")
-			}
-			vector = append(vector, c.dict[v])
-
-		} else {
-			vector = append(vector, "")
-		}
-
-		c.cursor++
-	}
-
-	batch.Vector = vector
-	batch.ReadRows = len(vector)
-	return nil
-}
-
-
-*/
 
 func unmarshallSchema(types []*pb.Type) (schemas []*api.TypeDescription) {
 	schemas = make([]*api.TypeDescription, len(types))
@@ -227,11 +224,11 @@ func unmarshallSchema(types []*pb.Type) (schemas []*api.TypeDescription) {
 		schemas[i] = &api.TypeDescription{Kind: t.GetKind(), Id: uint32(i)}
 	}
 	for i, t := range types {
-		if len(t.Subtypes)!=0 {
+		if len(t.Subtypes) != 0 {
 			schemas[i].Children = make([]*api.TypeDescription, len(t.Subtypes))
 			schemas[i].ChildrenNames = make([]string, len(t.Subtypes))
 			for j, sub := range t.Subtypes {
-				if t.GetKind()==pb.Type_STRUCT {  // only struct has children names?
+				if t.GetKind() == pb.Type_STRUCT { // only struct has children names?
 					schemas[i].ChildrenNames[j] = t.FieldNames[j]
 				}
 				schemas[i].Children[j] = schemas[sub]

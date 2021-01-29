@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"strings"
+	"time"
 
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
@@ -36,6 +37,72 @@ func (td TypeDescription) String() string {
 	sb.WriteString(fmt.Sprintf("\n"))
 
 	return sb.String()
+}
+
+func (td *TypeDescription) AddChild(name string, value *TypeDescription) {
+	td.ChildrenNames = append(td.ChildrenNames, name)
+	td.Children = append(td.Children, value)
+}
+
+func (td TypeDescription) CreateBatch(opt *BatchOption) (*ColumnVector, error) {
+	if opt.RowSize == 0 {
+		return nil, errors.New("RowSize == 0")
+	}
+	if err := td.verifySchema(); err != nil {
+		return nil, err
+	}
+
+	var cv *ColumnVector
+	if len(opt.Includes) == 0 { // all column selected
+		cv = td.createVector(opt.RowSize)
+	} else {
+
+		for _, id := range opt.Includes {
+			if td.Id == id {
+				cv = td.createVector(opt.RowSize)
+			}
+		}
+	}
+	return cv, nil
+}
+
+func (td TypeDescription) createVector(rowSize int) *ColumnVector {
+	var cv *ColumnVector
+	if td.Kind == pb.Type_STRUCT || td.Kind == pb.Type_LIST || td.Kind == pb.Type_MAP || td.Kind == pb.Type_UNION {
+		if td.HasNulls {
+			cv = &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, rowSize)}
+		} else {
+			cv = &ColumnVector{Id: td.Id, Kind: td.Kind}
+		}
+	} else {
+		cv = &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, rowSize)}
+	}
+
+	for _, c := range td.Children {
+		cv.Children = append(cv.Children, c.createVector(rowSize))
+	}
+	return cv
+}
+
+func (td TypeDescription) verifySchema() error {
+	if td.Kind == pb.Type_STRUCT || td.Kind == pb.Type_UNION || td.Kind == pb.Type_MAP || td.Kind == pb.Type_LIST {
+		for _, c := range td.Children {
+			if td.HasNulls && c.HasNulls {
+				return errors.New("struct column has nulls cannot have nulls children")
+			}
+			return c.verifySchema()
+		}
+	}
+	return nil
+}
+
+const DefaultRowSize = 10_000
+
+type BatchOption struct {
+	// includes column id, nil means all column
+	Includes []uint32
+	RowSize  int
+	Loc      *time.Location
 }
 
 type action func(node *TypeDescription) error
@@ -174,21 +241,21 @@ func SchemasToTypes(schemas []*TypeDescription) []*pb.Type {
 	return t
 }
 
-func CreateReaderBatch(td *TypeDescription, opts config.ReaderOptions) (batch ColumnVector, err error) {
+/*func CreateVector(td *TypeDescription, rowSize int) (batch ColumnVector, err error) {
 	if err = verifySchema(td); err != nil {
 		return
 	}
 
-	batch = ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, opts.RowSize)}
+	batch = ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, rowSize)}
 	for _, v := range td.Children {
 		var b ColumnVector
-		if b, err = CreateReaderBatch(v, opts); err != nil {
+		if b, err = CreateVector(v, rowSize); err != nil {
 			return
 		}
-		batch.Children = append(batch.Children, b)
+		batch.Children = append(batch.Children, &b)
 	}
 	return
-}
+}*/
 
 func verifySchema(schema *TypeDescription) error {
 	if schema.Kind == pb.Type_STRUCT {
@@ -213,13 +280,13 @@ func CreateWriterBatch(td *TypeDescription, opts config.WriterOptions) (batch Co
 
 	// todo: other type
 	if td.Kind == pb.Type_STRUCT {
-		var children []ColumnVector
+		var children []*ColumnVector
 		for _, c := range td.Children {
 			var cb ColumnVector
 			if cb, err = CreateWriterBatch(c, opts); err != nil {
 				return
 			}
-			children = append(children, cb)
+			children = append(children, &cb)
 		}
 		if td.HasNulls && opts.CreateVector {
 			return ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opts.RowSize), Children: children}, nil

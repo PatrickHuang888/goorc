@@ -75,7 +75,7 @@ func (stripe *stripeWriter) writeValue(index int, batch *api.ColumnVector) error
 		}
 	}
 	for _, c := range batch.Children {
-		if err := stripe.writeValue(index, &c); err != nil {
+		if err := stripe.writeValue(index, c); err != nil {
 			return err
 		}
 	}
@@ -201,11 +201,10 @@ func newStripeWriter(out io.Writer, offset uint64, schemas []*api.TypeDescriptio
 }
 
 type stripeReader struct {
-	f orcio.File
+	f    orcio.File
+	opts *config.ReaderOptions
 
-	schemas []*api.TypeDescription
-	opts    *config.ReaderOptions
-
+	schemas       []*api.TypeDescription // schemas selected
 	columnReaders []column.Reader
 
 	index int
@@ -300,67 +299,65 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 }
 
 // a stripe is typically  ~200MB
-func (stripe *stripeReader) next(batch *api.ColumnVector) (end bool, err error) {
-	page := batch.Cap() - batch.Len()
+func (stripe *stripeReader) next(vec *api.ColumnVector) (end bool, err error) {
+	page := vec.Cap() - vec.Len()
 	if int(stripe.numberOfRows-stripe.cursor) < page {
 		page = int(stripe.numberOfRows - stripe.cursor)
 	}
 
-	stripe.prepareBatch(page, batch)
+	stripe.prepareVector(page, vec)
 
-	if err = stripe.readColumn(batch); err != nil {
+	if err = stripe.readColumn(vec); err != nil {
 		return
 	}
 
 	stripe.cursor += uint64(page)
-	logger.Debugf("stripe %d column %d has cursor %d", stripe.index, batch.Id, stripe.cursor)
+	logger.Debugf("stripe %d reading cursor %d", stripe.index, stripe.cursor)
 	end = stripe.cursor+1 >= stripe.numberOfRows
 	return
 }
 
 func (stripe *stripeReader) readColumn(batch *api.ColumnVector) error {
-	schema := stripe.schemas[batch.Id]
-
-	// todo: other type
-	if schema.Kind == pb.Type_STRUCT {
-		if schema.HasNulls {
-			if err := stripe.columnReaders[batch.Id].NextBatch(batch.Vector); err != nil {
-				return err
-			}
-			for i := 0; i < len(batch.Children); i++ {
-				for j, v := range batch.Vector {
-					batch.Children[i].Vector[j].Null = v.Null
-				}
-			}
-		}
-		for i := 0; i < len(batch.Children); i++ {
-			if err := stripe.readColumn(&batch.Children[i]); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
 	if err := stripe.columnReaders[batch.Id].NextBatch(batch.Vector); err != nil {
 		return err
+	}
+
+	schema := stripe.schemas[batch.Id]
+	// todo: other type
+	if schema.Kind == pb.Type_STRUCT && schema.HasNulls {
+		stripe.fillNulls(batch)
+	}
+
+	for i := 0; i < len(batch.Children); i++ {
+		if err := stripe.readColumn(batch.Children[i]); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (stripe *stripeReader) prepareBatch(page int, batch *api.ColumnVector) {
-	schema := stripe.schemas[batch.Id]
-	if schema.Kind != pb.Type_STRUCT || (schema.Kind == pb.Type_STRUCT && schema.HasNulls) {
-		batch.Vector = batch.Vector[:page]
+func (stripe *stripeReader) fillNulls(vec *api.ColumnVector) {
+	for _, c := range vec.Children {
+		for i, v := range vec.Vector {
+			c.Vector[i].Null = v.Null
+		}
+		stripe.fillNulls(c)
 	}
-	for i := 0; i < len(batch.Children); i++ {
-		stripe.prepareBatch(page, &batch.Children[i])
+}
+
+func (stripe *stripeReader) prepareVector(page int, vec *api.ColumnVector) {
+	if vec.Vector != nil {
+		vec.Vector = vec.Vector[:page]
+	}
+	for i := 0; i < len(vec.Children); i++ {
+		stripe.prepareVector(page, vec.Children[i])
 	}
 }
 
 // locate rows in this stripe
 func (stripe *stripeReader) Seek(rowNumber uint64) error {
-	for _, r := range stripe.columnReaders {
-		if err := r.Seek(rowNumber); err != nil {
+	for _, schema := range stripe.schemas {
+		if err := stripe.columnReaders[schema.Id].Seek(rowNumber); err != nil {
 			return err
 		}
 	}
@@ -368,7 +365,7 @@ func (stripe *stripeReader) Seek(rowNumber uint64) error {
 }
 
 func (stripe *stripeReader) Close() {
-	for _, r := range stripe.columnReaders {
-		r.Close()
+	for _, schema := range stripe.schemas {
+		stripe.columnReaders[schema.Id].Close()
 	}
 }

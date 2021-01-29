@@ -7,18 +7,48 @@ import (
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
+type Batch struct {
+	Cols []*ColumnVector
+}
+
+func (b *Batch) Clear() {
+	for i := 0; i < len(b.Cols); i++ {
+		b.Cols[i].Clear()
+	}
+}
+
+func (b Batch) Len() int {
+	for _, c := range b.Cols {
+		l := c.Len()
+		if l != 0 {
+			return l
+		}
+	}
+	return 0
+}
+
+func (b Batch) Cap() int {
+	for _, c := range b.Cols {
+		cap := c.Cap()
+		if cap != 0 {
+			return cap
+		}
+	}
+	return 0
+}
+
 type ColumnVector struct {
 	Id   uint32
 	Kind pb.Type_Kind
 
 	Vector []Value
 
-	Children []ColumnVector
+	Children []*ColumnVector
 }
 
 func (cv *ColumnVector) Clear() {
 	cv.Vector = cv.Vector[:0]
-	for i:=0; i<len(cv.Children); i++ {
+	for i := 0; i < len(cv.Children); i++ {
 		cv.Children[i].Clear()
 	}
 }
@@ -41,7 +71,14 @@ func (cv ColumnVector) Len() int {
 }
 
 func (cv ColumnVector) Cap() int {
-	return cap(cv.Vector)
+	if cv.Vector!=nil {
+		return cap(cv.Vector)
+	}else {
+		for _, c := range cv.Children {
+			return c.Cap()
+		}
+	}
+	return 0
 }
 
 type Value struct {
@@ -60,7 +97,7 @@ func (d Decimal64) String() string {
 }
 
 func (d Decimal64) Float64() float64 {
-	if d.Scale==0 {
+	if d.Scale == 0 {
 		return float64(d.Precision)
 	}
 	if d.Scale > 0 {
@@ -159,5 +196,3 @@ func DecodingTimestampNanos(encoded uint64) (nano uint64) {
 	}
 	return
 }
-
-

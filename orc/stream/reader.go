@@ -40,7 +40,7 @@ func (r *reader) ReadByte() (b byte, err error) {
 	}
 
 	if r.readLength >= r.info.GetLength() {
-		return 0, errors.WithStack(io.EOF)
+		return 0, errors.Wrapf(io.EOF, "stream %s to the end", r.info.String())
 	}
 
 	if err = r.readAChunk(); err != nil {
