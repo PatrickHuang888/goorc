@@ -65,24 +65,24 @@ func (r *floatReader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *floatReader) NextBatch(vector []api.Value) error {
+func (r *floatReader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
 
-		if !vector[i].Null {
+		if !vec.Vector[i].Null {
 			if r.is64 {
-				if vector[i].V, err = r.data.NextDouble();err != nil {
+				if vec.Vector[i].V, err = r.data.NextDouble();err != nil {
 					return err
 				}
 			}else {
-				if vector[i].V, err = r.data.NextFloat();err != nil {
+				if vec.Vector[i].V, err = r.data.NextFloat();err != nil {
 					return err
 				}
 			}

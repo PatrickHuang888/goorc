@@ -203,9 +203,10 @@ func newStripeWriter(out io.Writer, offset uint64, schemas []*api.TypeDescriptio
 type stripeReader struct {
 	f    orcio.File
 	opts *config.ReaderOptions
+	//opt  *api.BatchOption
 
-	schemas       []*api.TypeDescription // schemas selected
-	columnReaders []column.Reader
+	schema       *api.TypeDescription // schema selected
+	columnReader column.Reader
 
 	index int
 
@@ -213,8 +214,8 @@ type stripeReader struct {
 	cursor       uint64
 }
 
-func newStripeReader(f orcio.File, schemas []*api.TypeDescription, opts *config.ReaderOptions, idx int, info *pb.StripeInformation) (*stripeReader, error) {
-	reader := &stripeReader{f: f, schemas: schemas, opts: opts, index: idx, numberOfRows: info.GetNumberOfRows()}
+func newStripeReader(f orcio.File, schema *api.TypeDescription, opts *config.ReaderOptions, idx int, info *pb.StripeInformation) (*stripeReader, error) {
+	reader := &stripeReader{f: f, schema:schema, opts: opts, index: idx, numberOfRows: info.GetNumberOfRows()}
 	footer, err := reader.readFooter(info)
 	if err != nil {
 		return nil, err
@@ -253,25 +254,21 @@ func (stripe *stripeReader) readFooter(info *pb.StripeInformation) (*pb.StripeFo
 func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter) error {
 	var err error
 
-	stripe.columnReaders = make([]column.Reader, len(stripe.schemas))
-	for i, schema := range stripe.schemas {
-		schema.Encoding = footer.GetColumns()[schema.Id].GetKind()
-		if stripe.columnReaders[i], err = column.NewReader(schema, stripe.opts, stripe.f); err != nil {
-			return err
-		}
+	schemas, err := stripe.schema.Flat()
+	if err != nil {
+		return err
 	}
 
-	// build tree
-	/*for _, schema := range stripe.schemas {
-		if schema.Kind == pb.Type_STRUCT {
-			var crs []column.Reader
-			for _, childSchema := range schema.Children {
-				crs = append(crs, stripe.columnReaders[childSchema.Id])
-			}
-			s.columnReaders[schema.Id].()
+	// make sure len(columns)==len(all schemas)
+	readers := make([]column.Reader, len(footer.GetColumns()))
+	for _, schema := range schemas {
+		schema.Encoding = footer.GetColumns()[schema.Id].GetKind()
+		r, err := column.NewReader(schema, stripe.opts, stripe.f)
+		if err != nil {
+			return err
 		}
-		// todo: other kind
-	}*/
+		readers[schema.Id] = r
+	}
 
 	// streams has sequence
 	indexStart := info.GetOffset()
@@ -282,90 +279,95 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 		length := streamInfo.GetLength()
 
 		if streamKind == pb.Stream_ROW_INDEX {
-			if err := stripe.columnReaders[id].InitIndex(indexStart, length); err != nil {
-				return err
+			if readers[id] != nil {
+				if err := readers[id].InitIndex(indexStart, length); err != nil {
+					return err
+				}
 			}
 			indexStart += length
 			continue
 		}
 
-		if err := stripe.columnReaders[id].InitStream(streamInfo, dataStart); err != nil {
-			return err
+		if readers[id] != nil {
+			if err := readers[id].InitStream(streamInfo, dataStart); err != nil {
+				return err
+			}
 		}
 		dataStart += length
 	}
 
+	// build tree
+	for _, schema := range schemas {
+		for _, c := range schema.Children {
+			switch schema.Kind {
+			case pb.Type_STRUCT:
+				readers[schema.Id].(*column.StructReader).AddChild(readers[c.Id])
+			case pb.Type_LIST:
+			case pb.Type_MAP:
+			case pb.Type_UNION:
+			default:
+				return errors.New("should have no child")
+			}
+		}
+	}
+
+	stripe.columnReader = readers[schemas[0].Id]
 	return nil
 }
 
 // a stripe is typically  ~200MB
 func (stripe *stripeReader) next(vec *api.ColumnVector) (end bool, err error) {
-	page := vec.Cap() - vec.Len()
-	if int(stripe.numberOfRows-stripe.cursor) < page {
-		page = int(stripe.numberOfRows - stripe.cursor)
-	}
+	stripe.prepareVector(vec)
 
-	stripe.prepareVector(page, vec)
-
-	if err = stripe.readColumn(vec); err != nil {
+	if err = stripe.columnReader.NextBatch(vec); err != nil {
 		return
 	}
 
-	stripe.cursor += uint64(page)
+	stripe.cursor += uint64(vec.Len())
 	logger.Debugf("stripe %d reading cursor %d", stripe.index, stripe.cursor)
 	end = stripe.cursor+1 >= stripe.numberOfRows
 	return
 }
 
-func (stripe *stripeReader) readColumn(batch *api.ColumnVector) error {
-	if err := stripe.columnReaders[batch.Id].NextBatch(batch.Vector); err != nil {
-		return err
-	}
 
-	schema := stripe.schemas[batch.Id]
-	// todo: other type
-	if schema.Kind == pb.Type_STRUCT && schema.HasNulls {
-		stripe.fillNulls(batch)
-	}
-
-	for i := 0; i < len(batch.Children); i++ {
-		if err := stripe.readColumn(batch.Children[i]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (stripe *stripeReader) fillNulls(vec *api.ColumnVector) {
+func setChildrenSize(size int, vec *api.ColumnVector) {
 	for _, c := range vec.Children {
-		for i, v := range vec.Vector {
-			c.Vector[i].Null = v.Null
-		}
-		stripe.fillNulls(c)
+		c.Vector = c.Vector[:size]
+		setChildrenSize(size, c)
 	}
 }
 
-func (stripe *stripeReader) prepareVector(page int, vec *api.ColumnVector) {
-	if vec.Vector != nil {
+func (stripe *stripeReader) prepareVector(vec *api.ColumnVector) {
+	page := vec.Cap() - vec.Len()
+	if int(stripe.numberOfRows-stripe.cursor) < page {
+		page = int(stripe.numberOfRows - stripe.cursor)
+	}
+
+	switch vec.Kind {
+	case pb.Type_STRUCT:
+		if stripe.schema.HasNulls {
+			vec.Vector = vec.Vector[:page]
+		}
+	case pb.Type_LIST:
+		vec.Vector = vec.Vector[:page]
+	case pb.Type_MAP:
+		panic("not impl")
+	case pb.Type_UNION:
+		panic("not impl")
+	default:
 		vec.Vector = vec.Vector[:page]
 	}
-	for i := 0; i < len(vec.Children); i++ {
-		stripe.prepareVector(page, vec.Children[i])
-	}
+	setChildrenSize(page, vec)
 }
 
 // locate rows in this stripe
 func (stripe *stripeReader) Seek(rowNumber uint64) error {
-	for _, schema := range stripe.schemas {
-		if err := stripe.columnReaders[schema.Id].Seek(rowNumber); err != nil {
-			return err
-		}
+	if err := stripe.columnReader.Seek(rowNumber); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (stripe *stripeReader) Close() {
-	for _, schema := range stripe.schemas {
-		stripe.columnReaders[schema.Id].Close()
-	}
+	stripe.columnReader.Close()
 }

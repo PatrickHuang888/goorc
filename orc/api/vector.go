@@ -54,26 +54,22 @@ func (cv *ColumnVector) Clear() {
 }
 
 func (cv ColumnVector) Len() int {
-	// todo: other kind
-	if cv.Kind == pb.Type_STRUCT {
-		if len(cv.Vector) != 0 {
-			// nulls
-			return len(cv.Vector)
-		}
-		for _, c := range cv.Children {
-			if len(c.Vector) != 0 {
-				return len(c.Vector)
-			}
-			return c.Len()
-		}
+	if len(cv.Vector) != 0 {
+		return len(cv.Vector)
 	}
-	return len(cv.Vector)
+	for _, c := range cv.Children {
+		if len(c.Vector) != 0 {
+			return len(c.Vector)
+		}
+		return c.Len()
+	}
+	return 0
 }
 
 func (cv ColumnVector) Cap() int {
-	if cv.Vector!=nil {
+	if cv.Vector != nil {
 		return cap(cv.Vector)
-	}else {
+	} else {
 		for _, c := range cv.Children {
 			return c.Cap()
 		}
@@ -84,6 +80,11 @@ func (cv ColumnVector) Cap() int {
 type Value struct {
 	Null bool
 	V    interface{}
+}
+
+type StructValue struct {
+	Null bool
+	Children []Value
 }
 
 // hive 0.13 support 38 digits

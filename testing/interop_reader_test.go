@@ -1,6 +1,7 @@
 package testing
 
 import (
+	"fmt"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -8,7 +9,6 @@ import (
 
 	"github.com/patrickhuang888/goorc/orc"
 	"github.com/patrickhuang888/goorc/orc/api"
-	"github.com/patrickhuang888/goorc/orc/config"
 )
 
 func init() {
@@ -17,19 +17,25 @@ func init() {
 }
 
 func TestBasicNoCompression(t *testing.T) {
-	opts := config.DefaultReaderOptions()
-	reader, err := orc.NewOSFileReader("basicLongNoCompression.orc", opts)
+	reader, err := orc.NewOSFileReader("basicLongNoCompression.orc")
+	defer reader.Close()
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 
 	schema := reader.GetSchema()
-	batch, err := api.CreateReaderBatch(schema, opts)
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
+	batch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
+	if err != nil {
+		t.Errorf("create reader error: %+v", err)
+	}
 
 	var vector []api.Value
 	for ; ; {
-		if err = reader.Next(&batch); err != nil {
+		if err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		if batch.Len() == 0 {
@@ -53,8 +59,6 @@ func TestBasicNoCompression(t *testing.T) {
 	}
 	assert.Equal(t, 1, int(min))
 	assert.Equal(t, 2000, int(max))
-
-	reader.Close()
 }
 
 func TestPatchBaseNegativeMinNoCompression(t *testing.T) {
@@ -110,18 +114,23 @@ func TestPatchBaseNegativeMinNoCompression(t *testing.T) {
 		4, 3, 3, 2, 2,
 		16}
 
-	opts := config.DefaultReaderOptions()
-	reader, err := orc.NewOSFileReader("patchBaseNegativeMin.orc", opts)
+	reader, err := orc.NewOSFileReader("patchBaseNegativeMin.orc")
+	defer reader.Close()
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
-	batch, err := api.CreateReaderBatch(schema, opts)
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
+	batch, err := schema.CreateVector(bopt)
+	assert.Nil(t, err)
+
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
 	assert.Nil(t, err)
 
 	var vector []int64
 	for ; ; {
-		if err := reader.Next(&batch); err != nil {
+		if err := br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		if len(batch.Vector) == 0 {
@@ -152,19 +161,23 @@ func TestPatchBaseNegativeMin2NoCompression(t *testing.T) {
 		1, 13, 2, 3, 4, 1, 3, 1, 1, 2, 1, 1, 2, 4, 2, 207, 1, 1, 2, 4, 3, 3, 2,
 		2, 16}
 
-	opts := config.DefaultReaderOptions()
-	reader, err := orc.NewOSFileReader("patchBaseNegativeMin2.orc", opts)
+	reader, err := orc.NewOSFileReader("patchBaseNegativeMin2.orc")
+	defer reader.Close()
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
+	batch, err := schema.CreateVector(bopt)
+	assert.Nil(t, err)
 
-	batch, err := api.CreateReaderBatch(schema, opts)
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
 	assert.Nil(t, err)
 
 	var vector []int64
 	for ; ; {
-		if err = reader.Next(&batch); err != nil {
+		if err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		if batch.Len() == 0 {
@@ -174,8 +187,6 @@ func TestPatchBaseNegativeMin2NoCompression(t *testing.T) {
 			vector = append(vector, v.V.(int64))
 		}
 	}
-
-	reader.Close()
 
 	assert.Equal(t, values, vector)
 }
@@ -195,18 +206,23 @@ func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
 		1, 13, 2, 3, 4, 1, 3, 1, 1, 2, 1, 1, 2, 4, 2, 207, 1, 1, 2, 4, 3, 3, 2,
 		2, 16}
 
-	opts := config.DefaultReaderOptions()
-	reader, err := orc.NewOSFileReader("patchBaseNegativeMin3.orc", opts)
+	reader, err := orc.NewOSFileReader("patchBaseNegativeMin3.orc")
+	defer reader.Close()
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 	schema := reader.GetSchema()
-	batch, err := api.CreateReaderBatch(schema, opts)
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
+	batch, err := schema.CreateVector(bopt)
+	assert.Nil(t, err)
+
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
 	assert.Nil(t, err)
 
 	var vector []int64
 	for ; ; {
-		if err = reader.Next(&batch); err != nil {
+		if err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		if batch.Len() == 0 {
@@ -217,29 +233,30 @@ func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
 		}
 	}
 
-	reader.Close()
-
 	assert.Equal(t, values, vector)
 }
 
 func TestStructs(t *testing.T) {
-	opts := config.DefaultReaderOptions()
-	reader, err := orc.NewOSFileReader("testStructs.0.12.orc", opts)
+	reader, err := orc.NewOSFileReader("testStructs.0.12.orc")
+	defer reader.Close()
 	if err != nil {
 		t.Fatalf("create reader error: %+v", err)
 	}
 
 	schema := reader.GetSchema()
-	batch, err := api.CreateReaderBatch(schema, opts)
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
+	batch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
-	if err := reader.Next(&batch); err != nil {
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
+	assert.Nil(t, err)
+
+	if err := br.Next(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	assert.Equal(t, 1024, batch.Len())
-
-	reader.Close()
 
 	vector := batch.Children[0].Children[0].Vector // struct/struct/long
 	for i := 0; i < 1024; i++ {
@@ -254,20 +271,22 @@ func TestStructs(t *testing.T) {
 }
 
 func TestTimestamp(t *testing.T) {
-	opts := config.DefaultReaderOptions()
-
-	reader, err := orc.NewOSFileReader("testTimestamp.0.12.orc", opts)
+	reader, err := orc.NewOSFileReader("testTimestamp.0.12.orc")
+	defer reader.Close()
 	if err != nil {
 		t.Errorf("create reader error: %+v", err)
 	}
 
 	schema := reader.GetSchema()
-	log.Debugf("schema: %s", schema.String())
-
-	batch, err := api.CreateReaderBatch(schema, opts)
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
+	batch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
-	if err := reader.Next(&batch); err != nil {
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
+	assert.Nil(t, err)
+
+	if err := br.Next(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -332,7 +351,6 @@ func TestTimestamp(t *testing.T) {
 	/*assert.Equal(t, t11, batch.Vector.([]api.Timestamp)[10].Time(loc).Format(layout))
 	assert.Equal(t, t12, batch.Vector.([]api.Timestamp)[11].Time(loc).Format(layout))*/
 
-	reader.Close()
 }
 
 /*func TestStringAndBinaryStatistics(t *testing.T) {
@@ -364,47 +382,70 @@ func TestTimestamp(t *testing.T) {
 	}
 }*/
 
-func TestProject(t *testing.T) {
-	//opts := config.DefaultReaderOptions()
-	r, err := orc.NewOSFileReader("testProject.0.12.orc")
-	assert.Nil(t, err)
-
-	opts:= &orc.BatchOption{RowSize: orc.DefaultRowSize}
-	reader, err:= r.CreateBatchReader(opts)
-	defer reader.Close()
-	assert.Nil(t, err)
-
-	batch:=reader.CreateBatch()
-	if err=reader.Next(batch);err!=nil {
-		t.Fatalf("%+v", err)
+func TestProjection(t *testing.T) {
+	reader, err := orc.NewOSFileReader("testColumnProjection.0.12.orc")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer reader.Close()
+
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize, Includes: []uint32{0, 2}}
+	batch, err := reader.GetSchema().CreateVector(bopt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	br, err := reader.CreateBatchReader(bopt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer br.Close()
+
+	count := 0
+	for ; ; {
+		if err = br.Next(batch); err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if batch.Len() == 0 {
+			break
+		}
+		count += batch.Len()
+	}
+	assert.Equal(t, 2_1000, count)
 }
 
-/*func TestSeek(t *testing.T) {
-	opts := config.DefaultReaderOptions()
-
-	reader, err := orc.NewOSFileReader("testSeek.0.12.orc", opts)
-	defer reader.Close()
+func TestSeek(t *testing.T) {
+	reader, err := orc.NewOSFileReader("testSeek.0.12.orc")
 	if err != nil {
-		t.Errorf("create reader error: %+v", err)
+		t.Fatal(err)
 	}
+	defer reader.Close()
 
 	nor := reader.NumberOfRows()
 	log.Infof("number of rows %d", nor)
 
 	schema := reader.GetSchema()
-	batch, err := api.CreateReaderBatch(schema, opts)
-	assert.Nil(t, err)
+	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
+	batch, err := schema.CreateVector(bopt)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	count:=0
+	br, err := reader.CreateBatchReader(bopt)
+	if err!=nil {
+		t.Fatal(err)
+	}
+	defer br.Close()
+
+	count := 0
 
 	for {
-		if err := reader.Next(&batch); err != nil {
+		if err := br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
 		}
-		if batch.Len()==0 {
+		if batch.Len() == 0 {
 			break
-		}else {
+		} else {
 			count += batch.Len()
 		}
 	}
@@ -412,14 +453,14 @@ func TestProject(t *testing.T) {
 	fmt.Printf("read rows %d\n", count)
 	assert.Equal(t, int(nor), count)
 
-	if err:=reader.Seek(100);err!=nil {
+	/*if err := reader.Seek(100); err != nil {
 		t.Fatalf("%+v", err)
-	}
+	}*/
 
 	//if err:=reader.Seek(1500);err!=nil {
 	//	t.Fatalf("%+v", err)
 	//}
-}*/
+}
 
 /*func BenchmarkReader(b *testing.B) {
 	path := "/u01/apache/orc/java/bench/data/generated/taxi/orc.gz"

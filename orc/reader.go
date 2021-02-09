@@ -83,10 +83,14 @@ func (r *reader) CreateBatchReader(opts *api.BatchOption) (BatchReader, error) {
 	br := &batchReader{f: r.f, numberOfRows: r.numberOfRows, ropts: r.opts}
 
 	if opts.Includes == nil {
-		br.schemas = r.schemas
+		br.schema = r.schemas[0]
 	} else {
-		for _, id := range opts.Includes {
-			br.schemas = append(br.schemas, r.schemas[id])
+		// todo: includes verification, make sure includes is a tree
+		for i, id := range opts.Includes {
+			if r.schemas[i].Id==id {
+				br.schema= r.schemas[i]
+				break
+			}
 		}
 	}
 
@@ -96,8 +100,8 @@ func (r *reader) CreateBatchReader(opts *api.BatchOption) (BatchReader, error) {
 	return br, nil
 }
 
-func (r *reader) GetSchemas() []*api.TypeDescription {
-	return r.schemas
+func (r *reader) GetSchema() *api.TypeDescription {
+	return r.schemas[0]
 }
 
 func (r *reader) GetReaderOptions() *config.ReaderOptions {
@@ -120,8 +124,8 @@ func (r *reader) Close() {
 
 type batchReader struct {
 	ropts   *config.ReaderOptions
-	opts    *api.BatchOption
-	schemas []*api.TypeDescription // schemas selected
+	//opt    *api.BatchOption
+	schema *api.TypeDescription
 
 	stripeIndex int
 	stripes     []*stripeReader
@@ -137,7 +141,7 @@ func (br *batchReader) initStripes(infos []*pb.StripeInformation) error {
 		if stripeInfo.GetNumberOfRows() == 0 {
 			return errors.Errorf("stripe number of rows 0 err, %s", stripeInfo.String())
 		}
-		sr, err := newStripeReader(br.f, br.schemas, br.ropts, i, stripeInfo)
+		sr, err := newStripeReader(br.f, br.schema, br.ropts, i, stripeInfo)
 		if err != nil {
 			return err
 		}

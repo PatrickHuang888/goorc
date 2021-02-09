@@ -11,19 +11,21 @@ import (
 )
 
 func NewListV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &listMapV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
+	return &listV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
 }
 
 func NewMapV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &listMapV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
+	return &listV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
 }
 
-type listMapV2Reader struct {
+type listV2Reader struct {
 	*reader
 	length *stream.IntRLV2Reader
+
+	child Reader
 }
 
-func (r *listMapV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *listV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -43,7 +45,7 @@ func (r *listMapV2Reader) InitStream(info *pb.Stream, startOffset uint64) error 
 	return errors.New("struct column no stream other than present")
 }
 
-func (r *listMapV2Reader) Next() (value api.Value, err error) {
+func (r *listV2Reader) Next() (value api.Value, err error) {
 	if r.schema.HasNulls {
 		var p bool
 		if p, err = r.present.Next(); err != nil {
@@ -51,6 +53,7 @@ func (r *listMapV2Reader) Next() (value api.Value, err error) {
 		}
 		value.Null = !p
 	}
+
 	if !value.Null {
 		if value.V, err = r.length.NextUInt64(); err != nil {
 			return
@@ -59,33 +62,53 @@ func (r *listMapV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *listMapV2Reader) NextBatch(vector []api.Value) error {
+func (r *listV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+
+	for i := 0; i < len(vec.Vector); i++ {
+
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
-		if !vector[i].Null {
-			if vector[i].V, err = r.length.NextUInt64(); err != nil {
+
+		if !vec.Vector[i].Null {
+			v, err := r.length.NextUInt64()
+			if err != nil {
 				return err
 			}
+			vec.Vector[i].V= int(v)
 		}
+
+		if vec.Vector[i].Null {
+			vec.Children[0].Vector= append(vec.Children[0].Vector, api.Value{Null: true})
+		}else {
+			for j:=0; j<vec.Vector[i].V.(int);j++ {
+				v, err := r.child.Next()
+				if err != nil {
+					return err
+				}
+				vec.Children[0].Vector = append(vec.Children[0].Vector, v)
+			}
+		}
+
 	}
 	return nil
 }
 
-func (r *listMapV2Reader) Seek(rowNumber uint64) error {
+func (r *listV2Reader) Seek(rowNumber uint64) error {
 	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
 	if err!=nil {
 		return err
 	}
+
 	if err := r.seek(entry); err != nil {
 		return err
 	}
+
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err
@@ -94,7 +117,7 @@ func (r *listMapV2Reader) Seek(rowNumber uint64) error {
 	return nil
 }
 
-func (r *listMapV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
+func (r *listV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 	if r.schema.HasNulls {
 		if err := r.seekPresent(indexEntry); err != nil {
 			return err
@@ -134,7 +157,7 @@ func (r *listMapV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
 	return nil
 }
 
-func (r *listMapV2Reader) Close() {
+func (r *listV2Reader) Close() {
 	if r.schema.HasNulls {
 		r.present.Close()
 	}

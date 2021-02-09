@@ -169,7 +169,7 @@ func (r *binaryV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	case pb.Stream_LENGTH:
 		r.length = stream.NewIntRLV2Reader(r.opts, info, startOffset, false, f)
 	default:
-		errors.New("stream kind not unknown")
+		return errors.New("stream kind not unknown")
 	}
 	return nil
 }
@@ -196,22 +196,22 @@ func (r *binaryV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *binaryV2Reader) NextBatch(vector []api.Value) error {
+func (r *binaryV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
-		if !vector[i].Null {
+		if !vec.Vector[i].Null {
 			var l uint64
 			if l, err = r.length.NextUInt64(); err != nil {
 				return err
 			}
-			if vector[i].V, err = r.data.NextBytes(l); err != nil {
+			if vec.Vector[i].V, err = r.data.NextBytes(l); err != nil {
 				return err
 			}
 		}
@@ -224,9 +224,11 @@ func (r *binaryV2Reader) Seek(rowNumber uint64) error {
 	if err!=nil {
 		return err
 	}
+
 	if err = r.seek(entry); err != nil {
 		return err
 	}
+
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err

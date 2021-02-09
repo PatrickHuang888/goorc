@@ -230,17 +230,17 @@ func (r *decimalV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *decimalV2Reader) NextBatch(vector []api.Value) error {
+func (r *decimalV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
-		if !vector[i].Null {
+		if !vec.Vector[i].Null {
 			var precision int64
 			if precision, err = r.data.NextInt64(); err != nil {
 				return err
@@ -249,7 +249,7 @@ func (r *decimalV2Reader) NextBatch(vector []api.Value) error {
 			if scale, err = r.secondary.NextInt64(); err != nil {
 				return err
 			}
-			vector[i].V = api.Decimal64{Precision: precision, Scale: int(scale)}
+			vec.Vector[i].V = api.Decimal64{Precision: precision, Scale: int(scale)}
 		}
 	}
 	return nil
@@ -260,9 +260,11 @@ func (r *decimalV2Reader) Seek(rowNumber uint64) error {
 	if err!=nil {
 		return err
 	}
+
 	if err = r.seek(entry); err != nil {
 		return err
 	}
+
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err

@@ -68,44 +68,25 @@ func (w *stringDirectV2Writer) Write(value api.Value) error {
 
 		*w.stats.NumberOfValues++
 		*w.stats.StringStatistics.Sum += int64(dataLength)
+		if w.stats.StringStatistics.Minimum != nil && s < w.stats.StringStatistics.GetMinimum() {
+			*w.stats.StringStatistics.Minimum = s
+		}
+		if w.stats.StringStatistics.Maximum != nil && s > w.stats.StringStatistics.GetMaximum() {
+			*w.stats.StringStatistics.Maximum = s
+		}
 
-		lower := w.stats.StringStatistics.LowerBound
-		upper := w.stats.StringStatistics.UpperBound
+		if dataLength >= MaxByteLength {
+			w.stats.StringStatistics.LowerBound = w.stats.StringStatistics.Minimum
+			w.stats.StringStatistics.Minimum = nil
+			w.stats.StringStatistics.UpperBound = w.stats.StringStatistics.Maximum
+			w.stats.StringStatistics.Maximum = nil
+		}
 
-		if lower != nil || upper != nil { // has lower
-			lower = w.stats.StringStatistics.LowerBound
-			if s < *lower || *lower == "" {
-				*lower = s
-			}
-			upper = w.stats.StringStatistics.UpperBound
-			if s > *upper || *upper == "" {
-				*upper = s
-			}
-
-		} else { // no lower
-
-			if dataLength >= MaxByteLength {
-				lower = w.stats.StringStatistics.Minimum
-				w.stats.StringStatistics.Minimum = nil
-				if s < *lower || *lower == "" {
-					*w.stats.StringStatistics.LowerBound = s
-				}
-				upper := w.stats.StringStatistics.Maximum
-				w.stats.StringStatistics.Maximum = nil
-				if s > *upper || *upper == "" {
-					*w.stats.StringStatistics.UpperBound = s
-				}
-
-			} else {
-				min := w.stats.StringStatistics.Minimum
-				if s < *min || *min == "" {
-					*min = s
-				}
-				max := w.stats.StringStatistics.Maximum
-				if s > *max || *max == "" {
-					*max = s
-				}
-			}
+		if w.stats.StringStatistics.LowerBound != nil && s < w.stats.StringStatistics.GetMaximum() {
+			*w.stats.StringStatistics.LowerBound = s
+		}
+		if w.stats.StringStatistics.UpperBound != nil && s > w.stats.StringStatistics.GetMaximum() {
+			*w.stats.StringStatistics.UpperBound = s
 		}
 	}
 
@@ -134,43 +115,25 @@ func (w *stringDirectV2Writer) Write(value api.Value) error {
 			*w.indexStats.StringStatistics.Sum += int64(dataLength)
 			s := value.V.(string)
 
-			lower := w.indexStats.StringStatistics.LowerBound
-			upper := w.indexStats.StringStatistics.UpperBound
+			if w.indexStats.StringStatistics.Minimum != nil && s < w.indexStats.StringStatistics.GetMinimum() {
+				*w.indexStats.StringStatistics.Minimum = s
+			}
+			if w.indexStats.StringStatistics.Maximum != nil && s > w.indexStats.StringStatistics.GetMaximum() {
+				*w.indexStats.StringStatistics.Maximum = s
+			}
 
-			if lower != nil || upper != nil { // no lower
-				if dataLength >= MaxByteLength {
-					lower = w.indexStats.StringStatistics.Minimum
-					w.indexStats.StringStatistics.Minimum = nil
-					if s < *lower || *lower == "" {
-						*w.indexStats.StringStatistics.LowerBound = s
-					}
-					upper := w.indexStats.StringStatistics.Maximum
-					w.indexStats.StringStatistics.Maximum = nil
-					if s > *upper || *upper == "" {
-						*w.indexStats.StringStatistics.UpperBound = s
-					}
+			if dataLength >= MaxByteLength {
+				w.indexStats.StringStatistics.LowerBound = w.indexStats.StringStatistics.Minimum
+				w.indexStats.StringStatistics.Minimum = nil
+				w.indexStats.StringStatistics.UpperBound = w.indexStats.StringStatistics.Maximum
+				w.indexStats.StringStatistics.Maximum = nil
+			}
 
-				} else {
-					min := w.indexStats.StringStatistics.GetMinimum()
-					if s < min || min == "" {
-						*w.indexStats.StringStatistics.Minimum = s
-					}
-					max := w.indexStats.StringStatistics.GetMaximum()
-					if s > max || max == "" {
-						*w.indexStats.StringStatistics.Maximum = s
-					}
-				}
-
-			} else { // has lower
-
-				lower := w.indexStats.StringStatistics.LowerBound
-				if s < *lower || *lower == "" {
-					*lower = s
-				}
-				upper = w.indexStats.StringStatistics.UpperBound
-				if s > *upper || *upper == "" {
-					*upper = s
-				}
+			if w.indexStats.StringStatistics.LowerBound != nil && s < w.indexStats.StringStatistics.GetMaximum() {
+				*w.indexStats.StringStatistics.LowerBound = s
+			}
+			if w.indexStats.StringStatistics.UpperBound != nil && s > w.indexStats.StringStatistics.GetMaximum() {
+				*w.indexStats.StringStatistics.UpperBound = s
 			}
 		}
 	}
@@ -292,23 +255,23 @@ func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *stringDirectV2Reader) NextBatch(vector []api.Value) error {
+func (r *stringDirectV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
-		if !vector[i].Null {
+		if !vec.Vector[i].Null {
 			var l uint64
 			l, err = r.length.NextUInt64()
 			if err != nil {
 				return err
 			}
-			if vector[i].V, err = r.data.NextString(l); err != nil {
+			if vec.Vector[i].V, err = r.data.NextString(l); err != nil {
 				return err
 			}
 		}
@@ -321,9 +284,11 @@ func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
 	if err != nil {
 		return err
 	}
+
 	if err := r.seek(entry); err != nil {
 		return err
 	}
+
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err
@@ -453,17 +418,17 @@ func (r *stringDictionaryV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *stringDictionaryV2Reader) NextBatch(vector []api.Value) error {
+func (r *stringDictionaryV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
-		if !vector[i].Null {
+		if !vec.Vector[i].Null {
 			var data uint64
 			if data, err = r.data.NextUInt64(); err != nil {
 				return err
@@ -481,7 +446,7 @@ func (r *stringDictionaryV2Reader) NextBatch(vector []api.Value) error {
 					r.dictStrings = append(r.dictStrings, s)
 				}
 			}
-			vector[i].V = r.dictStrings[data]
+			vec.Vector[i].V = r.dictStrings[data]
 		}
 	}
 	return nil
@@ -492,9 +457,11 @@ func (r *stringDictionaryV2Reader) Seek(rowNumber uint64) error {
 	if err != nil {
 		return err
 	}
+
 	if err = r.seek(entry); err != nil {
 		return err
 	}
+
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err

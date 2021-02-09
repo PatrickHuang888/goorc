@@ -17,13 +17,12 @@ func TestStripeBasic(t *testing.T) {
 	f := orcio.NewMockFile(buf)
 
 	wopts := config.DefaultWriterOptions()
-	wopts.CreateVector= false
-	batch, err := api.CreateWriterBatch(schema, wopts)
+	bopt:= &api.BatchOption{RowSize: 104, NotCreateVector: true}
+	batch, err := schema.CreateVector(bopt)
+	assert.Nil(t, err)
 
-	rows := 104
-
-	values := make([]api.Value, rows)
-	for i := 0; i < rows; i++ {
+	values := make([]api.Value, bopt.RowSize)
+	for i := 0; i < bopt.RowSize; i++ {
 		values[i].V = byte(i)
 	}
 	batch.Vector = values
@@ -34,7 +33,7 @@ func TestStripeBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := writer.write(&batch); err != nil {
+	if err := writer.write(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	if err := writer.flushOut(); err != nil {
@@ -42,15 +41,16 @@ func TestStripeBasic(t *testing.T) {
 	}
 
 	ropts := config.DefaultReaderOptions()
-	reader, err := newStripeReader(f, schemas, &ropts, 0, writer.info)
+	reader, err := newStripeReader(f, schema, &ropts, 0, writer.info)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	bopt:= &api.BatchOption{RowSize: rows}
-	vec, err := schema.CreateBatch(bopt)
+	bopt.NotCreateVector= false
+	vec, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
+	vec.Vector= vec.Vector[:0]
 	if _, err := reader.next(vec); err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -65,13 +65,12 @@ func TestMultipleStripes(t *testing.T) {
 	wopts.CompressionKind = pb.CompressionKind_ZLIB
 	wopts.StripeSize = 10_000
 	wopts.ChunkSize = 8_000
-	wopts.CreateVector = false
-	wbatch, err := api.CreateWriterBatch(schema, wopts)
+	bopt:= &api.BatchOption{RowSize: 1_000, NotCreateVector: true}
+	wbatch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
-	rows := 1_000
-	values := make([]api.Value, rows)
-	for i := 0; i < rows; i++ {
+	values := make([]api.Value, bopt.RowSize)
+	for i := 0; i < bopt.RowSize; i++ {
 		values[i].V = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
 	}
 	wbatch.Vector = values
@@ -83,7 +82,7 @@ func TestMultipleStripes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := writer.Write(&wbatch); err != nil {
+	if err := writer.Write(wbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	if err := writer.Close(); err != nil {
@@ -94,12 +93,12 @@ func TestMultipleStripes(t *testing.T) {
 	assert.Nil(t, err)
 	defer reader.Close()
 
-	bopt:= &api.BatchOption{RowSize: api.DefaultRowSize}
+	bopt.NotCreateVector= false
 	br, err := reader.CreateBatchReader(bopt)
 	assert.Nil(t, err)
 	defer br.Close()
 
-	rbatch, err:= schema.CreateBatch(bopt)
+	rbatch, err:= schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
 	var vector []api.Value

@@ -2,7 +2,6 @@ package api
 
 import (
 	"fmt"
-	"github.com/patrickhuang888/goorc/orc/config"
 	"strings"
 	"time"
 
@@ -44,7 +43,7 @@ func (td *TypeDescription) AddChild(name string, value *TypeDescription) {
 	td.Children = append(td.Children, value)
 }
 
-func (td TypeDescription) CreateBatch(opt *BatchOption) (*ColumnVector, error) {
+func (td TypeDescription) CreateVector(opt *BatchOption) (*ColumnVector, error) {
 	if opt.RowSize == 0 {
 		return nil, errors.New("RowSize == 0")
 	}
@@ -52,36 +51,69 @@ func (td TypeDescription) CreateBatch(opt *BatchOption) (*ColumnVector, error) {
 		return nil, err
 	}
 
-	var cv *ColumnVector
-	if len(opt.Includes) == 0 { // all column selected
-		cv = td.createVector(opt.RowSize)
-	} else {
+	return td.createVector(opt), nil
+}
 
+func (td TypeDescription) createStructVector(opt *BatchOption) *ColumnVector {
+	var cv *ColumnVector
+	if td.HasNulls && !opt.NotCreateVector {
+		cv = &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
+	} else {
+		cv = &ColumnVector{Id: td.Id, Kind: td.Kind}
+	}
+	for _, c := range td.Children {
+		childVec := c.createVector(opt)
+		if childVec != nil {
+			cv.Children = append(cv.Children, childVec)
+		}
+	}
+	return cv
+}
+
+func (td TypeDescription) createListVector(opt *BatchOption) *ColumnVector {
+	cv := &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
+	cv.Children = append(cv.Children, td.Children[0].createVector(opt))
+	return cv
+}
+
+func (td TypeDescription) createMapVector(opt *BatchOption) *ColumnVector {
+	cv := &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
+	cv.Children = append(cv.Children, td.Children[0].createVector(opt))
+	cv.Children = append(cv.Children, td.Children[1].createVector(opt))
+	return cv
+}
+
+func (td TypeDescription) createPrimaryVector(opt *BatchOption) *ColumnVector {
+	return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
+}
+
+func (td TypeDescription) createVector(opt *BatchOption) *ColumnVector {
+	create := len(opt.Includes) == 0
+
+	if !create {
 		for _, id := range opt.Includes {
 			if td.Id == id {
-				cv = td.createVector(opt.RowSize)
+				create = true
+				break
 			}
 		}
 	}
-	return cv, nil
-}
 
-func (td TypeDescription) createVector(rowSize int) *ColumnVector {
-	var cv *ColumnVector
-	if td.Kind == pb.Type_STRUCT || td.Kind == pb.Type_LIST || td.Kind == pb.Type_MAP || td.Kind == pb.Type_UNION {
-		if td.HasNulls {
-			cv = &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, rowSize)}
-		} else {
-			cv = &ColumnVector{Id: td.Id, Kind: td.Kind}
+	if create {
+		switch td.Kind {
+		case pb.Type_STRUCT:
+			return td.createStructVector(opt)
+		case pb.Type_LIST:
+			return td.createListVector(opt)
+		case pb.Type_MAP:
+			return td.createMapVector(opt)
+		case pb.Type_UNION:
+			panic("not impl")
+		default:
+			return td.createPrimaryVector(opt)
 		}
-	} else {
-		cv = &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, 0, rowSize)}
 	}
-
-	for _, c := range td.Children {
-		cv.Children = append(cv.Children, c.createVector(rowSize))
-	}
-	return cv
+	return nil
 }
 
 func (td TypeDescription) verifySchema() error {
@@ -100,9 +132,10 @@ const DefaultRowSize = 10_000
 
 type BatchOption struct {
 	// includes column id, nil means all column
-	Includes []uint32
-	RowSize  int
-	Loc      *time.Location
+	Includes        []uint32
+	RowSize         int
+	Loc             *time.Location
+	NotCreateVector bool
 }
 
 type action func(node *TypeDescription) error
@@ -269,7 +302,7 @@ func verifySchema(schema *TypeDescription) error {
 }
 
 // should normalize first
-func CreateWriterBatch(td *TypeDescription, opts config.WriterOptions) (batch ColumnVector, err error) {
+/*func CreateWriterBatch(td *TypeDescription, opts config.WriterOptions) (batch ColumnVector, err error) {
 	if err = CheckId(td); err != nil {
 		return
 	}
@@ -299,4 +332,4 @@ func CreateWriterBatch(td *TypeDescription, opts config.WriterOptions) (batch Co
 	} else {
 		return ColumnVector{Id: td.Id, Kind: td.Kind}, nil
 	}
-}
+}*/

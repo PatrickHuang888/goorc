@@ -235,29 +235,29 @@ func (r *intV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *intV2Reader) NextBatch(vector []api.Value) error {
+func (r *intV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
 
-		if !vector[i].Null {
+		if !vec.Vector[i].Null {
 			var v int64
 			if v, err = r.data.NextInt64(); err != nil {
 				return err
 			}
 			switch r.bits {
 			case BitsSmallInt:
-				vector[i].V = int16(v)
+				vec.Vector[i].V = int16(v)
 			case BitsInt:
-				vector[i].V = int32(v)
+				vec.Vector[i].V = int32(v)
 			case BitsBigInt:
-				vector[i].V = v
+				vec.Vector[i].V = v
 			default:
 				err = errors.New("reader bits error")
 			}

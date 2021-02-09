@@ -13,15 +13,19 @@ import (
 )
 
 func NewStructReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &structReader{reader: &reader{schema: schema, opts: opts, f: f}}
+	return &StructReader{reader: &reader{schema: schema, opts: opts, f: f}}
 }
 
-type structReader struct {
+type StructReader struct {
 	*reader
-	//children []Reader
+	children []Reader
 }
 
-func (r *structReader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *StructReader) AddChild(child Reader){
+	r.children = append(r.children, child)
+}
+
+func (r *StructReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -37,45 +41,74 @@ func (r *structReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("struct column no stream other than present")
 }
 
-func (r *structReader) Next() (value api.Value, err error) {
+func (r *StructReader) Next() (v api.Value, err error) {
+	v.V = api.StructValue{Children: make([]api.Value, len(r.children))}
+
 	if r.schema.HasNulls {
 		var p bool
-		if p, err = r.present.Next(); err != nil {
+		if p, err = r.present.Next();err != nil {
 			return
 		}
-		value.Null = !p
+		v.Null = !p
+	}
+
+	for i, c := range r.children {
+		if !v.Null {
+			if v.V.(api.StructValue).Children[i].V, err = c.Next(); err != nil {
+				return
+			}
+		}
 	}
 	return
 }
 
-func (r *structReader) NextBatch(vector []api.Value) error {
+func (r *StructReader) NextBatch(vec *api.ColumnVector) error {
 	if r.schema.HasNulls {
-		for i := 0; i < len(vector); i++ {
+		for i := 0; i < len(vec.Vector); i++ {
 			p, err := r.present.Next()
 			if err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
+		}
+		fillNulls(vec)
+	}
+
+	for i, c := range r.children {
+		if err := c.NextBatch(vec.Children[i]); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (r *structReader) seek(indexEntry *pb.RowIndexEntry) error {
-	if r.schema.HasNulls {
-		return r.seekPresent(indexEntry)
+func fillNulls(vec *api.ColumnVector) {
+	for _, c := range vec.Children {
+		for i, v := range vec.Vector {
+			c.Vector[i].Null = v.Null
+		}
+		fillNulls(c)
 	}
-	return nil
 }
 
-func (r *structReader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+func (r *StructReader) Seek(rowNumber uint64) error {
+	entry, offset, err := r.getIndexEntryAndOffset(rowNumber)
 	if err != nil {
 		return err
 	}
-	if err = r.seek(entry); err != nil {
-		return err
+
+	if r.schema.HasNulls {
+		if err := r.seekPresent(entry); err != nil {
+			return err
+		}
 	}
+
+	for _, c := range r.children {
+		if err:=c.Seek(rowNumber);err!=nil {
+			return err
+		}
+	}
+
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err
@@ -84,9 +117,12 @@ func (r *structReader) Seek(rowNumber uint64) error {
 	return nil
 }
 
-func (r *structReader) Close() {
+func (r *StructReader) Close() {
 	if r.schema.HasNulls {
 		r.present.Close()
+	}
+	for _, c := range r.children {
+		c.Close()
 	}
 }
 

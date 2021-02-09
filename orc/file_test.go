@@ -32,7 +32,6 @@ func TestStruct(t *testing.T) {
 	schema.Children = []*api.TypeDescription{x, y}
 
 	wopts := config.DefaultWriterOptions()
-	wopts.RowSize = 150
 
 	buf := make([]byte, 200_000)
 	f := orcio.NewMockFile(buf)
@@ -42,18 +41,19 @@ func TestStruct(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	wbatch, err := api.CreateWriterBatch(schema, wopts)
+	bopt := &api.BatchOption{RowSize: 150}
+	wbatch, err := schema.CreateVector(bopt)
 	if err != nil {
 		fmt.Printf("got error when create row batch %v+", err)
 		os.Exit(1)
 	}
 
-	for i := 0; i < wopts.RowSize; i++ {
+	for i := 0; i < bopt.RowSize; i++ {
 		wbatch.Children[0].Vector[i].V = int32(i)
 		wbatch.Children[1].Vector[i].V = fmt.Sprintf("string-%s", strconv.Itoa(i))
 	}
 
-	if err := writer.Write(&wbatch); err != nil {
+	if err := writer.Write(wbatch); err != nil {
 		fmt.Printf("write error %+v\n", err)
 		os.Exit(1)
 	}
@@ -66,11 +66,10 @@ func TestStruct(t *testing.T) {
 	defer reader.Close()
 	assert.Nil(t, err)
 
-	bopt := &api.BatchOption{RowSize: 150}
 	br, err := reader.CreateBatchReader(bopt)
 	defer br.Close()
 	assert.Nil(t, err)
-	batch, err := schema.CreateBatch(bopt)
+	batch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 	err = br.Next(batch)
 	if err != nil {
@@ -89,15 +88,12 @@ func TestString(t *testing.T) {
 	wopts.CompressionKind = pb.CompressionKind_ZLIB
 	wopts.StripeSize = 10_000
 	wopts.ChunkSize = 5_000
-	wopts.CreateVector = false
-	wbatch, err := api.CreateWriterBatch(schema, wopts)
-
-	rows := 100
-	values := make([]api.Value, rows)
-	for i := 0; i < rows; i++ {
-		values[i].V = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
+	bopt := &api.BatchOption{RowSize: 100}
+	wbatch, err := schema.CreateVector(bopt)
+	assert.Nil(t, err)
+	for i := 0; i < bopt.RowSize; i++ {
+		wbatch.Vector[i].V = fmt.Sprintf("string %d Because the number of nanoseconds often has a large number of trailing zeros", i)
 	}
-	wbatch.Vector = values
 
 	buf := make([]byte, 200_000)
 	f := orcio.NewMockFile(buf)
@@ -106,7 +102,7 @@ func TestString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := writer.Write(&wbatch); err != nil {
+	if err := writer.Write(wbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	if err := writer.Close(); err != nil {
@@ -117,12 +113,11 @@ func TestString(t *testing.T) {
 	defer reader.Close()
 	assert.Nil(t, err)
 
-	bopt := &api.BatchOption{RowSize: api.DefaultRowSize}
 	br, err := reader.CreateBatchReader(bopt)
 	defer br.Close()
 	assert.Nil(t, err)
 
-	rbatch, err := schema.CreateBatch(bopt)
+	rbatch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
 	var vector []api.Value
@@ -135,73 +130,72 @@ func TestString(t *testing.T) {
 			break
 		}
 	}
-	assert.Equal(t, values, vector)
+	assert.Equal(t, wbatch.Vector, vector)
 }
 
-func TestStructWithPresents (t *testing.T) {
+func TestStructWithPresents(t *testing.T) {
 	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRUCT, HasNulls: true}
 	schema.Encoding = pb.ColumnEncoding_DIRECT
+	//todo:  not sure if children should has nulls
 	child1 := api.TypeDescription{Id: 0, Kind: pb.Type_INT}
 	child1.Encoding = pb.ColumnEncoding_DIRECT_V2
-	schema.Children= []*api.TypeDescription{&child1}
-	err:=api.NormalizeSchema(schema)
-	assert.Nil(t, err)
+	schema.Children = []*api.TypeDescription{&child1}
+	/*err := api.NormalizeSchema(schema)
+	assert.Nil(t, err)*/
 
 	wopts := config.DefaultWriterOptions()
-	wopts.CreateVector= false
-	wbatch, err := api.CreateWriterBatch(schema, wopts)
+	bopt := &api.BatchOption{RowSize: 100, NotCreateVector: true}
+	wbatch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
-	rows := 100
-
-	values := make([]api.Value, rows)
+	values := make([]api.Value, bopt.RowSize)
 	values[0].Null = true
 	values[45].Null = true
 	values[99].Null = true
-	wbatch.Vector= values
+	wbatch.Vector = values
 
-	childValues := make([]api.Value, rows)
-	for i:=0; i<rows;i++ {
-		childValues[i].V= int32(i)
+	childValues := make([]api.Value, bopt.RowSize)
+	for i := 0; i < bopt.RowSize; i++ {
+		childValues[i].V = int32(i)
 	}
-	childValues[0].Null= true
-	childValues[0].V= nil
-	childValues[45].Null=true
-	childValues[45].V= nil
-	childValues[99].Null=true
-	childValues[99].V= nil
-	wbatch.Children[0].Vector=childValues
+	childValues[0].Null = true
+	childValues[0].V = nil
+	childValues[45].Null = true
+	childValues[45].V = nil
+	childValues[99].Null = true
+	childValues[99].V = nil
+	wbatch.Children[0].Vector = childValues
 
 	buf := make([]byte, 5000)
 	f := orcio.NewMockFile(buf)
 
-	schemas, err:= schema.Flat()
 	assert.Nil(t, err)
-	writer, err := newStripeWriter(f, 0, schemas, &wopts)
+	writer, err := newWriter(schema, &wopts, f)
+	defer writer.Close()
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := writer.write(&wbatch); err != nil {
-		t.Fatalf("%+v", err)
-	}
-	if err := writer.flushOut(); err != nil {
+	if err := writer.Write(wbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	ropts := config.DefaultReaderOptions()
-	reader, err := newStripeReader(f, schemas, &ropts, 0, writer.info)
+	reader, err := newReader(f)
+	defer reader.Close()
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	bopt:= &api.BatchOption{RowSize: api.DefaultRowSize}
-	batch, err := schema.CreateBatch(bopt)
+	bopt.NotCreateVector = false
+	rbatch, err := schema.CreateVector(bopt)
+	assert.Nil(t, err)
+	br, err := reader.CreateBatchReader(bopt)
+	defer br.Close()
 	assert.Nil(t, err)
 
-	if _, err := reader.next(batch); err != nil {
+	if err := br.Next(rbatch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	assert.Equal(t, values, batch.Vector)
-	assert.Equal(t, childValues, batch.Children[0].Vector)
+	assert.Equal(t, values, rbatch.Vector)
+	assert.Equal(t, childValues, rbatch.Children[0].Vector)
 }

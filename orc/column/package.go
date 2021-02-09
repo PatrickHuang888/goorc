@@ -20,13 +20,13 @@ func SetLogLevel(level log.Level) {
 }
 
 type Reader interface {
-	//InitChildren(children []Reader) error
+	//AddChild(child Reader) error
 	InitIndex(startOffset uint64, length uint64) error
 	InitStream(info *pb.Stream, startOffset uint64) error
 
 	Next() (value api.Value, err error)
 
-	NextBatch(vector []api.Value) error
+	NextBatch(vec *api.ColumnVector) error
 
 	// Seek seek to row number offset to current stripe
 	// if column is struct (or like)  children, and struct has present stream, then

@@ -192,19 +192,19 @@ func (r *dateV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *dateV2Reader) NextBatch(vector []api.Value) error {
+func (r *dateV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
 
-		if !vector[i].Null {
-			vector[i].V, err = r.data.Next()
+		if !vec.Vector[i].Null {
+			vec.Vector[i].V, err = r.data.Next()
 			if err != nil {
 				return err
 			}
@@ -250,9 +250,11 @@ func (r *dateV2Reader) Seek(rowNumber uint64) error {
 	if err != nil {
 		return err
 	}
+
 	if err := r.seek(entry); err != nil {
 		return err
 	}
+
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err
@@ -492,18 +494,18 @@ func (r *timestampV2Reader) Next() (value api.Value, err error) {
 	return
 }
 
-func (r *timestampV2Reader) NextBatch(vector []api.Value) error {
+func (r *timestampV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
-	for i := 0; i < len(vector); i++ {
+	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}
-			vector[i].Null = !p
+			vec.Vector[i].Null = !p
 		}
 
-		if !vector[i].Null {
+		if !vec.Vector[i].Null {
 			var s int64
 			if s, err = r.data.NextInt64(); err != nil {
 				return err
@@ -512,7 +514,7 @@ func (r *timestampV2Reader) NextBatch(vector []api.Value) error {
 			if ns, err = r.secondary.NextUInt64(); err != nil {
 				return err
 			}
-			vector[i].V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: api.DecodingTimestampNanos(ns)}
+			vec.Vector[i].V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: api.DecodingTimestampNanos(ns)}
 		}
 	}
 	return nil
@@ -523,9 +525,11 @@ func (r *timestampV2Reader) Seek(rowNumber uint64) error {
 	if err != nil {
 		return err
 	}
+
 	if err := r.seek(entry); err != nil {
 		return err
 	}
+
 	for i := 0; i < int(offset); i++ {
 		if _, err := r.Next(); err != nil {
 			return err

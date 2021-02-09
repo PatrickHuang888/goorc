@@ -16,7 +16,7 @@ func SetLogLevel(level log.Level) {
 type Reader interface {
 	CreateBatchReader(opts *api.BatchOption) (BatchReader, error)
 
-	GetSchemas() []*api.TypeDescription
+	GetSchema() *api.TypeDescription
 
 	GetReaderOptions() *config.ReaderOptions
 
