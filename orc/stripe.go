@@ -34,10 +34,10 @@ type stripeWriter struct {
 	index int
 }
 
-func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
+func (stripe *stripeWriter) write(vec *api.ColumnVector) error {
 	count := uint64(0)
-	for i := 0; i < batch.Len(); i++ {
-		if err := stripe.writeValue(i, batch); err != nil {
+	for i := 0; i < vec.Len(); i++ {
+		if err := stripe.writeValue(i, vec); err != nil {
 			return err
 		}
 		count++
@@ -58,23 +58,14 @@ func (stripe *stripeWriter) write(batch *api.ColumnVector) error {
 	return nil
 }
 
-func (stripe *stripeWriter) writeValue(index int, batch *api.ColumnVector) error {
-	schema := stripe.schemas[batch.Id]
-
-	// todo: other type
-	if schema.Kind != pb.Type_STRUCT {
-		if err := stripe.columnWriters[batch.Id].Write(batch.Vector[index]); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	if schema.HasNulls {
-		if err := stripe.columnWriters[batch.Id].Write(batch.Vector[index]); err != nil {
+func (stripe *stripeWriter) writeValue(index int, vec *api.ColumnVector) error {
+	if vec.Vector != nil { // maybe no present struct vector
+		if err := stripe.columnWriters[vec.Id].Write(vec.Vector[index]); err != nil {
 			return err
 		}
 	}
-	for _, c := range batch.Children {
+
+	for _, c := range vec.Children {
 		if err := stripe.writeValue(index, c); err != nil {
 			return err
 		}
@@ -215,7 +206,7 @@ type stripeReader struct {
 }
 
 func newStripeReader(f orcio.File, schema *api.TypeDescription, opts *config.ReaderOptions, idx int, info *pb.StripeInformation) (*stripeReader, error) {
-	reader := &stripeReader{f: f, schema:schema, opts: opts, index: idx, numberOfRows: info.GetNumberOfRows()}
+	reader := &stripeReader{f: f, schema: schema, opts: opts, index: idx, numberOfRows: info.GetNumberOfRows()}
 	footer, err := reader.readFooter(info)
 	if err != nil {
 		return nil, err
@@ -298,13 +289,22 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 
 	// build tree
 	for _, schema := range schemas {
-		for _, c := range schema.Children {
+		for i, c := range schema.Children {
 			switch schema.Kind {
 			case pb.Type_STRUCT:
 				readers[schema.Id].(*column.StructReader).AddChild(readers[c.Id])
 			case pb.Type_LIST:
+				readers[schema.Id].(*column.ListV2Reader).SetChild(readers[c.Id])
 			case pb.Type_MAP:
+				if i == 0 {
+					readers[schema.Id].(*column.MapV2Reader).SetKey(readers[c.Id])
+				} else if i == 1 {
+					readers[schema.Id].(*column.MapV2Reader).SetValue(readers[c.Id])
+				} else {
+					return errors.New("map children > 2")
+				}
 			case pb.Type_UNION:
+				return errors.New("not impl")
 			default:
 				return errors.New("should have no child")
 			}
@@ -329,40 +329,59 @@ func (stripe *stripeReader) next(vec *api.ColumnVector) (end bool, err error) {
 	return
 }
 
-
-func setChildrenSize(size int, vec *api.ColumnVector) {
-	for _, c := range vec.Children {
-		c.Vector = c.Vector[:size]
-		setChildrenSize(size, c)
-	}
-}
-
 func (stripe *stripeReader) prepareVector(vec *api.ColumnVector) {
 	page := vec.Cap() - vec.Len()
 	if int(stripe.numberOfRows-stripe.cursor) < page {
 		page = int(stripe.numberOfRows - stripe.cursor)
 	}
+	stripe.setVectorSize(page, vec)
+}
 
+func (stripe *stripeReader) setVectorSize(size int, vec *api.ColumnVector) {
 	switch vec.Kind {
 	case pb.Type_STRUCT:
 		if stripe.schema.HasNulls {
-			vec.Vector = vec.Vector[:page]
+			vec.Vector = vec.Vector[:size]
 		}
+		for _, c := range vec.Children {
+			stripe.setVectorSize(size, c)
+		}
+
 	case pb.Type_LIST:
-		vec.Vector = vec.Vector[:page]
+		vec.Vector = vec.Vector[:size]
+		// list's children maybe struct
+		vec.Children[0].Vector = vec.Children[0].Vector[:0]
+
 	case pb.Type_MAP:
-		panic("not impl")
+		vec.Vector = vec.Vector[:size]
+		// toClarify: will map's children be struct or just primary?
+		vec.Children[0].Vector = vec.Children[0].Vector[:0]
+		vec.Children[1].Vector = vec.Children[1].Vector[:0]
+
 	case pb.Type_UNION:
 		panic("not impl")
 	default:
-		vec.Vector = vec.Vector[:page]
+		vec.Vector = vec.Vector[:size]
 	}
-	setChildrenSize(page, vec)
 }
 
 // locate rows in this stripe
 func (stripe *stripeReader) Seek(rowNumber uint64) error {
-	if err := stripe.columnReader.Seek(rowNumber); err != nil {
+	var offset uint64
+	var stride uint64
+
+	if rowNumber < uint64(stripe.opts.IndexStride) {
+		offset = rowNumber
+	} else {
+		stride := rowNumber / uint64(stripe.opts.IndexStride)
+		offset = rowNumber % (stride * uint64(stripe.opts.IndexStride))
+	}
+
+	if err := stripe.columnReader.SeekStride(int(stride)); err != nil {
+		return err
+	}
+
+	if err := stripe.columnReader.Skip(offset); err != nil {
 		return err
 	}
 	return nil

@@ -173,16 +173,18 @@ func (w *intWriter) Reset() {
 }
 
 func NewIntV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File, bits int) Reader {
-	return &intV2Reader{reader: &reader{f: f, schema: schema, opts: opts}, bits: bits}
+	return &IntV2Reader{reader: reader{f: f, schema: schema, opts: opts}, bits: bits}
 }
 
-type intV2Reader struct {
-	*reader
-	data *stream.IntRLV2Reader
-	bits int
+type IntV2Reader struct {
+	reader
+
+	present *stream.BoolReader
+	data    *stream.IntRLV2Reader
+	bits    int
 }
 
-func (r *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *IntV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -207,35 +209,7 @@ func (r *intV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("stream unknown")
 }
 
-func (r *intV2Reader) Next() (value api.Value, err error) {
-	if r.schema.HasNulls {
-		var p bool
-		if p, err = r.present.Next(); err != nil {
-			return
-		}
-		value.Null = !p
-	}
-
-	if !value.Null {
-		var v int64
-		if v, err = r.data.NextInt64(); err != nil {
-			return
-		}
-		switch r.bits {
-		case BitsSmallInt:
-			value.V = int16(v)
-		case BitsInt:
-			value.V = int32(v)
-		case BitsBigInt:
-			value.V = v
-		default:
-			err = errors.New("reader bits error")
-		}
-	}
-	return
-}
-
-func (r *intV2Reader) NextBatch(vec *api.ColumnVector) error {
+func (r *IntV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
 	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
@@ -266,56 +240,88 @@ func (r *intV2Reader) NextBatch(vec *api.ColumnVector) error {
 	return nil
 }
 
-func (r *intV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
-	if r.schema.HasNulls {
-		if err := r.seekPresent(indexEntry); err != nil {
-			return err
-		}
-	}
-	var dataChunk, dataChunkOffset, dataOffset uint64
-	if indexEntry != nil {
-		pos := indexEntry.Positions
-		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-			if r.schema.HasNulls {
-				dataChunkOffset = pos[3]
-				dataOffset = pos[4]
-			} else {
-				dataChunkOffset = pos[0]
-				dataOffset = pos[1]
-			}
-		} else {
-			if r.schema.HasNulls {
-				dataChunk = pos[4]
-				dataChunkOffset = pos[5]
-				dataOffset = pos[6]
-			} else {
-				dataChunk = pos[0]
-				dataChunkOffset = pos[1]
-				dataOffset = pos[2]
-			}
-		}
-	}
-	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset)
-}
+func (r *IntV2Reader) Skip(rows uint64) error {
+	var err error
+	p := true
 
-func (r *intV2Reader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err!=nil {
-		return err
-	}
-	if err = r.seek(entry); err != nil {
-		return err
-	}
-	for i := 0; i < int(offset); i++ {
-		if _, err := r.Next(); err != nil {
-			return err
+	for i := 0; i < int(rows); i++ {
+		if r.schema.HasNulls {
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+		}
+
+		if p {
+			if _, err = r.data.NextInt64(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (r *intV2Reader) Close() {
-	if r.schema.HasNulls {
+func (r *IntV2Reader) SeekStride(stride int) error {
+	if stride == 0 {
+		if r.present != nil {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := r.data.Seek(0, 0, 0); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	var dataChunk, dataChunkOffset, dataOffset uint64
+
+	pos, err := r.getStridePositions(stride)
+	if err != nil {
+		return err
+	}
+
+	if r.present != nil {
+		var pChunk, pChunkOffset, pOffset1, pOffset2 uint64
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			pChunkOffset = pos[0]
+			pOffset1 = pos[1]
+			pOffset2 = pos[2]
+
+			dataChunkOffset = pos[3]
+			dataOffset = pos[4]
+
+		} else {
+			pChunk = pos[0]
+			pChunkOffset = pos[1]
+			pOffset1 = pos[2]
+			pOffset2 = pos[3]
+
+			dataChunk = pos[4]
+			dataChunkOffset = pos[5]
+			dataOffset = pos[6]
+		}
+
+		if err = r.present.Seek(pChunk, pChunkOffset, pOffset1, pOffset2); err != nil {
+			return err
+		}
+
+	} else {
+
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			dataChunkOffset = pos[0]
+			dataOffset = pos[1]
+		} else {
+			dataChunk = pos[0]
+			dataChunkOffset = pos[1]
+			dataOffset = pos[2]
+		}
+	}
+
+	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset)
+}
+
+func (r *IntV2Reader) Close() {
+	if r.present != nil {
 		r.present.Close()
 	}
 	r.data.Close()

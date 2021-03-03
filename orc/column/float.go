@@ -1,4 +1,3 @@
-
 package column
 
 import (
@@ -13,16 +12,18 @@ import (
 )
 
 func NewFloatReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File, is64 bool) Reader {
-	return &floatReader{reader: &reader{f: f, schema: schema, opts: opts}, is64: is64}
+	return &FloatReader{reader: reader{f: f, schema: schema, opts: opts}, is64: is64}
 }
 
-type floatReader struct {
-	*reader
-	data *stream.FloatReader
-	is64 bool
+type FloatReader struct {
+	reader
+
+	present *stream.BoolReader
+	data    *stream.FloatReader
+	is64    bool
 }
 
-func (r *floatReader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *FloatReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -33,6 +34,9 @@ func (r *floatReader) InitStream(info *pb.Stream, startOffset uint64) error {
 
 	switch info.GetKind() {
 	case pb.Stream_PRESENT:
+		if !r.schema.HasNulls {
+			return errors.New("schema has no nulls")
+		}
 		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 	case pb.Stream_DATA:
 		r.data = stream.NewFloatReader(r.opts, info, startOffset, f, r.is64)
@@ -42,30 +46,7 @@ func (r *floatReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return nil
 }
 
-func (r *floatReader) Next() (value api.Value, err error) {
-	if r.schema.HasNulls {
-		var p bool
-		if p, err = r.present.Next(); err != nil {
-			return
-		}
-		value.Null = !p
-	}
-
-	if !value.Null {
-		if r.is64 {
-			if value.V, err = r.data.NextDouble();err != nil {
-				return
-			}
-		}else {
-			if value.V, err = r.data.NextFloat();err != nil {
-				return
-			}
-		}
-	}
-	return
-}
-
-func (r *floatReader) NextBatch(vec *api.ColumnVector) error {
+func (r *FloatReader) NextBatch(vec *api.ColumnVector) error {
 	var err error
 	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
@@ -78,11 +59,11 @@ func (r *floatReader) NextBatch(vec *api.ColumnVector) error {
 
 		if !vec.Vector[i].Null {
 			if r.is64 {
-				if vec.Vector[i].V, err = r.data.NextDouble();err != nil {
+				if vec.Vector[i].V, err = r.data.NextDouble(); err != nil {
 					return err
 				}
-			}else {
-				if vec.Vector[i].V, err = r.data.NextFloat();err != nil {
+			} else {
+				if vec.Vector[i].V, err = r.data.NextFloat(); err != nil {
 					return err
 				}
 			}
@@ -91,52 +72,90 @@ func (r *floatReader) NextBatch(vec *api.ColumnVector) error {
 	return err
 }
 
-func (r *floatReader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err!=nil {
-		return err
-	}
-	if err = r.seek(entry); err != nil {
-		return err
-	}
-	for i := 0; i < int(offset); i++ {
-		if _, err := r.Next(); err != nil {
-			return err
+func (r *FloatReader) Skip(rows uint64) error {
+	var err error
+	p := true
+
+	for i := 0; i < int(rows); i++ {
+		if r.schema.HasNulls {
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+		}
+
+		if p {
+			if r.is64 {
+				if _, err = r.data.NextDouble(); err != nil {
+					return err
+				}
+			} else {
+				if _, err = r.data.NextFloat(); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
 }
 
-func (r *floatReader) seek(indexEntry *pb.RowIndexEntry) error {
-	if r.schema.HasNulls {
-		if err := r.seekPresent(indexEntry); err != nil {
+func (r *FloatReader) SeekStride(stride int) error {
+	if stride == 0 {
+		if r.present != nil {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := r.data.Seek(0, 0); err != nil {
 			return err
 		}
+		return nil
 	}
+
 	var dataChunk, dataChunkOffset uint64
-	if indexEntry != nil {
-		pos := indexEntry.Positions
+
+	pos, err := r.getStridePositions(stride)
+	if err != nil {
+		return err
+	}
+
+	if r.present != nil {
+		var pChunk, pChunkOffset, pOffset1, pOffset2 uint64
 		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-			if r.schema.HasNulls {  // has nulls, no compression
-				dataChunkOffset = pos[3]
-			} else { // no nulls, no compression
-				dataChunkOffset = pos[0]
-			}
+			pChunkOffset = pos[0]
+			pOffset1 = pos[1]
+			pOffset2 = pos[2]
+
+			dataChunkOffset = pos[3]
+
 		} else {
-			if r.schema.HasNulls { // has nulls, has compression
-				dataChunk = pos[4]
-				dataChunkOffset = pos[5]
-			} else {  // no nulls, has compression
-				dataChunk = pos[0]
-				dataChunkOffset = pos[1]
-			}
+			pChunk = pos[0]
+			pChunkOffset = pos[1]
+			pOffset1 = pos[2]
+			pOffset2 = pos[3]
+
+			dataChunk = pos[4]
+			dataChunkOffset = pos[5]
+		}
+
+		if err = r.present.Seek(pChunk, pChunkOffset, pOffset1, pOffset2); err != nil {
+			return err
+		}
+
+	} else {
+
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			dataChunkOffset = pos[0]
+		} else {
+			dataChunk = pos[0]
+			dataChunkOffset = pos[1]
 		}
 	}
+
 	return r.data.Seek(dataChunk, dataChunkOffset)
 }
 
-func (r *floatReader) Close() {
-	if r.schema.HasNulls {
+func (r *FloatReader) Close() {
+	if r.present != nil {
 		r.present.Close()
 	}
 	r.data.Close()

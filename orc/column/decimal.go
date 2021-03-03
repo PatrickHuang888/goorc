@@ -65,8 +65,8 @@ func (w *decimalV2Writer) Write(value api.Value) error {
 		}
 		var sum float64
 		var err error
-		if w.stats.DecimalStatistics.GetSum()!="" {
-			if sum, err = strconv.ParseFloat(w.stats.DecimalStatistics.GetSum(), 64);err != nil {
+		if w.stats.DecimalStatistics.GetSum() != "" {
+			if sum, err = strconv.ParseFloat(w.stats.DecimalStatistics.GetSum(), 64); err != nil {
 				return errors.WithStack(err)
 			}
 		}
@@ -176,16 +176,18 @@ func (w decimalV2Writer) Size() int {
 }
 
 func NewDecimal64V2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &decimalV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
+	return &DecimalV2Reader{reader: reader{schema: schema, opts: opts, f: f}}
 }
 
-type decimalV2Reader struct {
-	*reader
+type DecimalV2Reader struct {
+	reader
+
+	present   *stream.BoolReader
 	data      *stream.Varint64Reader
 	secondary *stream.IntRLV2Reader
 }
 
-func (r *decimalV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *DecimalV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -196,6 +198,9 @@ func (r *decimalV2Reader) InitStream(info *pb.Stream, startOffset uint64) error 
 
 	switch info.GetKind() {
 	case pb.Stream_PRESENT:
+		if !r.schema.HasNulls {
+			return errors.New("schema no present stream")
+		}
 		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 	case pb.Stream_DATA:
 		r.data = stream.NewVarIntReader(r.opts, info, startOffset, f)
@@ -207,33 +212,10 @@ func (r *decimalV2Reader) InitStream(info *pb.Stream, startOffset uint64) error 
 	return nil
 }
 
-func (r *decimalV2Reader) Next() (value api.Value, err error) {
-	if r.schema.HasNulls {
-		var p bool
-		if p, err = r.present.Next(); err != nil {
-			return
-		}
-		value.Null = !p
-	}
-
-	if !value.Null {
-		var precision int64
-		if precision, err = r.data.NextInt64(); err != nil {
-			return
-		}
-		var scale int64
-		if scale, err = r.secondary.NextInt64(); err != nil {
-			return
-		}
-		value.V = api.Decimal64{Precision: precision, Scale: int(scale)}
-	}
-	return
-}
-
-func (r *decimalV2Reader) NextBatch(vec *api.ColumnVector) error {
+func (r *DecimalV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
 	for i := 0; i < len(vec.Vector); i++ {
-		if r.schema.HasNulls {
+		if r.present != nil {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
@@ -255,75 +237,111 @@ func (r *decimalV2Reader) NextBatch(vec *api.ColumnVector) error {
 	return nil
 }
 
-func (r *decimalV2Reader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err!=nil {
-		return err
-	}
+func (r *DecimalV2Reader) Skip(rows uint64) error {
+	var err error
+	p := true
 
-	if err = r.seek(entry); err != nil {
-		return err
-	}
+	for i := 0; i < int(rows); i++ {
+		if r.present != nil {
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+		}
 
-	for i := 0; i < int(offset); i++ {
-		if _, err := r.Next(); err != nil {
-			return err
+		if p {
+			if _, err = r.data.NextInt64(); err != nil {
+				return err
+			}
+			if _, err = r.secondary.NextInt64(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (r *decimalV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
-	if r.schema.HasNulls {
-		if err := r.seekPresent(indexEntry); err != nil {
+func (r *DecimalV2Reader) SeekStride(stride int) error {
+	if stride == 0 {
+		if r.present != nil {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := r.data.Seek(0, 0, 0); err != nil {
 			return err
 		}
+		if err := r.secondary.Seek(0, 0, 0); err != nil {
+			return err
+		}
+		return nil
 	}
+
 	var dataChunk, dataChunkOffset, dataOffset uint64
 	var secondaryChunk, secondaryChunkOffset, secondaryOffset uint64
-	if indexEntry != nil {
-		pos := indexEntry.Positions
-		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-			if r.schema.HasNulls {
-				dataChunkOffset = pos[3]
-				dataOffset = pos[4]
-				secondaryChunkOffset = pos[5]
-				secondaryOffset = pos[6]
-			} else {
-				dataChunkOffset = pos[0]
-				dataOffset = pos[1]
-				secondaryChunkOffset = pos[2]
-				secondaryOffset = pos[3]
-			}
-		} else {
-			if r.schema.HasNulls {
-				dataChunk = pos[4]
-				dataChunkOffset = pos[5]
-				dataOffset = pos[6]
-				secondaryChunk = pos[7]
-				secondaryChunkOffset = pos[8]
-				secondaryOffset = pos[9]
-			} else {
-				dataChunk = pos[0]
-				dataChunkOffset = pos[1]
-				dataOffset = pos[2]
-				secondaryChunk = pos[3]
-				secondaryChunkOffset = pos[4]
-				secondaryOffset = pos[5]
-			}
-		}
-	}
-	if err := r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
+
+	pos, err := r.getStridePositions(stride)
+	if err != nil {
 		return err
 	}
-	if err := r.secondary.Seek(secondaryChunk, secondaryChunkOffset, secondaryOffset); err != nil {
+
+	if r.present != nil {
+		var pChunk, pChunkOffset, pOffset1, pOffset2 uint64
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			pChunkOffset = pos[0]
+			pOffset1 = pos[1]
+			pOffset2 = pos[2]
+
+			dataChunkOffset = pos[3]
+			dataOffset = pos[4]
+			secondaryChunkOffset = pos[5]
+			secondaryOffset = pos[6]
+
+		} else {
+			pChunk = pos[0]
+			pChunkOffset = pos[1]
+			pOffset1 = pos[2]
+			pOffset2 = pos[3]
+
+			dataChunk = pos[4]
+			dataChunkOffset = pos[5]
+			dataOffset = pos[6]
+			secondaryChunk = pos[7]
+			secondaryChunkOffset = pos[8]
+			secondaryOffset = pos[9]
+		}
+
+		if err = r.present.Seek(pChunk, pChunkOffset, pOffset1, pOffset2); err != nil {
+			return err
+		}
+
+	} else {
+
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			dataChunkOffset = pos[0]
+			dataOffset = pos[1]
+			secondaryChunkOffset = pos[2]
+			secondaryOffset = pos[3]
+		} else {
+			dataChunk = pos[0]
+			dataChunkOffset = pos[1]
+			dataOffset = pos[2]
+			secondaryChunk = pos[3]
+			secondaryChunkOffset = pos[4]
+			secondaryOffset = pos[5]
+		}
+	}
+
+	if err = r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
+		return err
+	}
+	if err = r.secondary.Seek(secondaryChunk, secondaryChunkOffset, secondaryOffset); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (r *decimalV2Reader) Close() {
-	if r.schema.HasNulls {
+func (r *DecimalV2Reader) Close() {
+	if r.present != nil {
 		r.present.Close()
 	}
 	r.data.Close()

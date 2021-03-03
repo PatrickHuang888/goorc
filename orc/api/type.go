@@ -71,7 +71,12 @@ func (td TypeDescription) createStructVector(opt *BatchOption) *ColumnVector {
 }
 
 func (td TypeDescription) createListVector(opt *BatchOption) *ColumnVector {
-	cv := &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
+	var cv *ColumnVector
+	if opt.NotCreateVector {
+		cv = &ColumnVector{Id: td.Id, Kind: td.Kind}
+	}else {
+		cv = &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
+	}
 	cv.Children = append(cv.Children, td.Children[0].createVector(opt))
 	return cv
 }
@@ -84,10 +89,15 @@ func (td TypeDescription) createMapVector(opt *BatchOption) *ColumnVector {
 }
 
 func (td TypeDescription) createPrimaryVector(opt *BatchOption) *ColumnVector {
+	if opt.NotCreateVector {
+		return &ColumnVector{Id: td.Id, Kind: td.Kind}
+	}
 	return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
 }
 
 func (td TypeDescription) createVector(opt *BatchOption) *ColumnVector {
+	// todo: check opt's rowsize!=0 if create vector
+
 	create := len(opt.Includes) == 0
 
 	if !create {
@@ -221,9 +231,9 @@ func traverse(node *TypeDescription, do action) error {
 		return err
 	}
 
-	if node.Kind != pb.Type_STRUCT && len(node.Children) != 0 {
+	/*if node.Kind != pb.Type_STRUCT && len(node.Children) != 0 {
 		return errors.New("kind other than STRUCT must not have children")
-	}
+	}*/
 
 	for _, c := range node.Children {
 		if err := traverse(c, do); err != nil {
@@ -231,16 +241,16 @@ func traverse(node *TypeDescription, do action) error {
 		}
 	}
 
-	if node.Kind == pb.Type_UNION || node.Kind == pb.Type_MAP || node.Kind == pb.Type_LIST {
+	if node.Kind == pb.Type_UNION{
 		return errors.New("no impl")
 	}
 	return nil
 }
 
 func NormalizeSchema(root *TypeDescription) error {
-	if err := CheckNulls(root); err != nil {
+	/*if err := CheckNulls(root); err != nil {
 		return err
-	}
+	}*/
 	return SetId(root)
 }
 

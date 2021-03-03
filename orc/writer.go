@@ -39,9 +39,9 @@ func NewOSFileWriter(path string, schema *api.TypeDescription, opts config.Write
 }
 
 func newWriter(schema *api.TypeDescription, opts *config.WriterOptions, f orcio.File) (w *writer, err error) {
-	if err = api.NormalizeSchema(schema); err != nil {
+	/*if err = api.NormalizeSchema(schema); err != nil {
 		return
-	}
+	}*/
 
 	var schemas []*api.TypeDescription
 	if schemas, err = schema.Flat(); err != nil {
@@ -82,12 +82,12 @@ type writer struct {
 	f orcio.File
 }
 
-func (w *writer) Write(batch *api.ColumnVector) error {
-	if err := w.CheckBatch(batch); err != nil {
+func (w *writer) Write(vec *api.ColumnVector) error {
+	/*if err := w.CheckBatch(vec); err != nil {
 		return err
-	}
+	}*/
 
-	if err := w.stripe.write(batch); err != nil {
+	if err := w.stripe.write(vec); err != nil {
 		return err
 	}
 	return nil
@@ -112,18 +112,17 @@ func (w *writer) GetSchema() *api.TypeDescription {
 }
 
 func (w *writer) Close() error {
-	if w.stripe.size() != 0 {
-		if err := w.stripe.flushOut(); err != nil {
-			return err
-		}
-		// add current stripe info
-		w.stripe.infos = append(w.stripe.infos, w.stripe.info)
+	if err := w.stripe.flushOut(); err != nil {
+		return err
 	}
+	w.stripe.infos = append(w.stripe.infos, w.stripe.info)
 
 	if err := w.writeFileTail(); err != nil {
 		return err
 	}
-	w.f.Close()
+	if err:=w.f.Close();err!=nil {
+		logger.Warn(err)
+	}
 	return nil
 }
 

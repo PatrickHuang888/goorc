@@ -13,15 +13,18 @@ import (
 )
 
 func NewStructReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &StructReader{reader: &reader{schema: schema, opts: opts, f: f}}
+	return &StructReader{reader: reader{schema: schema, opts: opts, f: f}}
 }
 
 type StructReader struct {
-	*reader
+	reader
+
+	present *stream.BoolReader
+
 	children []Reader
 }
 
-func (r *StructReader) AddChild(child Reader){
+func (r *StructReader) AddChild(child Reader) {
 	r.children = append(r.children, child)
 }
 
@@ -35,35 +38,86 @@ func (r *StructReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	}
 
 	if info.GetKind() == pb.Stream_PRESENT {
+		if !r.schema.HasNulls {
+			return errors.New("should no present")
+		}
 		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 		return nil
 	}
 	return errors.New("struct column no stream other than present")
 }
 
-func (r *StructReader) Next() (v api.Value, err error) {
-	v.V = api.StructValue{Children: make([]api.Value, len(r.children))}
-
-	if r.schema.HasNulls {
-		var p bool
-		if p, err = r.present.Next();err != nil {
-			return
+func (r *StructReader) SeekStride(stride int) error {
+	if stride == 0 {
+		if r.present != nil {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
 		}
-		v.Null = !p
+		for _, c := range r.children {
+			if err := c.SeekStride(0); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
-	for i, c := range r.children {
-		if !v.Null {
-			if v.V.(api.StructValue).Children[i].V, err = c.Next(); err != nil {
-				return
+	if r.present != nil {
+		var pChunk, pChunkOffset, pOffset1, pOffset2 uint64
+
+		pos, err := r.getStridePositions(stride)
+		if err != nil {
+			return err
+		}
+
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			pChunkOffset = pos[0]
+			pOffset1 = pos[1]
+			pOffset2 = pos[2]
+		} else {
+			pChunk = pos[0]
+			pChunkOffset = pos[1]
+			pOffset1 = pos[2]
+			pOffset2 = pos[3]
+		}
+
+		if err := r.present.Seek(pChunk, pChunkOffset, pOffset1, pOffset2); err != nil {
+			return err
+		}
+	}
+
+	for _, c := range r.children {
+		if err := c.SeekStride(stride); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *StructReader) Skip(rows uint64) error {
+	var err error
+	p := true
+
+	for i := 0; i < int(rows); i++ {
+		if r.present != nil {
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+		}
+
+		for _, c := range r.children {
+			if p {
+				if err := c.Skip(1); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	return
+	return nil
 }
 
 func (r *StructReader) NextBatch(vec *api.ColumnVector) error {
-	if r.schema.HasNulls {
+	if r.present != nil {
 		for i := 0; i < len(vec.Vector); i++ {
 			p, err := r.present.Next()
 			if err != nil {
@@ -91,36 +145,11 @@ func fillNulls(vec *api.ColumnVector) {
 	}
 }
 
-func (r *StructReader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.getIndexEntryAndOffset(rowNumber)
-	if err != nil {
-		return err
-	}
-
-	if r.schema.HasNulls {
-		if err := r.seekPresent(entry); err != nil {
-			return err
-		}
-	}
-
-	for _, c := range r.children {
-		if err:=c.Seek(rowNumber);err!=nil {
-			return err
-		}
-	}
-
-	for i := 0; i < int(offset); i++ {
-		if _, err := r.Next(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (r *StructReader) Close() {
-	if r.schema.HasNulls {
+	if r.present != nil {
 		r.present.Close()
 	}
+
 	for _, c := range r.children {
 		c.Close()
 	}
@@ -152,6 +181,10 @@ type structWriter struct {
 }
 
 func (w *structWriter) Write(value api.Value) error {
+	if !w.schema.HasNulls {
+		return nil
+	}
+
 	if err := w.present.Write(!value.Null); err != nil {
 		return err
 	}

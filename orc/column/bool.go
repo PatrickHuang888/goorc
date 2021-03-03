@@ -137,15 +137,17 @@ func (w boolWriter) Size() int {
 }
 
 func NewBoolReader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &boolReader{reader: &reader{opts: opts, schema: schema, f: f}}
+	return &BoolReader{reader: reader{opts: opts, schema: schema, f: f}}
 }
 
-type boolReader struct {
-	*reader
-	data *stream.BoolReader
+type BoolReader struct {
+	reader
+
+	present *stream.BoolReader
+	data    *stream.BoolReader
 }
 
-func (r *boolReader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *BoolReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -168,25 +170,7 @@ func (r *boolReader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("stream kind error")
 }
 
-func (r *boolReader) Next() (value api.Value, err error) {
-	if r.schema.HasNulls {
-		var p bool
-		if p, err = r.present.Next(); err != nil {
-			return
-		}
-		value.Null = !p
-	}
-
-	if !value.Null {
-		value.V, err = r.data.Next()
-		if err != nil {
-			return
-		}
-	}
-	return
-}
-
-func (r *boolReader) NextBatch(vec *api.ColumnVector) error {
+func (r *BoolReader) NextBatch(vec *api.ColumnVector) error {
 	var err error
 	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
@@ -207,63 +191,92 @@ func (r *boolReader) NextBatch(vec *api.ColumnVector) error {
 	return nil
 }
 
-func (r *boolReader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err!=nil {
-		return err
-	}
+func (r *BoolReader) Skip(rows uint64) error {
+	var err error
+	p := true
 
-	if err = r.seek(entry); err != nil {
-		return err
-	}
+	for i := 0; i < int(rows); i++ {
+		if r.schema.HasNulls {
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+		}
 
-	for i := 0; i < int(offset); i++ {
-		if _, err := r.Next(); err != nil {
-			return err
+		if p {
+			if _, err = r.data.Next(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (r *boolReader) seek(indexEntry *pb.RowIndexEntry) error {
-	if r.schema.HasNulls {
-		if err := r.seekPresent(indexEntry); err != nil {
+func (r *BoolReader) SeekStride(stride int) error {
+	if stride == 0 {
+		if r.present != nil {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := r.data.Seek(0, 0, 0, 0); err != nil {
 			return err
 		}
+		return nil
 	}
 
 	var dataChunk, dataChunkOffset, dataOffset1, dataOffset2 uint64
-	if indexEntry != nil {
-		pos := indexEntry.Positions
+
+	pos, err := r.getStridePositions(stride)
+	if err != nil {
+		return err
+	}
+
+	if r.present != nil {
+		var pChunk, pChunkOffset, pOffset1, pOffset2 uint64
 		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-			if r.schema.HasNulls {
-				dataChunkOffset = pos[3]
-				dataOffset1 = pos[4]
-				dataOffset2 = pos[5]
-			} else {
-				dataChunkOffset = pos[0]
-				dataOffset1 = pos[1]
-				dataOffset2 = pos[2]
-			}
+			pChunkOffset = pos[0]
+			pOffset1 = pos[1]
+			pOffset2 = pos[2]
+
+			dataChunkOffset = pos[3]
+			dataOffset1 = pos[4]
+			dataOffset2 = pos[5]
+
 		} else {
-			if r.schema.HasNulls {
-				dataChunk = pos[4]
-				dataChunkOffset = pos[5]
-				dataOffset1 = pos[6]
-				dataOffset2 = pos[7]
-			} else {
-				dataChunk = pos[0]
-				dataChunkOffset = pos[1]
-				dataOffset1 = pos[2]
-				dataOffset2 = pos[3]
-			}
+			pChunk = pos[0]
+			pChunkOffset = pos[1]
+			pOffset1 = pos[2]
+			pOffset2 = pos[3]
+
+			dataChunk = pos[4]
+			dataChunkOffset = pos[5]
+			dataOffset1 = pos[6]
+			dataOffset2 = pos[7]
+		}
+
+		if err = r.present.Seek(pChunk, pChunkOffset, pOffset1, pOffset2); err != nil {
+			return err
+		}
+
+	} else {
+
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			dataChunkOffset = pos[0]
+			dataOffset1 = pos[1]
+			dataOffset2 = pos[2]
+		} else {
+			dataChunk = pos[0]
+			dataChunkOffset = pos[1]
+			dataOffset1 = pos[2]
+			dataOffset2 = pos[3]
 		}
 	}
+
 	return r.data.Seek(dataChunk, dataChunkOffset, dataOffset1, dataOffset2)
 }
 
-func (r *boolReader) Close() {
-	if r.schema.HasNulls {
+func (r *BoolReader) Close() {
+	if r.present != nil {
 		r.present.Close()
 	}
 	r.data.Close()

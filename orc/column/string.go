@@ -203,16 +203,18 @@ func (w stringDirectV2Writer) Size() int {
 }
 
 func NewStringDirectV2Reader(opts *config.ReaderOptions, schema *api.TypeDescription, f orcio.File) Reader {
-	return &stringDirectV2Reader{reader: &reader{opts: opts, schema: schema, f: f}}
+	return &StringDirectV2Reader{reader: reader{opts: opts, schema: schema, f: f}}
 }
 
-type stringDirectV2Reader struct {
-	*reader
-	data   *stream.StringContentsReader
-	length *stream.IntRLV2Reader
+type StringDirectV2Reader struct {
+	reader
+
+	present *stream.BoolReader
+	data    *stream.StringContentsReader
+	length  *stream.IntRLV2Reader
 }
 
-func (r *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *StringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -234,28 +236,7 @@ func (r *stringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) e
 	return nil
 }
 
-func (r *stringDirectV2Reader) Next() (value api.Value, err error) {
-	if r.schema.HasNulls {
-		var p bool
-		if p, err = r.present.Next(); err != nil {
-			return
-		}
-		value.Null = !p
-	}
-	if !value.Null {
-		var l uint64
-		l, err = r.length.NextUInt64()
-		if err != nil {
-			return
-		}
-		if value.V, err = r.data.NextString(l); err != nil {
-			return
-		}
-	}
-	return
-}
-
-func (r *stringDirectV2Reader) NextBatch(vec *api.ColumnVector) error {
+func (r *StringDirectV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
 	for i := 0; i < len(vec.Vector); i++ {
 		if r.schema.HasNulls {
@@ -279,71 +260,107 @@ func (r *stringDirectV2Reader) NextBatch(vec *api.ColumnVector) error {
 	return nil
 }
 
-func (r *stringDirectV2Reader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+func (r *StringDirectV2Reader) Skip(rows uint64) error {
+	var err error
+	p := true
+
+	for i := 0; i < int(rows); i++ {
+		if r.schema.HasNulls {
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+		}
+		if p {
+			l, err := r.length.NextUInt64()
+			if err != nil {
+				return err
+			}
+			if _, err = r.data.NextString(l); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *StringDirectV2Reader) SeekStride(stride int) error {
+	if stride == 0 {
+		if r.present != nil {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := r.data.Seek(0, 0); err != nil {
+			return err
+		}
+		if err := r.length.Seek(0, 0, 0); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	var dataChunk, dataChunkOffset uint64
+	var lengthChunk, lengthChunkOffset, lengthOffset uint64
+
+	pos, err := r.getStridePositions(stride)
 	if err != nil {
 		return err
 	}
 
-	if err := r.seek(entry); err != nil {
-		return err
-	}
-
-	for i := 0; i < int(offset); i++ {
-		if _, err := r.Next(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *stringDirectV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
-	if r.schema.HasNulls {
-		if err := r.seekPresent(indexEntry); err != nil {
-			return err
-		}
-	}
-	var dataChunk, dataChunkOffset uint64
-	var lengthChunk, lengthChunkOffset, lengthOffset uint64
-	if indexEntry != nil {
-		pos := indexEntry.Positions
+	if r.present != nil {
+		var pChunk, pChunkOffset, pOffset1, pOffset2 uint64
 		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-			if r.schema.HasNulls {
-				dataChunkOffset = pos[3]
-				lengthChunkOffset = indexEntry.Positions[4]
-				lengthOffset = indexEntry.Positions[5]
-			} else {
-				dataChunkOffset = pos[0]
-				lengthChunkOffset = indexEntry.Positions[1]
-				lengthOffset = indexEntry.Positions[2]
-			}
+			pChunkOffset = pos[0]
+			pOffset1 = pos[1]
+			pOffset2 = pos[2]
+
+			dataChunkOffset = pos[3]
+			lengthChunkOffset = pos[4]
+			lengthOffset = pos[5]
 
 		} else {
-			if r.schema.HasNulls {
-				dataChunk = pos[4]
-				dataChunkOffset = pos[5]
-				lengthChunk = indexEntry.Positions[6]
-				lengthChunkOffset = indexEntry.Positions[7]
-				lengthOffset = indexEntry.Positions[8]
-			} else {
-				dataChunk = pos[0]
-				dataChunkOffset = pos[1]
-				lengthChunk = indexEntry.Positions[2]
-				lengthChunkOffset = indexEntry.Positions[3]
-				lengthOffset = indexEntry.Positions[4]
-			}
+			pChunk = pos[0]
+			pChunkOffset = pos[1]
+			pOffset1 = pos[2]
+			pOffset2 = pos[3]
+
+			dataChunk = pos[4]
+			dataChunkOffset = pos[5]
+			lengthChunk = pos[6]
+			lengthChunkOffset = pos[7]
+			lengthOffset = pos[8]
+		}
+
+		if err = r.present.Seek(pChunk, pChunkOffset, pOffset1, pOffset2); err != nil {
+			return err
+		}
+
+	} else {
+
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			dataChunkOffset = pos[0]
+			lengthChunkOffset = pos[1]
+			lengthOffset = pos[2]
+
+		} else {
+			dataChunk = pos[0]
+			dataChunkOffset = pos[1]
+			lengthChunk = pos[2]
+			lengthChunkOffset = pos[3]
+			lengthOffset = pos[4]
 		}
 	}
-	if err := r.data.Seek(dataChunk, dataChunkOffset); err != nil {
+
+	if err = r.data.Seek(dataChunk, dataChunkOffset); err != nil {
 		return err
 	}
-	if err := r.length.Seek(lengthChunk, lengthChunkOffset, lengthOffset); err != nil {
+	if err = r.length.Seek(lengthChunk, lengthChunkOffset, lengthOffset); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (r *stringDirectV2Reader) Close() {
+func (r *StringDirectV2Reader) Close() {
 	if r.schema.HasNulls {
 		r.present.Close()
 	}
@@ -352,18 +369,21 @@ func (r *stringDirectV2Reader) Close() {
 }
 
 func NewStringDictionaryV2Reader(opts *config.ReaderOptions, schema *api.TypeDescription, f orcio.File) Reader {
-	return &stringDictionaryV2Reader{reader: &reader{opts: opts, schema: schema, f: f}}
+	return &StringDictionaryV2Reader{reader: reader{opts: opts, schema: schema, f: f}}
 }
 
-type stringDictionaryV2Reader struct {
-	*reader
+type StringDictionaryV2Reader struct {
+	reader
+
+	present     *stream.BoolReader
 	data        *stream.IntRLV2Reader
 	dict        *stream.StringContentsReader
 	length      *stream.IntRLV2Reader
 	dictStrings []string
+	dictLoaded  bool
 }
 
-func (r *stringDictionaryV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *StringDictionaryV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -374,6 +394,9 @@ func (r *stringDictionaryV2Reader) InitStream(info *pb.Stream, startOffset uint6
 
 	switch info.GetKind() {
 	case pb.Stream_PRESENT:
+		if !r.schema.HasNulls {
+			return errors.New("schema has no nulls")
+		}
 		r.present = stream.NewBoolReader(r.opts, info, startOffset, f)
 	case pb.Stream_DATA:
 		r.data = stream.NewIntRLV2Reader(r.opts, info, startOffset, false, f)
@@ -387,41 +410,26 @@ func (r *stringDictionaryV2Reader) InitStream(info *pb.Stream, startOffset uint6
 	return nil
 }
 
-func (r *stringDictionaryV2Reader) Next() (value api.Value, err error) {
-	if r.schema.HasNulls {
-		var p bool
-		if p, err = r.present.Next(); err != nil {
-			return
-		}
-		value.Null = !p
-	}
-	if !value.Null {
-		var data uint64
-		if data, err = r.data.NextUInt64(); err != nil {
-			return
-		}
-		if int(data) > len(r.dictStrings)-1 {
-			for i := len(r.dictStrings); i <= int(data); i++ {
-				var l uint64
-				if l, err = r.length.NextUInt64(); err != nil {
-					return
-				}
-				var s string
-				if s, err = r.dict.NextString(l); err != nil {
-					return
-				}
-				r.dictStrings = append(r.dictStrings, s)
-			}
-		}
-		value.V = r.dictStrings[data]
-	}
-	return
-}
-
-func (r *stringDictionaryV2Reader) NextBatch(vec *api.ColumnVector) error {
+func (r *StringDictionaryV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
+
+	if !r.dictLoaded {
+		for ; !r.length.Finished(); {
+			var l uint64
+			if l, err = r.length.NextUInt64(); err != nil {
+				return err
+			}
+			var s string
+			if s, err = r.dict.NextString(l); err != nil {
+				return err
+			}
+			r.dictStrings = append(r.dictStrings, s)
+		}
+		r.dictLoaded = true
+	}
+
 	for i := 0; i < len(vec.Vector); i++ {
-		if r.schema.HasNulls {
+		if r.present != nil {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
@@ -433,83 +441,98 @@ func (r *stringDictionaryV2Reader) NextBatch(vec *api.ColumnVector) error {
 			if data, err = r.data.NextUInt64(); err != nil {
 				return err
 			}
-			if int(data) > len(r.dictStrings)-1 {
-				for i := len(r.dictStrings); i <= int(data); i++ {
-					var l uint64
-					if l, err = r.length.NextUInt64(); err != nil {
-						return err
-					}
-					var s string
-					if s, err = r.dict.NextString(l); err != nil {
-						return err
-					}
-					r.dictStrings = append(r.dictStrings, s)
-				}
-			}
 			vec.Vector[i].V = r.dictStrings[data]
 		}
 	}
 	return nil
 }
 
-func (r *stringDictionaryV2Reader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
+func (r *StringDictionaryV2Reader) Skip(rows uint64) error {
+	var err error
+	p := true
+
+	for i := 0; i < int(rows); i++ {
+		if r.present != nil {
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+		}
+		if p {
+			if _, err = r.data.NextUInt64(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *StringDictionaryV2Reader) SeekStride(stride int) error {
+	if stride == 0 {
+		if r.present != nil {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := r.data.Seek(0, 0, 0); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// need data index only
+	var dataChunk, dataChunkOffset, dataOffset uint64
+
+	pos, err := r.getStridePositions(stride)
 	if err != nil {
 		return err
 	}
 
-	if err = r.seek(entry); err != nil {
-		return err
-	}
+	if r.present != nil {
+		var pChunk, pChunkOffset, pOffset1, pOffset2 uint64
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			pChunkOffset = pos[0]
+			pOffset1 = pos[1]
+			pOffset2 = pos[2]
 
-	for i := 0; i < int(offset); i++ {
-		if _, err := r.Next(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *stringDictionaryV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
-	if r.schema.HasNulls {
-		if err := r.seekPresent(indexEntry); err != nil {
-			return err
-		}
-	}
-	// need data index only
-	var dataChunk, dataChunkOffset, dataOffset uint64
-	if indexEntry != nil {
-		pos := indexEntry.Positions
-		if r.opts.CompressionKind == pb.CompressionKind_NONE { // no compression
-			if r.schema.HasNulls { // no compression has presents
-				dataChunkOffset = pos[3]
-				dataOffset = pos[4]
-			} else { // no compression, no present
-				dataChunkOffset = pos[0]
-				dataOffset = pos[1]
-			}
+			dataChunkOffset = pos[3]
+			dataOffset = pos[4]
 
 		} else {
-			if r.schema.HasNulls { // has compression, has presents
-				dataChunk = pos[4]
-				dataChunkOffset = pos[5]
-				dataOffset = pos[6]
+			pChunk = pos[0]
+			pChunkOffset = pos[1]
+			pOffset1 = pos[2]
+			pOffset2 = pos[3]
 
-			} else { // has compression, no presents
-				dataChunk = pos[0]
-				dataChunkOffset = pos[1]
-				dataOffset = pos[2]
-			}
+			dataChunk = pos[4]
+			dataChunkOffset = pos[5]
+			dataOffset = pos[6]
+		}
+
+		if err = r.present.Seek(pChunk, pChunkOffset, pOffset1, pOffset2); err != nil {
+			return err
+		}
+
+	} else {
+
+		if r.opts.CompressionKind == pb.CompressionKind_NONE { // no compression
+			dataChunkOffset = pos[0]
+			dataOffset = pos[1]
+
+		} else {
+			dataChunk = pos[0]
+			dataChunkOffset = pos[1]
+			dataOffset = pos[2]
 		}
 	}
-	if err := r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
+
+	if err = r.data.Seek(dataChunk, dataChunkOffset, dataOffset); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (r *stringDictionaryV2Reader) Close() {
-	if r.schema.HasNulls {
+func (r *StringDictionaryV2Reader) Close() {
+	if r.present != nil {
 		r.present.Close()
 	}
 	r.data.Close()

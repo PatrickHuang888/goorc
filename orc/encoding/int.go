@@ -409,8 +409,8 @@ func (e *intRLV2Encoder) Flush(out *bytes.Buffer) error {
 		if err := e.write(out, true); err != nil {
 			return err
 		}
+		e.forgetBits()
 	}
-	e.forgetBits()
 	return nil
 }
 

@@ -44,7 +44,7 @@ func newReader(f orcio.File) (r *reader, err error) {
 	opts := &config.ReaderOptions{}
 	var tail *pb.FileTail
 	if tail, err = extractFileTail(f); err != nil {
-		return nil, errors.Wrap(err, "read file tail error")
+		return nil, err
 	}
 
 	opts.IndexStride = int(tail.Footer.GetRowIndexStride())

@@ -21,10 +21,7 @@ func SetLogLevel(level log.Level) {
 
 type Reader interface {
 	//AddChild(child Reader) error
-	InitIndex(startOffset uint64, length uint64) error
 	InitStream(info *pb.Stream, startOffset uint64) error
-
-	Next() (value api.Value, err error)
 
 	NextBatch(vec *api.ColumnVector) error
 
@@ -32,8 +29,10 @@ type Reader interface {
 	// if column is struct (or like)  children, and struct has present stream, then
 	// seek to non-null row that is calculated by parent
 	// next call on Next() will not include current row been seeked
-	Seek(rowNumber uint64) error
-
+	InitIndex(startOffset uint64, length uint64) error
+	Skip(rows uint64) error
+	// if stride==0, seek to start
+	SeekStride(stride int) error
 	//Children() []Reader
 
 	Close()
@@ -182,7 +181,6 @@ func NewReader(schema *api.TypeDescription, opts *config.ReaderOptions, in orcio
 		}
 		if schema.Encoding == pb.ColumnEncoding_DIRECT_V2 {
 			return NewMapV2Reader(schema, opts, in), nil
-			break
 		}
 		return nil, errors.New("encoding error")
 

@@ -82,11 +82,6 @@ type Value struct {
 	V    interface{}
 }
 
-type StructValue struct {
-	Null bool
-	Children []Value
-}
-
 // hive 0.13 support 38 digits
 type Decimal64 struct {
 	Precision int64

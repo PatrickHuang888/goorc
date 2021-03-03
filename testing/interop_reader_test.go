@@ -433,7 +433,7 @@ func TestSeek(t *testing.T) {
 
 	br, err := reader.CreateBatchReader(bopt)
 	if err!=nil {
-		t.Fatal(err)
+		t.Fatalf("%+v", err)
 	}
 	defer br.Close()
 
@@ -453,13 +453,21 @@ func TestSeek(t *testing.T) {
 	fmt.Printf("read rows %d\n", count)
 	assert.Equal(t, int(nor), count)
 
-	/*if err := reader.Seek(100); err != nil {
+	if err := br.Seek(100); err != nil {
 		t.Fatalf("%+v", err)
-	}*/
+	}
 
-	//if err:=reader.Seek(1500);err!=nil {
-	//	t.Fatalf("%+v", err)
-	//}
+	if err:=br.Seek(1500);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+
+	if err:=br.Seek(2000);err!=nil {
+		t.Fatalf("%+v", err)
+	}
+
+	if err:=br.Seek(2001);err!=nil {
+		t.Fatalf("%+v", err)
+	}
 }
 
 /*func BenchmarkReader(b *testing.B) {

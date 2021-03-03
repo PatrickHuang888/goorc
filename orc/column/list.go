@@ -11,21 +11,19 @@ import (
 )
 
 func NewListV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &listV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
+	return &ListV2Reader{reader: reader{schema: schema, opts: opts, f: f}}
 }
 
-func NewMapV2Reader(schema *api.TypeDescription, opts *config.ReaderOptions, f orcio.File) Reader {
-	return &listV2Reader{reader: &reader{schema: schema, opts: opts, f: f}}
-}
+type ListV2Reader struct {
+	reader
 
-type listV2Reader struct {
-	*reader
-	length *stream.IntRLV2Reader
+	present *stream.BoolReader
+	length  *stream.IntRLV2Reader
 
 	child Reader
 }
 
-func (r *listV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
+func (r *ListV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	f, err := r.f.Clone()
 	if err != nil {
 		return err
@@ -45,29 +43,15 @@ func (r *listV2Reader) InitStream(info *pb.Stream, startOffset uint64) error {
 	return errors.New("struct column no stream other than present")
 }
 
-func (r *listV2Reader) Next() (value api.Value, err error) {
-	if r.schema.HasNulls {
-		var p bool
-		if p, err = r.present.Next(); err != nil {
-			return
-		}
-		value.Null = !p
-	}
-
-	if !value.Null {
-		if value.V, err = r.length.NextUInt64(); err != nil {
-			return
-		}
-	}
-	return
+func (r *ListV2Reader) SetChild(child Reader) {
+	r.child = child
 }
 
-func (r *listV2Reader) NextBatch(vec *api.ColumnVector) error {
+func (r *ListV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
 
 	for i := 0; i < len(vec.Vector); i++ {
-
-		if r.schema.HasNulls {
+		if r.present != nil {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
@@ -80,85 +64,123 @@ func (r *listV2Reader) NextBatch(vec *api.ColumnVector) error {
 			if err != nil {
 				return err
 			}
-			vec.Vector[i].V= int(v)
+			vec.Vector[i].V = v
 		}
 
+		// prepare vector for child
+		vec.Children[0].Vector = vec.Children[0].Vector[:0]
 		if vec.Vector[i].Null {
-			vec.Children[0].Vector= append(vec.Children[0].Vector, api.Value{Null: true})
-		}else {
-			for j:=0; j<vec.Vector[i].V.(int);j++ {
-				v, err := r.child.Next()
-				if err != nil {
-					return err
-				}
-				vec.Children[0].Vector = append(vec.Children[0].Vector, v)
+			vec.Children[0].Vector = append(vec.Children[0].Vector, api.Value{Null: true})
+		} else {
+			l := vec.Vector[i].V.(uint64)
+			for j := 0; j < int(l); j++ {
+				vec.Children[0].Vector = append(vec.Children[0].Vector, api.Value{})
 			}
 		}
 
-	}
-	return nil
-}
-
-func (r *listV2Reader) Seek(rowNumber uint64) error {
-	entry, offset, err := r.reader.getIndexEntryAndOffset(rowNumber)
-	if err!=nil {
-		return err
-	}
-
-	if err := r.seek(entry); err != nil {
-		return err
-	}
-
-	for i := 0; i < int(offset); i++ {
-		if _, err := r.Next(); err != nil {
+		if err := r.child.NextBatch(vec.Children[0]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *listV2Reader) seek(indexEntry *pb.RowIndexEntry) error {
-	if r.schema.HasNulls {
-		if err := r.seekPresent(indexEntry); err != nil {
+func (r *ListV2Reader) Skip(rows uint64) error {
+	var err error
+	p := true
+
+	for i := 0; i < int(rows); i++ {
+		if r.present != nil {
+			if p, err = r.present.Next(); err != nil {
+				return err
+			}
+		}
+
+		if p {
+			l, err := r.length.NextUInt64()
+			if err != nil {
+				return err
+			}
+			if err = r.child.Skip(l); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *ListV2Reader) SeekStride(stride int) error {
+	if stride == 0 {
+		if r.present != nil {
+			if err := r.present.Seek(0, 0, 0, 0); err != nil {
+				return err
+			}
+		}
+		if err := r.length.Seek(0, 0, 0); err != nil {
 			return err
 		}
+
+		if err := r.child.SeekStride(0); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	var lengthChunk, lengthChunkOffset, lengthOffset uint64
-	if indexEntry != nil {
+
+	pos, err := r.getStridePositions(stride)
+	if err != nil {
+		return err
+	}
+
+	if r.present != nil {
+		var pChunk, pChunkOffset, pOffset1, pOffset2 uint64
 		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-			if r.schema.HasNulls {
-				// has nulls no compression
-				lengthChunkOffset = indexEntry.Positions[3]
-				lengthOffset = indexEntry.Positions[4]
-			} else {
-				// no nulls, no compression
-				lengthChunkOffset = indexEntry.Positions[0]
-				lengthOffset = indexEntry.Positions[1]
-			}
+			pChunkOffset = pos[0]
+			pOffset1 = pos[1]
+			pOffset2 = pos[2]
+
+			lengthChunkOffset = pos[3]
+			lengthOffset = pos[4]
 
 		} else {
-			if r.schema.HasNulls {
-				// has nulls, compression
-				lengthChunk = indexEntry.Positions[4]
-				lengthChunkOffset = indexEntry.Positions[5]
-				lengthOffset = indexEntry.Positions[6]
-			} else {
-				// no nulls, compression
-				lengthChunk = indexEntry.Positions[0]
-				lengthChunkOffset = indexEntry.Positions[1]
-				lengthOffset = indexEntry.Positions[2]
-			}
+			pChunk = pos[0]
+			pChunkOffset = pos[1]
+			pOffset1 = pos[2]
+			pOffset2 = pos[3]
+
+			lengthChunk = pos[4]
+			lengthChunkOffset = pos[5]
+			lengthOffset = pos[6]
+		}
+		if err = r.present.Seek(pChunk, pChunkOffset, pOffset1, pOffset2); err != nil {
+			return err
+		}
+
+	} else {
+
+		if r.opts.CompressionKind == pb.CompressionKind_NONE {
+			lengthChunkOffset = pos[0]
+			lengthOffset = pos[1]
+		} else {
+			lengthChunk = pos[0]
+			lengthChunkOffset = pos[1]
+			lengthOffset = pos[2]
 		}
 	}
+
 	if err := r.length.Seek(lengthChunk, lengthChunkOffset, lengthOffset); err != nil {
+		return err
+	}
+
+	if err := r.child.SeekStride(stride); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (r *listV2Reader) Close() {
-	if r.schema.HasNulls {
+func (r *ListV2Reader) Close() {
+	if r.present != nil {
 		r.present.Close()
 	}
 	r.length.Close()

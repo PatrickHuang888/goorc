@@ -8,7 +8,6 @@ import (
 	"github.com/patrickhuang888/goorc/orc/common"
 	"github.com/patrickhuang888/goorc/orc/config"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
-	"github.com/patrickhuang888/goorc/orc/stream"
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	"io"
@@ -21,8 +20,6 @@ type reader struct {
 	opts   *config.ReaderOptions
 
 	index *pb.RowIndex
-
-	present *stream.BoolReader
 }
 
 func (r *reader) String() string {
@@ -43,14 +40,14 @@ func (r *reader) InitIndex(startOffset uint64, length uint64) error {
 	if _, err := io.ReadFull(r.f, tBuf); err != nil {
 		return errors.WithStack(err)
 	}
-	if r.opts.CompressionKind==pb.CompressionKind_NONE {
-		buf= tBuf
-	}else {
-		cBuf:= &bytes.Buffer{}
-		if  err:=common.DecompressChunks(r.opts.CompressionKind, cBuf, bytes.NewBuffer(tBuf));err!=nil {
+	if r.opts.CompressionKind == pb.CompressionKind_NONE {
+		buf = tBuf
+	} else {
+		cBuf := &bytes.Buffer{}
+		if err := common.DecompressChunks(r.opts.CompressionKind, cBuf, bytes.NewBuffer(tBuf)); err != nil {
 			return err
 		}
-		buf= cBuf.Bytes()
+		buf = cBuf.Bytes()
 	}
 
 	// unmarshal will call Reset on index first
@@ -61,38 +58,45 @@ func (r *reader) InitIndex(startOffset uint64, length uint64) error {
 	return nil
 }
 
-func (r *reader) getIndexEntryAndOffset(rowNumber uint64) (entry *pb.RowIndexEntry, offset uint64, err error) {
-	if r.index==nil {
-		err= errors.New("no index")
+func (r *reader) getStridePositions(stride int) (pos []uint64, err error) {
+	if r.index == nil {
+		err = errors.New("no index")
 		return
 	}
-
-	if rowNumber < uint64(r.opts.IndexStride) {
-		offset = rowNumber
+	if stride < 1 {
+		err = errors.New("stride < 1")
 		return
 	}
-	stride := rowNumber / uint64(r.opts.IndexStride)
-	offset = rowNumber % (stride * uint64(r.opts.IndexStride))
-	entry = r.index.GetEntry()[stride-1]
+	if stride > len(r.index.Entry) {
+		err = errors.Errorf("stride %d does not exist", stride)
+	}
+	pos = r.index.Entry[stride-1].Positions
 	return
 }
 
-func (r *reader) seekPresent(indexEntry *pb.RowIndexEntry) error {
-	var chunk, chunkOffset, offset1, offset2 uint64
-	if indexEntry != nil {
-		pos := indexEntry.Positions
-		if r.opts.CompressionKind == pb.CompressionKind_NONE {
-			// no compression
-			chunkOffset = pos[0]
-			offset1 = pos[1]
-			offset2 = pos[2]
-		} else {
-			// compression
-			chunk = pos[0]
-			chunkOffset = pos[1]
-			offset1 = pos[2]
-			offset2 = pos[3]
+/*func (r *reader) close() {
+	if err := r.f.Close(); err != nil {
+		logger.Warn(err)
+	}
+}*/
+
+func seek(rowNumber uint64, strideSize int, seekStride func(int) error, skip func(uint64) error) error {
+	var offset uint64
+
+	if rowNumber < uint64(strideSize) {
+		offset = rowNumber
+	} else {
+		stride := rowNumber / uint64(strideSize)
+		offset = rowNumber % (stride * uint64(strideSize))
+		//entry = s.index.Entry[stride-1]
+
+		if err := seekStride(int(stride)); err != nil {
+			return err
 		}
 	}
-	return r.present.Seek(chunk, chunkOffset, offset1, offset2)
+
+	if err := skip(offset); err != nil {
+		return err
+	}
+	return nil
 }
