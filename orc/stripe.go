@@ -193,10 +193,10 @@ func newStripeWriter(out io.Writer, offset uint64, schemas []*api.TypeDescriptio
 
 type stripeReader struct {
 	f    orcio.File
-	opts *config.ReaderOptions
-	//opt  *api.BatchOption
+	ropts *config.ReaderOptions
+	bopt  *api.BatchOption
 
-	schema       *api.TypeDescription // schema selected
+	schemas       []*api.TypeDescription
 	columnReader column.Reader
 
 	index int
@@ -205,8 +205,9 @@ type stripeReader struct {
 	cursor       uint64
 }
 
-func newStripeReader(f orcio.File, schema *api.TypeDescription, opts *config.ReaderOptions, idx int, info *pb.StripeInformation) (*stripeReader, error) {
-	reader := &stripeReader{f: f, schema: schema, opts: opts, index: idx, numberOfRows: info.GetNumberOfRows()}
+func newStripeReader(f orcio.File, schemas []*api.TypeDescription, ropts *config.ReaderOptions, bopt *api.BatchOption,
+	idx int, info *pb.StripeInformation) (*stripeReader, error) {
+	reader := &stripeReader{f: f, schemas: schemas, ropts: ropts, bopt:bopt, index: idx, numberOfRows: info.GetNumberOfRows()}
 	footer, err := reader.readFooter(info)
 	if err != nil {
 		return nil, err
@@ -226,9 +227,9 @@ func (stripe *stripeReader) readFooter(info *pb.StripeInformation) (*pb.StripeFo
 	if _, err := io.ReadFull(stripe.f, footerBuf); err != nil {
 		return nil, errors.WithStack(err)
 	}
-	if stripe.opts.CompressionKind != pb.CompressionKind_NONE {
+	if stripe.ropts.CompressionKind != pb.CompressionKind_NONE {
 		fb := &bytes.Buffer{}
-		if err := common.DecompressChunks(stripe.opts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
+		if err := common.DecompressChunks(stripe.ropts.CompressionKind, fb, bytes.NewBuffer(footerBuf)); err != nil {
 			return nil, err
 		}
 		footerBuf = fb.Bytes()
@@ -243,22 +244,20 @@ func (stripe *stripeReader) readFooter(info *pb.StripeInformation) (*pb.StripeFo
 
 // stripe {index{},column{[present],data,[length]},footer}
 func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFooter) error {
-	var err error
-
-	schemas, err := stripe.schema.Flat()
-	if err != nil {
-		return err
-	}
-
 	// make sure len(columns)==len(all schemas)
-	readers := make([]column.Reader, len(footer.GetColumns()))
-	for _, schema := range schemas {
-		schema.Encoding = footer.GetColumns()[schema.Id].GetKind()
-		r, err := column.NewReader(schema, stripe.opts, stripe.f)
-		if err != nil {
-			return err
+	readers := make([]column.Reader, len(stripe.schemas))
+	for _, schema := range stripe.schemas {
+		if stripe.bopt.IsInclude(schema.Id) {
+			schema.Encoding = footer.GetColumns()[schema.Id].GetKind()
+			r, err := column.NewReader(schema, stripe.ropts, stripe.f)
+			if err != nil {
+				return err
+			}
+			readers[schema.Id] = r
+			if stripe.columnReader==nil {
+				stripe.columnReader= r
+			}
 		}
-		readers[schema.Id] = r
 	}
 
 	// streams has sequence
@@ -288,30 +287,31 @@ func (stripe *stripeReader) init(info *pb.StripeInformation, footer *pb.StripeFo
 	}
 
 	// build tree
-	for _, schema := range schemas {
+	for _, schema := range stripe.schemas {
 		for i, c := range schema.Children {
-			switch schema.Kind {
-			case pb.Type_STRUCT:
-				readers[schema.Id].(*column.StructReader).AddChild(readers[c.Id])
-			case pb.Type_LIST:
-				readers[schema.Id].(*column.ListV2Reader).SetChild(readers[c.Id])
-			case pb.Type_MAP:
-				if i == 0 {
-					readers[schema.Id].(*column.MapV2Reader).SetKey(readers[c.Id])
-				} else if i == 1 {
-					readers[schema.Id].(*column.MapV2Reader).SetValue(readers[c.Id])
-				} else {
-					return errors.New("map children > 2")
+			if stripe.bopt.IsInclude(c.Id) { // todo: verify includes map's key and value
+				switch schema.Kind {
+				case pb.Type_STRUCT:
+					readers[schema.Id].(*column.StructReader).AddChild(readers[c.Id])
+				case pb.Type_LIST:
+					readers[schema.Id].(*column.ListV2Reader).SetChild(readers[c.Id])
+				case pb.Type_MAP:
+					if i == 0 {
+						readers[schema.Id].(*column.MapV2Reader).SetKey(readers[c.Id])
+					} else if i == 1 {
+						readers[schema.Id].(*column.MapV2Reader).SetValue(readers[c.Id])
+					} else {
+						return errors.New("map children > 2")
+					}
+				case pb.Type_UNION:
+					return errors.New("not impl")
+				default:
+					return errors.New("should have no child")
 				}
-			case pb.Type_UNION:
-				return errors.New("not impl")
-			default:
-				return errors.New("should have no child")
 			}
 		}
 	}
 
-	stripe.columnReader = readers[schemas[0].Id]
 	return nil
 }
 
@@ -340,7 +340,7 @@ func (stripe *stripeReader) prepareVector(vec *api.ColumnVector) {
 func (stripe *stripeReader) setVectorSize(size int, vec *api.ColumnVector) {
 	switch vec.Kind {
 	case pb.Type_STRUCT:
-		if stripe.schema.HasNulls {
+		if stripe.schemas[vec.Id].HasNulls {
 			vec.Vector = vec.Vector[:size]
 		}
 		for _, c := range vec.Children {
@@ -370,11 +370,11 @@ func (stripe *stripeReader) Seek(rowNumber uint64) error {
 	var offset uint64
 	var stride uint64
 
-	if rowNumber < uint64(stripe.opts.IndexStride) {
+	if rowNumber < uint64(stripe.ropts.IndexStride) {
 		offset = rowNumber
 	} else {
-		stride := rowNumber / uint64(stripe.opts.IndexStride)
-		offset = rowNumber % (stride * uint64(stripe.opts.IndexStride))
+		stride := rowNumber / uint64(stripe.ropts.IndexStride)
+		offset = rowNumber % (stride * uint64(stripe.ropts.IndexStride))
 	}
 
 	if err := stripe.columnReader.SeekStride(int(stride)); err != nil {

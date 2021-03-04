@@ -74,7 +74,7 @@ func (td TypeDescription) createListVector(opt *BatchOption) *ColumnVector {
 	var cv *ColumnVector
 	if opt.NotCreateVector {
 		cv = &ColumnVector{Id: td.Id, Kind: td.Kind}
-	}else {
+	} else {
 		cv = &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
 	}
 	cv.Children = append(cv.Children, td.Children[0].createVector(opt))
@@ -146,6 +146,18 @@ type BatchOption struct {
 	RowSize         int
 	Loc             *time.Location
 	NotCreateVector bool
+}
+
+func (bo BatchOption) IsInclude(id uint32) bool {
+	if len(bo.Includes) == 0 {
+		return true
+	}
+	for _, v := range bo.Includes {
+		if v == id {
+			return true
+		}
+	}
+	return false
 }
 
 type action func(node *TypeDescription) error
@@ -241,7 +253,7 @@ func traverse(node *TypeDescription, do action) error {
 		}
 	}
 
-	if node.Kind == pb.Type_UNION{
+	if node.Kind == pb.Type_UNION {
 		return errors.New("no impl")
 	}
 	return nil

@@ -75,24 +75,13 @@ func newReader(f orcio.File) (r *reader, err error) {
 	return
 }
 
-func (r *reader) CreateBatchReader(opts *api.BatchOption) (BatchReader, error) {
-	if opts.RowSize == 0 {
+func (r *reader) CreateBatchReader(bopt *api.BatchOption) (BatchReader, error) {
+	if bopt.RowSize == 0 {
 		return nil, errors.New("Batch option RowSize == 0")
 	}
 
-	br := &batchReader{f: r.f, numberOfRows: r.numberOfRows, ropts: r.opts}
-
-	if opts.Includes == nil {
-		br.schema = r.schemas[0]
-	} else {
-		// todo: includes verification, make sure includes is a tree
-		for i, id := range opts.Includes {
-			if r.schemas[i].Id==id {
-				br.schema= r.schemas[i]
-				break
-			}
-		}
-	}
+	// todo: includes verification, make sure includes is a tree
+	br := &batchReader{f: r.f, numberOfRows: r.numberOfRows, ropts: r.opts, bopt: bopt, schemas: r.schemas}
 
 	if err := br.initStripes(r.stripes); err != nil {
 		return nil, err
@@ -124,8 +113,8 @@ func (r *reader) Close() {
 
 type batchReader struct {
 	ropts   *config.ReaderOptions
-	//opt    *api.BatchOption
-	schema *api.TypeDescription
+	bopt    *api.BatchOption
+	schemas []*api.TypeDescription
 
 	stripeIndex int
 	stripes     []*stripeReader
@@ -141,7 +130,7 @@ func (br *batchReader) initStripes(infos []*pb.StripeInformation) error {
 		if stripeInfo.GetNumberOfRows() == 0 {
 			return errors.Errorf("stripe number of rows 0 err, %s", stripeInfo.String())
 		}
-		sr, err := newStripeReader(br.f, br.schema, br.ropts, i, stripeInfo)
+		sr, err := newStripeReader(br.f, br.schemas, br.ropts, br.bopt, i, stripeInfo)
 		if err != nil {
 			return err
 		}
