@@ -2,47 +2,50 @@ package main
 
 import (
 	"fmt"
-	"github.com/patrickhuang888/goorc/orc"
-	"github.com/patrickhuang888/goorc/pb/pb"
 	"os"
 	"strconv"
+
+	"github.com/patrickhuang888/goorc/orc"
+	"github.com/patrickhuang888/goorc/orc/api"
+	"github.com/patrickhuang888/goorc/orc/config"
+	"github.com/patrickhuang888/goorc/pb/pb"
 )
 
 func main() {
-	schema := &orc.TypeDescription{Kind:pb.Type_STRUCT}
-	x := &orc.TypeDescription{Kind:pb.Type_INT}
-	y := &orc.TypeDescription{Kind: pb.Type_STRING}
-	schema.ChildrenNames= []string{"x", "y"}
-	schema.Children=[]*orc.TypeDescription{x, y}
+	schema := &api.TypeDescription{Kind: pb.Type_STRUCT}
+	x := &api.TypeDescription{Kind: pb.Type_INT}
+	x.Encoding = pb.ColumnEncoding_DIRECT_V2
+	y := &api.TypeDescription{Kind: pb.Type_STRING}
+	y.Encoding = pb.ColumnEncoding_DIRECT_V2
+	schema.ChildrenNames = []string{"x", "y"}
+	schema.Children = []*api.TypeDescription{x, y}
 
-	opts := orc.DefaultWriterOptions()
-	writer, err := orc.NewWriter("my-file-w.orc", schema, opts)
+	opts := config.DefaultWriterOptions()
+	opts.RowSize = 1500
+
+	writer, err := orc.NewOSFileWriter("my-file-w.orc", schema, opts)
 	if err != nil {
-		fmt.Printf("create writer error %+v", err)
+		fmt.Printf("create writer error %+v\n", err)
 		os.Exit(1)
 	}
 
-	batch, err := schema.CreateWriterBatch(opts)
+	batch, err := api.CreateWriterBatch(schema, opts)
 	if err != nil {
 		fmt.Printf("got error when create row batch %v+", err)
 		os.Exit(1)
 	}
 
-	vint:=make([]int64, 1500)
-	vstr:= make([]string, 1500)
-	for i:=0; i<1500; i++ {
-		vint[i]= int64(i)
-		vstr[i] = fmt.Sprintf("string-%s", strconv.Itoa(i))
+	for i := 0; i < opts.RowSize; i++ {
+		batch.Children[0].Vector[i].V = int32(i)
+		batch.Children[1].Vector[i].V = fmt.Sprintf("string-%s", strconv.Itoa(i))
 	}
-	batch.(*orc.StructColumn).Fields[0].(*orc.LongColumn).Vector= vint
-	batch.(*orc.StructColumn).Fields[1].(*orc.StringColumn).Vector= vstr
 
-	if err := writer.Write(batch); err != nil {
-		fmt.Printf("write error %+v", err)
+	if err := writer.Write(&batch); err != nil {
+		fmt.Printf("write error %+v\n", err)
 		os.Exit(1)
 	}
 
 	if err := writer.Close(); err != nil {
-		fmt.Printf("close error %+v", err)
+		fmt.Printf("close error %+v\n", err)
 	}
 }
