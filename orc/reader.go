@@ -169,19 +169,19 @@ func (br *batchReader) Close() {
 	}
 }
 
-func (br *batchReader) Next(batch *api.ColumnVector) error {
+func (br *batchReader) Next(batch *api.ColumnVector) (end bool, err error) {
 	batch.Clear()
 
 	if br.cursor >= br.numberOfRows-1 {
-		return nil
+		return true, nil
 	}
 
 	for br.stripeIndex < len(br.stripes) {
-		end, err := br.stripes[br.stripeIndex].next(batch)
+		stripeEnd, err := br.stripes[br.stripeIndex].next(batch)
 		if err != nil {
-			return err
+			return stripeEnd, err
 		}
-		if end {
+		if stripeEnd {
 			br.stripeIndex++
 			break
 		}
@@ -193,7 +193,7 @@ func (br *batchReader) Next(batch *api.ColumnVector) error {
 		br.stripeIndex--
 	}
 	br.cursor += uint64(batch.Len())
-	return nil
+	return br.cursor >= br.numberOfRows-1, nil
 }
 
 func (br *batchReader) Seek(rowNumber uint64) error {

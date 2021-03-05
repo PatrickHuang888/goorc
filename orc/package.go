@@ -30,7 +30,8 @@ type Reader interface {
 
 type BatchReader interface {
 
-	Next(vec *api.ColumnVector) error
+	// return end is there any more rows to read
+	Next(vec *api.ColumnVector) (end bool, err error)
 
 	Seek(rowNumber uint64) error
 

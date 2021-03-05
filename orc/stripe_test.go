@@ -17,7 +17,7 @@ func TestStripeBasic(t *testing.T) {
 	f := orcio.NewMockFile(buf)
 
 	wopts := config.DefaultWriterOptions()
-	bopt:= &api.BatchOption{RowSize: 104, NotCreateVector: true}
+	bopt := &api.BatchOption{RowSize: 104, NotCreateVector: true}
 	batch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
@@ -27,7 +27,7 @@ func TestStripeBasic(t *testing.T) {
 	}
 	batch.Vector = values
 
-	schemas, err:= schema.Flat()
+	schemas, err := schema.Flat()
 	assert.Nil(t, err)
 	writer, err := newStripeWriter(f, 0, schemas, &wopts)
 	if err != nil {
@@ -40,17 +40,17 @@ func TestStripeBasic(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
+	bopt.NotCreateVector = false
 	ropts := config.DefaultReaderOptions()
-	reader, err := newStripeReader(f, schema, &ropts, 0, writer.info)
+	reader, err := newStripeReader(f, schemas, &ropts, bopt, 0, writer.info)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	bopt.NotCreateVector= false
 	vec, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
-	vec.Vector= vec.Vector[:0]
+	vec.Vector = vec.Vector[:0]
 	if _, err := reader.next(vec); err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -65,7 +65,7 @@ func TestMultipleStripes(t *testing.T) {
 	wopts.CompressionKind = pb.CompressionKind_ZLIB
 	wopts.StripeSize = 10_000
 	wopts.ChunkSize = 8_000
-	bopt:= &api.BatchOption{RowSize: 1_000, NotCreateVector: true}
+	bopt := &api.BatchOption{RowSize: 1_000, NotCreateVector: true}
 	wbatch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
@@ -93,23 +93,21 @@ func TestMultipleStripes(t *testing.T) {
 	assert.Nil(t, err)
 	defer reader.Close()
 
-	bopt.NotCreateVector= false
+	bopt.NotCreateVector = false
 	br, err := reader.CreateBatchReader(bopt)
 	assert.Nil(t, err)
 	defer br.Close()
 
-	rbatch, err:= schema.CreateVector(bopt)
+	rbatch, err := schema.CreateVector(bopt)
 	assert.Nil(t, err)
 
 	var vector []api.Value
-	for {
-		if err = br.Next(rbatch);err != nil {
+	var end bool
+	for !end {
+		if end, err = br.Next(rbatch); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		vector = append(vector, rbatch.Vector...)
-		if rbatch.Len() == 0 {
-			break
-		}
 	}
 	reader.Close()
 	assert.Equal(t, values, vector)

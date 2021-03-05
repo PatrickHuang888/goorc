@@ -76,7 +76,7 @@ func TestStruct(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err = br.Next(rvec);err != nil {
+	if _, err = br.Next(rvec);err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -125,14 +125,12 @@ func TestString(t *testing.T) {
 	assert.Nil(t, err)
 
 	var vector []api.Value
-	for {
-		if err = br.Next(rbatch); err != nil {
+	var end bool
+	for !end{
+		if end, err = br.Next(rbatch);err != nil {
 			t.Fatalf("%+v", err)
 		}
 		vector = append(vector, rbatch.Vector...)
-		if rbatch.Len() == 0 {
-			break
-		}
 	}
 	assert.Equal(t, wbatch.Vector, vector)
 }
@@ -207,7 +205,7 @@ func TestStructWithPresents(t *testing.T) {
 	}
 	defer br.Close()
 
-	if err := br.Next(rvec); err != nil {
+	if _, err := br.Next(rvec); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
