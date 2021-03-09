@@ -239,7 +239,7 @@ func (r *StringDirectV2Reader) InitStream(info *pb.Stream, startOffset uint64) e
 func (r *StringDirectV2Reader) NextBatch(vec *api.ColumnVector) error {
 	var err error
 	for i := 0; i < len(vec.Vector); i++ {
-		if r.schema.HasNulls {
+		if r.present != nil {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
@@ -265,7 +265,7 @@ func (r *StringDirectV2Reader) Skip(rows uint64) error {
 	p := true
 
 	for i := 0; i < int(rows); i++ {
-		if r.schema.HasNulls {
+		if r.present != nil {
 			if p, err = r.present.Next(); err != nil {
 				return err
 			}

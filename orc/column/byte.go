@@ -169,7 +169,7 @@ func (r *ByteReader) InitStream(info *pb.Stream, startOffset uint64) error {
 func (r *ByteReader) NextBatch(vec *api.ColumnVector) error {
 	var err error
 	for i := 0; i < len(vec.Vector); i++ {
-		if r.schema.HasNulls {
+		if r.present!=nil {
 			var p bool
 			if p, err = r.present.Next(); err != nil {
 				return err
