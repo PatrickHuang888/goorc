@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"github.com/patrickhuang888/goorc/orc/api"
-	"github.com/patrickhuang888/goorc/orc/config"
 	"os"
 
 	log "github.com/sirupsen/logrus"
@@ -19,34 +18,36 @@ func init() {
 func main() {
 	path := "/u01/apache/orc/java/bench/data/generated/taxi/orc.gz"
 
-	opts := config.DefaultReaderOptions()
-	opts.RowSize = 100_000
-
-	reader, err := orc.NewOSFileReader(path, opts)
+	reader, err := orc.NewOSFileReader(path)
 	if err != nil {
 		fmt.Printf("create reader error: %+v", err)
 		os.Exit(1)
 	}
 
 	schema := reader.GetSchema()
+	bopt := &api.BatchOption{RowSize: 10_000}
 
-	batch, err := api.CreateReaderBatch(schema, opts)
+	batch, err := schema.CreateVector(bopt)
 	if err != nil {
 		fmt.Printf("%+v", err)
+		os.Exit(1)
+	}
+
+	br, err := reader.CreateBatchReader(bopt)
+	if err != nil {
+		fmt.Printf("%+v", err)
+		os.Exit(1)
 	}
 
 	var rows int
+	var end bool
 
-	for {
-		err = reader.Next(&batch)
-		if err != nil {
+	for !end {
+		if end, err = br.Next(batch);err != nil {
 			fmt.Printf("%+v", err)
 			os.Exit(1)
 		}
 
-		if batch.Len() == 0 {
-			break
-		}
 
 		/*columnes := batch.Children
 
@@ -63,19 +64,23 @@ func main() {
 		fmt.Printf("passenger_count: %d, ", passengerCount[0].V.(int32))
 
 		tripDistance := columnes[4].Vector
-		fmt.Printf("trip_distance: %f, ", tripDistance[0].V.(float64))*/
+		fmt.Printf("trip_distance: %f, ", tripDistance[0].V.(float64))
 
-		/*pickupLongitude := columnes[5].Vector.([]float64)
-		fmt.Printf("pickup_longitude: %f, ", pickupLongitude[0])
+		storeAndFwdFlag := columnes[8].Vector
+		fmt.Printf("store_and_fwd_flag %s, ", storeAndFwdFlag[0].V.(string))
 
-		pickLatitude := columnes[6].Vector.([]float64)
-		fmt.Printf("pickup_latitude: %f, ", pickLatitude[0])
+		extra := columnes[13].Vector
+		fmt.Printf("extra %f, ", extra[0].V.(api.Decimal64).Float64())
+*/
+		/*pickupLongitude := columnes[5].Vector
+		fmt.Printf("pickup_longitude: %f, ", pickupLongitude[0].V.(float64))
 
-		rateCodeId := columnes[7].Vector.([]int64)
-		fmt.Printf("ratecode_id: %d, ", rateCodeId[0])*/
+		pickLatitude := columnes[6].Vector
+		fmt.Printf("pickup_latitude: %f, ", pickLatitude[0].V.(float64))
 
-		/*storeAndFwdFlag := columnes[8].Vector
-		fmt.Printf("store_and_fwd_flag %s, ", storeAndFwdFlag[0].V.(string))*/
+		rateCodeId := columnes[7].Vector
+		fmt.Printf("ratecode_id: %d, ", rateCodeId[0].V.(int32))*/
+
 
 		/*dropoffLongitude := columnes[9].Vector.([]float64)
 		fmt.Printf(" dropoff_longitude %f, ", dropoffLongitude[0])
@@ -89,10 +94,8 @@ func main() {
 		/*fareAmount := columnes[12].Vector
 		fmt.Printf("fare_amount %f, ", fareAmount[0].V.(api.Decimal64).Float64())*/
 
-		/*extra := columnes[13].Vector.([]api.Decimal64)
-		fmt.Printf("extra %f, ", extra[0].Float64())
 
-		mtaTax := columnes[14].Vector.([]api.Decimal64)
+		/*mtaTax := columnes[14].Vector.([]api.Decimal64)
 		fmt.Printf("mta_tax %f, ", mtaTax[0].Float64())
 
 		tipAmount := columnes[15].Vector.([]api.Decimal64)

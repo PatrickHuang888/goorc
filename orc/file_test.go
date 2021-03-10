@@ -2,11 +2,9 @@ package orc
 
 import (
 	"fmt"
-	"github.com/patrickhuang888/goorc/orc/stream"
 	"strconv"
 	"testing"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/patrickhuang888/goorc/orc/api"
@@ -16,18 +14,18 @@ import (
 )
 
 func init() {
-	logger.SetLevel(log.DebugLevel)
-	stream.SetLogLevel(log.DebugLevel)
+	//logger.SetLevel(log.DebugLevel)
+	//stream.SetLogLevel(log.DebugLevel)
 	//encoding.SetLogLevel(log.TraceLevel)
 	//orcio.SetLogLevel(log.TraceLevel)
 }
 
 func TestStruct(t *testing.T) {
-	schema := &api.TypeDescription{Id:0, Kind: pb.Type_STRUCT}
+	schema := &api.TypeDescription{Id: 0, Kind: pb.Type_STRUCT}
 	schema.Encoding = pb.ColumnEncoding_DIRECT
-	x := &api.TypeDescription{Id:1, Kind: pb.Type_INT}
+	x := &api.TypeDescription{Id: 1, Kind: pb.Type_INT}
 	x.Encoding = pb.ColumnEncoding_DIRECT_V2
-	y := &api.TypeDescription{Id:2, Kind: pb.Type_STRING}
+	y := &api.TypeDescription{Id: 2, Kind: pb.Type_STRING}
 	y.Encoding = pb.ColumnEncoding_DIRECT_V2
 	schema.ChildrenNames = []string{"x", "y"}
 	schema.Children = []*api.TypeDescription{x, y}
@@ -61,22 +59,22 @@ func TestStruct(t *testing.T) {
 	}
 
 	reader, err := newReader(f)
-	if err!=nil {
+	if err != nil {
 		t.Fatal(err)
 	}
 	defer reader.Close()
 	br, err := reader.CreateBatchReader(bopt)
-	if err!=nil {
+	if err != nil {
 		t.Fatal(err)
 	}
 	defer br.Close()
 
 	rvec, err := schema.CreateVector(bopt)
-	if err!=nil {
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err = br.Next(rvec);err != nil {
+	if _, err = br.Next(rvec); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -126,8 +124,8 @@ func TestString(t *testing.T) {
 
 	var vector []api.Value
 	var end bool
-	for !end{
-		if end, err = br.Next(rbatch);err != nil {
+	for !end {
+		if end, err = br.Next(rbatch); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		vector = append(vector, rbatch.Vector...)
@@ -143,15 +141,15 @@ func TestStructWithPresents(t *testing.T) {
 	child1.Encoding = pb.ColumnEncoding_DIRECT_V2
 	schema.Children = []*api.TypeDescription{child1}
 	// todo: verify children names
-	schema.ChildrenNames= []string{"child1"}
-	if err := api.NormalizeSchema(schema);err!=nil {
+	schema.ChildrenNames = []string{"child1"}
+	if err := api.NormalizeSchema(schema); err != nil {
 		t.Fatal(err)
 	}
 
 	wopts := config.DefaultWriterOptions()
 	bopt := &api.BatchOption{RowSize: 100, NotCreateVector: true}
 	wvec, err := schema.CreateVector(bopt)
-	if err!=nil {
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,7 +182,7 @@ func TestStructWithPresents(t *testing.T) {
 	if err := writer.Write(wvec); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err=writer.Close();err != nil {
+	if err = writer.Close(); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -196,11 +194,11 @@ func TestStructWithPresents(t *testing.T) {
 
 	bopt.NotCreateVector = false
 	rvec, err := schema.CreateVector(bopt)
-	if err!=nil {
+	if err != nil {
 		t.Fatal(err)
 	}
 	br, err := reader.CreateBatchReader(bopt)
-	if err!=nil {
+	if err != nil {
 		t.Fatal(err)
 	}
 	defer br.Close()

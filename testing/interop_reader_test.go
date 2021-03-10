@@ -34,12 +34,10 @@ func TestBasicNoCompression(t *testing.T) {
 	}
 
 	var vector []api.Value
-	for ; ; {
-		if err = br.Next(batch); err != nil {
+	end := false
+	for !end {
+		if end, err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
-		}
-		if batch.Len() == 0 {
-			break
 		}
 		vector = append(vector, batch.Vector...)
 	}
@@ -129,12 +127,11 @@ func TestPatchBaseNegativeMinNoCompression(t *testing.T) {
 	assert.Nil(t, err)
 
 	var vector []int64
-	for ; ; {
-		if err := br.Next(batch); err != nil {
+	end := false
+
+	for !end {
+		if end, err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
-		}
-		if len(batch.Vector) == 0 {
-			break
 		}
 		for _, v := range batch.Vector {
 			vector = append(vector, v.V.(int64))
@@ -176,12 +173,10 @@ func TestPatchBaseNegativeMin2NoCompression(t *testing.T) {
 	assert.Nil(t, err)
 
 	var vector []int64
-	for ; ; {
-		if err = br.Next(batch); err != nil {
+	end := false
+	for !end {
+		if end, err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
-		}
-		if batch.Len() == 0 {
-			break
 		}
 		for _, v := range batch.Vector {
 			vector = append(vector, v.V.(int64))
@@ -221,12 +216,11 @@ func TestPatchBaseNegativeMin3NoCompression(t *testing.T) {
 	assert.Nil(t, err)
 
 	var vector []int64
-	for ; ; {
-		if err = br.Next(batch); err != nil {
+	end := false
+
+	for !end {
+		if end, err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
-		}
-		if batch.Len() == 0 {
-			break
 		}
 		for _, v := range batch.Vector {
 			vector = append(vector, v.V.(int64))
@@ -252,7 +246,7 @@ func TestStructs(t *testing.T) {
 	defer br.Close()
 	assert.Nil(t, err)
 
-	if err := br.Next(batch); err != nil {
+	if _, err := br.Next(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -286,7 +280,7 @@ func TestTimestamp(t *testing.T) {
 	defer br.Close()
 	assert.Nil(t, err)
 
-	if err := br.Next(batch); err != nil {
+	if _, err := br.Next(batch); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -402,12 +396,10 @@ func TestProjection(t *testing.T) {
 	defer br.Close()
 
 	count := 0
-	for ; ; {
-		if err = br.Next(batch); err != nil {
+	end:= false
+	for !end {
+		if end, err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
-		}
-		if batch.Len() == 0 {
-			break
 		}
 		count += batch.Len()
 	}
@@ -432,15 +424,16 @@ func TestSeek(t *testing.T) {
 	}
 
 	br, err := reader.CreateBatchReader(bopt)
-	if err!=nil {
+	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	defer br.Close()
 
 	count := 0
 
-	for {
-		if err := br.Next(batch); err != nil {
+	end:=false
+	for !end {
+		if end, err = br.Next(batch); err != nil {
 			t.Fatalf("%+v", err)
 		}
 		if batch.Len() == 0 {
@@ -457,55 +450,15 @@ func TestSeek(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	if err:=br.Seek(1500);err!=nil {
+	if err := br.Seek(1500); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	if err:=br.Seek(2000);err!=nil {
+	if err := br.Seek(2000); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	if err:=br.Seek(2001);err!=nil {
+	if err := br.Seek(2001); err != nil {
 		t.Fatalf("%+v", err)
 	}
 }
-
-/*func BenchmarkReader(b *testing.B) {
-	path := "/u01/apache/orc/java/bench/data/generated/taxi/orc.gz"
-
-	ropts := DefaultReaderOptions()
-	reader, err := NewReader(path, ropts)
-	if err != nil {
-		b.Fatalf("create reader error %+v", err)
-	}
-
-	schema := reader.GetSchema()
-
-	stripes, err := reader.Stripes()
-	if err != nil {
-		b.Fatalf("%+v", err)
-	}
-
-	ropts.RowSize = 100000
-	column, err := schema.CreateReaderBatch(ropts)
-	if err != nil {
-		b.Fatalf("create row column error %+v", err)
-	}
-
-	var rows int
-
-	i := 0
-	stripeR := stripes[0]
-
-	for next := true; next; {
-		next, err = stripeR.NextBatch(column)
-		if err != nil {
-			b.Fatalf("%+v", err)
-		}
-		rows += column.Rows()
-		fmt.Printf("current stripeR %d, rows now: %d\n", i, rows)
-	}
-
-	reader.Close()
-}
-*/
