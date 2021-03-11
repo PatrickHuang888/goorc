@@ -49,7 +49,7 @@ func main() {
 		}
 
 
-		/*columnes := batch.Children
+		columnes := batch.Children
 
 		vendorId := columnes[0].Vector
 		fmt.Printf("vendor id %d, ", vendorId[0].V)
@@ -71,7 +71,7 @@ func main() {
 
 		extra := columnes[13].Vector
 		fmt.Printf("extra %f, ", extra[0].V.(api.Decimal64).Float64())
-*/
+
 		/*pickupLongitude := columnes[5].Vector
 		fmt.Printf("pickup_longitude: %f, ", pickupLongitude[0].V.(float64))
 

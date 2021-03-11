@@ -9,7 +9,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-// todo: type public and new factory func
 type IntRLV2Reader struct {
 	stream *reader
 

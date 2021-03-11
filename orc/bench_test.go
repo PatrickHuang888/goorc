@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestBenchmarkScan(t *testing.T) {
+func BenchmarkScan(b *testing.B) {
 	path := "/u01/apache/orc/java/bench/data/generated/taxi/orc.gz"
 
 	reader, err := NewOSFileReader(path)
