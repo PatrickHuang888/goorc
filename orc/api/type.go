@@ -95,6 +95,30 @@ func (td TypeDescription) createPrimaryVector(opt *BatchOption) *ColumnVector {
 	return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: make([]Value, opt.RowSize)}
 }
 
+func (td TypeDescription) createDecimal64(opt *BatchOption) *ColumnVector {
+	if opt.NotCreateVector {
+		return &ColumnVector{Id: td.Id, Kind: td.Kind}
+	}
+
+	vec := make([]Value, opt.RowSize)
+	for i := 0; i < opt.RowSize; i++ {
+		vec[i].V = Decimal64{}
+	}
+	return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: vec}
+}
+
+func (td TypeDescription) createTimestamp(opt *BatchOption) *ColumnVector {
+	if opt.NotCreateVector {
+		return &ColumnVector{Id: td.Id, Kind: td.Kind}
+	}
+
+	vec := make([]Value, opt.RowSize)
+	for i := 0; i < opt.RowSize; i++ {
+		vec[i].V = Timestamp{}
+	}
+	return &ColumnVector{Id: td.Id, Kind: td.Kind, Vector: vec}
+}
+
 func (td TypeDescription) createVector(opt *BatchOption) *ColumnVector {
 	// todo: check opt's rowsize!=0 if create vector
 
@@ -119,6 +143,13 @@ func (td TypeDescription) createVector(opt *BatchOption) *ColumnVector {
 			return td.createMapVector(opt)
 		case pb.Type_UNION:
 			panic("not impl")
+
+		case pb.Type_DECIMAL:
+			return td.createDecimal64(opt)
+
+		case pb.Type_TIMESTAMP:
+			return td.createTimestamp(opt)
+
 		default:
 			return td.createPrimaryVector(opt)
 		}

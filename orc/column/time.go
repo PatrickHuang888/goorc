@@ -502,7 +502,9 @@ func (r *TimestampV2Reader) NextBatch(vec *api.ColumnVector) error {
 			if ns, err = r.secondary.NextUInt64(); err != nil {
 				return err
 			}
-			vec.Vector[i].V = api.Timestamp{Loc: r.loc, Seconds: s, Nanos: api.DecodingTimestampNanos(ns)}
+			t:= vec.Vector[i].V.(api.Timestamp)
+			t.Seconds= s
+			t.Nanos= api.DecodingTimestampNanos(ns)
 		}
 	}
 	return nil

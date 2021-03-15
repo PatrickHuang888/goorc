@@ -231,7 +231,9 @@ func (r *DecimalV2Reader) NextBatch(vec *api.ColumnVector) error {
 			if scale, err = r.secondary.NextInt64(); err != nil {
 				return err
 			}
-			vec.Vector[i].V = api.Decimal64{Precision: precision, Scale: int(scale)}
+			d:= vec.Vector[i].V.(api.Decimal64)
+			d.Precision= precision
+			d.Scale= int(scale)
 		}
 	}
 	return nil
