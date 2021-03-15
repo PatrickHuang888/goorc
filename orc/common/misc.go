@@ -2,7 +2,10 @@ package common
 
 import (
 	"bytes"
-	"compress/flate"
+
+	//"compress/flate"
+	"github.com/klauspost/compress/flate"
+
 	"github.com/patrickhuang888/goorc/pb/pb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -11,12 +14,12 @@ import (
 
 var logger = log.New()
 
-func SetLogLevel(level log.Level)  {
+func SetLogLevel(level log.Level) {
 	logger.SetLevel(level)
 }
 
 func CompressingAllInChunks(kind pb.CompressionKind, chunkSize int, dst *bytes.Buffer, src *bytes.Buffer) error {
-	if err:= CompressingChunks(kind, chunkSize, dst, src);err!=nil {
+	if err := CompressingChunks(kind, chunkSize, dst, src); err != nil {
 		return err
 	}
 	return CompressingLeft(kind, chunkSize, dst, src)
@@ -264,15 +267,20 @@ func Decompress(kind pb.CompressionKind, dst *bytes.Buffer, src *bytes.Buffer) (
 	switch kind {
 
 	case pb.CompressionKind_ZLIB:
-		r := flate.NewReader(src)
-		n, err = dst.ReadFrom(r)
+		/*r, err := zlib.NewReader(src)
 		if err != nil {
 			return 0, errors.WithStack(err)
+		}*/
+
+		r := flate.NewReader(src)
+		if n, err = dst.ReadFrom(r);err != nil {
+			return 0, errors.WithStack(err)
 		}
-		if err = r.Close(); err != nil {
+
+		defer r.Close()
+		/*if err = r.Close(); err != nil {
 			return n, errors.WithStack(err)
-		}
-		return
+		}*/
 
 	default:
 		return 0, errors.New("compression kind other than zlib not impl")
