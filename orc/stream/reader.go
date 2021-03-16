@@ -23,11 +23,21 @@ type reader struct {
 	start      uint64
 	readLength uint64
 
-	buf *bytes.Buffer
+	buf    *bytes.Buffer
+	cmpBuf *bytes.Buffer
 
 	opts *config.ReaderOptions
 
 	f orcio.File
+}
+
+func newReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, f orcio.File) *reader {
+	var cmpBuf *bytes.Buffer
+	if opts.CompressionKind != pb.CompressionKind_NONE {
+		cmpBuf = bytes.NewBuffer(make([]byte, opts.ChunkSize))
+		cmpBuf.Reset()
+	}
+	return &reader{opts: opts, info: info, start: start, f: f, buf: &bytes.Buffer{}, cmpBuf: cmpBuf}
 }
 
 func (r *reader) ReadByte() (b byte, err error) {
@@ -133,22 +143,17 @@ func (r *reader) readAChunk() error {
 		if _, err := io.CopyN(r.buf, r.f, int64(chunkLength)); err != nil {
 			return errors.WithStack(err)
 		}
-		r.readLength += uint64(chunkLength)
-		return nil
-	}
-
-	readBuf := bytes.NewBuffer(make([]byte, chunkLength))
-	readBuf.Reset()
-	if _, err := io.CopyN(readBuf, r.f, int64(chunkLength)); err != nil {
-		return errors.WithStack(err)
-	}
-
-	if _, err := common.Decompress(r.opts.CompressionKind, r.buf, readBuf); err != nil {
-		return err
+	} else {
+		r.cmpBuf.Reset()
+		if _, err := io.CopyN(r.cmpBuf, r.f, int64(chunkLength)); err != nil {
+			return errors.WithStack(err)
+		}
+		if _, err := common.Decompress(r.opts.CompressionKind, r.buf, r.cmpBuf); err != nil {
+			return err
+		}
 	}
 
 	r.readLength += uint64(chunkLength)
-
 	return nil
 }
 

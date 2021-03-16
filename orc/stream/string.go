@@ -1,10 +1,8 @@
 package stream
 
 import (
-	"bytes"
-
-	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/orc/config"
+	"github.com/patrickhuang888/goorc/orc/encoding"
 	orcio "github.com/patrickhuang888/goorc/orc/io"
 	"github.com/patrickhuang888/goorc/pb/pb"
 )
@@ -14,7 +12,7 @@ type StringContentsReader struct {
 }
 
 func NewStringContentsReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in orcio.File) *StringContentsReader {
-	return &StringContentsReader{stream: &reader{opts:opts, info: info, buf: &bytes.Buffer{}, f: in, start: start}}
+	return &StringContentsReader{stream: newReader(opts, info, start, in)}
 }
 
 func (r *StringContentsReader) NextBytes(len uint64) (v []byte, err error) {

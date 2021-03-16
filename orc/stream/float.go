@@ -1,7 +1,6 @@
 package stream
 
 import (
-	"bytes"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
 	"github.com/patrickhuang888/goorc/orc/io"
@@ -15,7 +14,7 @@ type FloatReader struct {
 }
 
 func NewFloatReader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File, is64 bool) (r *FloatReader) {
-	r = &FloatReader{stream: &reader{opts: opts, start: start, info: info, buf: &bytes.Buffer{}, f: in}, is64: is64}
+	r = &FloatReader{stream: newReader(opts, info, start, in), is64: is64}
 	return
 }
 

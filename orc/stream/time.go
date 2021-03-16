@@ -1,8 +1,6 @@
 package stream
 
 import (
-	"bytes"
-
 	"github.com/patrickhuang888/goorc/orc/api"
 	"github.com/patrickhuang888/goorc/orc/config"
 	"github.com/patrickhuang888/goorc/orc/encoding"
@@ -11,9 +9,7 @@ import (
 )
 
 func NewDateV2Reader(opts *config.ReaderOptions, info *pb.Stream, start uint64, in io.File) DateReader {
-	stream := &reader{opts: opts, info: info, start: start, f: in, buf: &bytes.Buffer{}}
-	decoder := encoding.NewDateV2DeCoder()
-	return &dateV2Reader{stream: stream, decoder: decoder}
+	return &dateV2Reader{stream: newReader(opts, info, start, in), decoder: encoding.NewDateV2DeCoder()}
 }
 
 type dateV2Reader struct {
